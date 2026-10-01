@@ -48,6 +48,11 @@ interface DeviceSession {
 
     suspend fun executeAction(action: DeviceAction): ActionResult = execute(action)
 
+    /** Generic BLE explorer operations kept behind the runtime session boundary. */
+    suspend fun read(characteristic: BleCharacteristic): ByteArray
+
+    suspend fun write(characteristic: BleCharacteristic, data: ByteArray, withResponse: Boolean = true)
+
     /** Registers the handler used when [DeviceAction.id] matches [id]. */
     fun registerAction(id: String, handler: DeviceActionHandler)
 
@@ -98,7 +103,7 @@ private class DeviceSessionImpl(
 
     init {
         scope.launch {
-            stateImpl.changes.collectLatest { change ->
+            stateImpl.changes.collect { change ->
                 eventBus.emit(
                     DeviceEvent.StateChanged(
                         deviceId = device.id,
@@ -182,6 +187,12 @@ private class DeviceSessionImpl(
             eventBus.emit(DeviceEvent.ActionFailed(device.id, now(), action, result.error))
             result
         }
+    }
+
+    override suspend fun read(characteristic: BleCharacteristic): ByteArray = connection.read(characteristic)
+
+    override suspend fun write(characteristic: BleCharacteristic, data: ByteArray, withResponse: Boolean) {
+        connection.write(characteristic, data, withResponse)
     }
 
     override fun notifications(characteristic: BleCharacteristic): Flow<ByteArray> = flow {

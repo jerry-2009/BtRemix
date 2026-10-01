@@ -16,7 +16,7 @@ sealed interface StateValue {
     data class MapValue(val value: Map<String, StateValue>) : StateValue
 
     companion object {
-        fun of(value: Any?): StateValue = when (value) {
+        fun of(value: Any): StateValue = when (value) {
             is StateValue -> value
             is Boolean -> BooleanValue(value)
             is Int -> IntValue(value)
@@ -25,12 +25,12 @@ sealed interface StateValue {
             is Double -> DoubleValue(value)
             is String -> StringValue(value)
             is ByteArray -> BytesValue(value.clone())
-            is List<*> -> ListValue(value.map { of(it) })
+            is List<*> -> ListValue(value.map { of(requireNotNull(it) { "StateValue list values cannot be null" }) })
             is Map<*, *> -> MapValue(value.entries.associate { (key, item) ->
                 require(key is String) { "StateValue map keys must be strings" }
-                key to of(item)
+                key to of(requireNotNull(item) { "StateValue map values cannot be null" })
             })
-            else -> error("Unsupported state value type: ${value?.let { it::class.qualifiedName } ?: "null"}")
+            else -> error("Unsupported state value type: ${value::class.qualifiedName}")
         }
     }
 }

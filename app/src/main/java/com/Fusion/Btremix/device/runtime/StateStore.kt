@@ -26,7 +26,7 @@ interface StateStore {
     )
     suspend fun set(
         key: String,
-        value: Any?,
+        value: Any,
         source: StateSource = StateSource.RUNTIME,
         quality: StateQuality = StateQuality.FRESH,
         timestamp: Instant? = null,
@@ -42,7 +42,7 @@ interface StateStore {
 
     suspend fun update(
         key: String,
-        value: Any?,
+        value: Any,
         source: StateSource = StateSource.RUNTIME,
         quality: StateQuality = StateQuality.FRESH,
         timestamp: Instant? = null,
