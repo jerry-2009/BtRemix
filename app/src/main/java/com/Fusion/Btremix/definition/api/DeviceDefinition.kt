@@ -12,6 +12,55 @@ import com.Fusion.Btremix.protocol.api.ValueCodec
 import java.util.UUID
 import kotlin.time.Duration
 
+enum class StateDefinitionType { BOOLEAN, INTEGER, NUMBER, STRING, ENUM, BYTES }
+
+data class StateDefinition(
+    val key: String,
+    val type: StateDefinitionType,
+    val defaultValue: com.Fusion.Btremix.device.runtime.StateValue? = null,
+    val displayName: String? = null,
+    val description: String? = null,
+    val unit: String? = null,
+    val enumValues: Map<String, String> = emptyMap(),
+    val min: Double? = null,
+    val max: Double? = null,
+    val step: Double? = null,
+)
+
+data class ActionParameterDefinition(
+    val name: String,
+    val type: StateDefinitionType,
+    val required: Boolean = true,
+    val displayName: String? = null,
+    val enumValues: Map<String, String> = emptyMap(),
+    val min: Double? = null,
+    val max: Double? = null,
+    val step: Double? = null,
+)
+
+data class ActionDefinition(
+    val id: String,
+    val displayName: String,
+    val description: String? = null,
+    val parameters: List<ActionParameterDefinition> = emptyList(),
+    val resultState: String? = null,
+)
+
+sealed interface UiNode {
+    val id: String?
+    data class Column(override val id: String? = null, val children: List<UiNode> = emptyList()) : UiNode
+    data class Section(val title: String, override val id: String? = null, val children: List<UiNode> = emptyList()) : UiNode
+    data class Text(val text: String? = null, val state: String? = null, override val id: String? = null) : UiNode
+    data class Value( val state: String, override val id: String? = null) : UiNode
+    data class Switch(val state: String, val action: String, override val id: String? = null) : UiNode
+    data class Slider(val state: String, val action: String, override val id: String? = null) : UiNode
+    data class Button(val label: String, val action: String, val args: Map<String, com.Fusion.Btremix.device.runtime.StateValue> = emptyMap(), override val id: String? = null) : UiNode
+    data class Segmented(val state: String, val action: String, val options: List<String>, override val id: String? = null) : UiNode
+    data class Progress(val state: String, override val id: String? = null) : UiNode
+}
+
+data class UiSchema(val title: String? = null, val children: List<UiNode> = emptyList())
+
 /** A stable contract shared by built-in and loaded definitions. */
 interface DeviceDefinition {
     val id: String
@@ -117,6 +166,9 @@ data class ProtocolDefinition(
 data class LoadedDeviceDefinition(
     val manifest: DefinitionManifest,
     val protocol: ProtocolDefinition = ProtocolDefinition(),
+    val states: Map<String, StateDefinition> = emptyMap(),
+    val actions: Map<String, ActionDefinition> = emptyMap(),
+    val ui: UiSchema = UiSchema(),
 ) : DeviceDefinition by manifest {
     fun protocolFactory(): DefinitionProtocolFactory = DefinitionProtocolFactory(this)
 }

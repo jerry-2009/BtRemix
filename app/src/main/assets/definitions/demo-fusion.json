@@ -27,5 +27,48 @@
         "retries": 1
       }
     }
+  },
+  "states": {
+    "battery": {
+      "type": "integer",
+      "displayName": "Battery",
+      "unit": "%",
+      "default": 82,
+      "min": 0,
+      "max": 100,
+      "step": 1
+    },
+    "ancMode": {
+      "type": "enum",
+      "displayName": "Noise control",
+      "default": "transparency",
+      "enumValues": { "noiseCanceling": "Noise canceling", "transparency": "Transparency", "off": "Off" }
+    },
+    "muted": { "type": "boolean", "displayName": "Mute", "default": false }
+  },
+  "actions": {
+    "volume.set": {
+      "displayName": "Set volume",
+      "parameters": [{ "name": "value", "type": "integer", "min": 0, "max": 100, "step": 1 }]
+    },
+    "anc.setMode": {
+      "displayName": "Set noise control",
+      "parameters": [{ "name": "value", "type": "enum", "enumValues": { "noiseCanceling": "Noise canceling", "transparency": "Transparency", "off": "Off" } }],
+      "resultState": "ancMode"
+    },
+    "mute.set": { "displayName": "Set mute", "parameters": [{ "name": "value", "type": "boolean" }], "resultState": "muted" }
+  },
+  "ui": {
+    "title": "Fusion Demo Device",
+    "children": [
+      { "type": "section", "title": "Overview", "children": [
+        { "type": "value", "state": "battery" },
+        { "type": "progress", "state": "battery" }
+      ]},
+      { "type": "section", "title": "Controls", "children": [
+        { "type": "segmented", "state": "ancMode", "action": "anc.setMode", "options": ["noiseCanceling", "transparency", "off"] },
+        { "type": "switch", "state": "muted", "action": "mute.set" }
+      ]}
+    ]
   }
 }

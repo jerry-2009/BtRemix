@@ -9,6 +9,13 @@ import com.Fusion.Btremix.definition.api.ProtocolDefinition
 import com.Fusion.Btremix.definition.api.ProtocolFieldDefinition
 import com.Fusion.Btremix.definition.api.ProtocolFieldType
 import com.Fusion.Btremix.definition.api.TransactionDefinition
+import com.Fusion.Btremix.definition.api.ActionDefinition
+import com.Fusion.Btremix.definition.api.ActionParameterDefinition
+import com.Fusion.Btremix.definition.api.StateDefinition
+import com.Fusion.Btremix.definition.api.StateDefinitionType
+import com.Fusion.Btremix.definition.api.UiNode
+import com.Fusion.Btremix.definition.api.UiSchema
+import com.Fusion.Btremix.device.runtime.StateValue
 import com.Fusion.Btremix.definition.validator.DefinitionValidator
 import java.util.UUID
 import kotlin.time.Duration.Companion.milliseconds
@@ -23,6 +30,9 @@ object DefinitionJsonCodec {
         val definition = LoadedDeviceDefinition(
             manifest = parseManifest(manifestObject),
             protocol = protocolObject?.let(::parseProtocol) ?: ProtocolDefinition(),
+            states = root.values["states"]?.let { parseStates(it) } ?: emptyMap(),
+            actions = root.values["actions"]?.let { parseActions(it) } ?: emptyMap(),
+            ui = root.optionalObj("ui")?.let(::parseUi) ?: UiSchema(),
         )
         return if (validate) DefinitionValidator.requireValid(definition) else definition
     }
@@ -80,6 +90,105 @@ object DefinitionJsonCodec {
             transactions = transactions,
         )
     }
+
+    private fun parseState(key: String, obj: JsonValue.Object): StateDefinition = StateDefinition(
+        key = key,
+        type = parseDefinitionType(obj.requiredString("type"), "states.$key.type"),
+        defaultValue = obj.values["default"]?.let { parseStateValue(it, "states.$key.default") },
+        displayName = obj.optionalString("displayName") ?: obj.optionalString("label"),
+        description = obj.optionalString("description"),
+        unit = obj.optionalString("unit"),
+        enumValues = parseStringMap(obj.optionalObj("enumValues"), "states.$key.enumValues"),
+        min = obj.optionalDouble("min"), max = obj.optionalDouble("max"), step = obj.optionalDouble("step"),
+    )
+
+    private fun parseStates(value: JsonValue): Map<String, StateDefinition> = when (value) {
+        is JsonValue.Object -> value.values.mapValues { (key, item) -> parseState(key, item.obj("states.$key")) }
+        is JsonValue.Array -> value.values.mapIndexed { index, item ->
+            val obj = item.obj("states[$index]")
+            val key = obj.optionalString("key") ?: obj.optionalString("id") ?: throw DefinitionJsonException("states[$index]", "requires key")
+            key to parseState(key, obj)
+        }.toMap()
+        else -> throw DefinitionJsonException("states", "must be an object or array")
+    }
+
+    private fun parseAction(id: String, obj: JsonValue.Object): ActionDefinition = ActionDefinition(
+        id = id,
+        displayName = obj.optionalString("displayName") ?: obj.optionalString("label") ?: id,
+        description = obj.optionalString("description"),
+        parameters = obj.optionalArray("parameters")?.values?.mapIndexed { index, value ->
+            val parameter = value.obj("actions.$id.parameters[$index]")
+            ActionParameterDefinition(
+                name = parameter.requiredString("name"),
+                type = parseDefinitionType(parameter.requiredString("type"), "actions.$id.parameters[$index].type"),
+                required = parameter.optionalBoolean("required") ?: true,
+                displayName = parameter.optionalString("displayName") ?: parameter.optionalString("label"),
+                enumValues = parseStringMap(parameter.optionalObj("enumValues"), "actions.$id.parameters[$index].enumValues"),
+                min = parameter.optionalDouble("min"), max = parameter.optionalDouble("max"), step = parameter.optionalDouble("step"),
+            )
+        } ?: emptyList(),
+        resultState = obj.optionalString("resultState"),
+    )
+
+    private fun parseActions(value: JsonValue): Map<String, ActionDefinition> = when (value) {
+        is JsonValue.Object -> value.values.mapValues { (id, item) -> parseAction(id, item.obj("actions.$id")) }
+        is JsonValue.Array -> value.values.mapIndexed { index, item ->
+            val obj = item.obj("actions[$index]")
+            val id = obj.optionalString("id") ?: throw DefinitionJsonException("actions[$index]", "requires id")
+            id to parseAction(id, obj)
+        }.toMap()
+        else -> throw DefinitionJsonException("actions", "must be an object or array")
+    }
+
+    private fun parseUi(obj: JsonValue.Object): UiSchema = UiSchema(
+        title = obj.optionalString("title"),
+        children = obj.optionalArray("children")?.values?.mapIndexed { index, value -> parseUiNode(value.obj("ui.children[$index]"), "ui.children[$index]") } ?: emptyList(),
+    )
+
+    private fun parseUiNode(obj: JsonValue.Object, path: String): UiNode {
+        val type = obj.requiredString("type").lowercase()
+        val id = obj.optionalString("id")
+        fun state() = obj.requiredString("state")
+        fun action() = obj.requiredString("action")
+        fun children() = obj.optionalArray("children")?.values?.mapIndexed { index, value -> parseUiNode(value.obj("$path.children[$index]"), "$path.children[$index]") } ?: emptyList()
+        return when (type) {
+            "column", "layout" -> UiNode.Column(id, children())
+            "section" -> UiNode.Section(obj.requiredString("title"), id, children())
+            "text" -> UiNode.Text(obj.optionalString("text"), obj.optionalString("state"), id)
+            "value" -> UiNode.Value(state(), id)
+            "switch" -> UiNode.Switch(state(), action(), id)
+            "slider" -> UiNode.Slider(state(), action(), id)
+            "button" -> UiNode.Button(obj.optionalString("label") ?: obj.optionalString("text") ?: action(), action(), parseArgs(obj.values["args"], "$path.args"), id)
+            "segmented" -> UiNode.Segmented(state(), action(), obj.requiredArray("options").values.mapIndexed { index, value -> value.string("$path.options[$index]") }, id)
+            "progress" -> UiNode.Progress(state(), id)
+            else -> throw DefinitionJsonException("$path.type", "unknown UI node type")
+        }
+    }
+
+    private fun parseArgs(value: JsonValue?, path: String): Map<String, StateValue> {
+        if (value == null) return emptyMap()
+        return value.obj(path).values.mapValues { (key, item) -> parseStateValue(item, "$path.$key") }
+    }
+
+    private fun parseDefinitionType(value: String, path: String): StateDefinitionType = when (value.lowercase().replace("_", "").replace("-", "")) {
+        "boolean", "bool" -> StateDefinitionType.BOOLEAN
+        "integer", "int", "long" -> StateDefinitionType.INTEGER
+        "number", "float", "double" -> StateDefinitionType.NUMBER
+        "string" -> StateDefinitionType.STRING
+        "enum" -> StateDefinitionType.ENUM
+        "bytes", "bytearray" -> StateDefinitionType.BYTES
+        else -> throw DefinitionJsonException(path, "unknown definition type")
+    }
+
+    private fun parseStateValue(value: JsonValue, path: String): StateValue = when (value) {
+        is JsonValue.BooleanValue -> StateValue.BooleanValue(value.value)
+        is JsonValue.StringValue -> StateValue.StringValue(value.value)
+        is JsonValue.NumberValue -> value.raw.toIntOrNull()?.let(StateValue::IntValue) ?: value.raw.toDoubleOrNull()?.let(StateValue::DoubleValue) ?: throw DefinitionJsonException(path, "invalid number")
+        is JsonValue.Array -> StateValue.ListValue(value.values.mapIndexed { index, item -> parseStateValue(item, "$path[$index]") })
+        else -> throw DefinitionJsonException(path, "must be a scalar or array value")
+    }
+
+    private fun parseStringMap(obj: JsonValue.Object?, path: String): Map<String, String> = obj?.values?.mapValues { (key, value) -> value.string("$path.$key") } ?: emptyMap()
 
     private fun parseMessage(name: String, obj: JsonValue.Object): MessageDefinition {
         val fields = obj.requiredArray("fields").values.mapIndexed { index, value -> parseField(value.obj("protocol.messages.$name.fields[$index]"), "protocol.messages.$name.fields[$index]") }
@@ -159,3 +268,4 @@ private fun JsonValue.Object.optionalBoolean(name: String): Boolean? = values[na
 private fun JsonValue.Object.optionalInt(name: String): Int? = values[name]?.number(name)?.raw?.toIntOrNull() ?: values[name]?.let { throw DefinitionJsonException(name, "must be an integer") }
 private fun JsonValue.Object.requiredInt(name: String): Int = optionalInt(name) ?: throw DefinitionJsonException(name, "is required")
 private fun JsonValue.Object.optionalLong(name: String): Long? = values[name]?.number(name)?.raw?.toLongOrNull() ?: values[name]?.let { throw DefinitionJsonException(name, "must be an integer") }
+private fun JsonValue.Object.optionalDouble(name: String): Double? = values[name]?.number(name)?.raw?.toDoubleOrNull() ?: values[name]?.let { throw DefinitionJsonException(name, "must be a number") }

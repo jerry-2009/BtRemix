@@ -19,6 +19,34 @@ import org.junit.Test
 
 class DefinitionRuntimeTest {
     @Test
+    fun jsonDefinition_buildsStatesActionsAndUiSchema() {
+        val definition = DefinitionJsonCodec.decode("""
+            {"manifest":{"id":"ui.demo","displayName":"UI demo","version":"1","matchers":[{"type":"namePrefix","value":"Demo"}]},
+             "states":{"enabled":{"type":"boolean","default":true},"mode":{"type":"enum","default":"eco","enumValues":{"eco":"Eco"}}},
+             "actions":{"setMode":{"displayName":"Set mode","parameters":[{"name":"value","type":"enum","enumValues":{"eco":"Eco"}}],"resultState":"mode"}},
+             "ui":{"title":"Controls","children":[{"type":"switch","state":"enabled","action":"setMode"},{"type":"value","state":"mode"}]}}
+        """.trimIndent())
+        assertEquals(2, definition.states.size)
+        assertEquals("Controls", definition.ui.title)
+        assertEquals(1, definition.actions["setMode"]?.parameters?.size)
+    }
+
+    @Test
+    fun validator_rejectsUnknownUiStateAndAction() {
+        val invalid = """
+            {"manifest":{"id":"ui.demo","displayName":"UI demo","version":"1","matchers":[{"type":"namePrefix","value":"Demo"}]},
+             "states":{"enabled":{"type":"boolean"}}, "actions":{},
+             "ui":{"children":[{"type":"switch","state":"missing","action":"missing"}]}}
+        """.trimIndent()
+        try {
+            DefinitionJsonCodec.decode(invalid)
+            error("Expected validation failure")
+        } catch (error: DefinitionValidationException) {
+            assertTrue(error.errors.any { it.path == "ui.children[0].state" })
+            assertTrue(error.errors.any { it.path == "ui.children[0].action" })
+        }
+    }
+    @Test
     fun jsonDefinition_buildsProtocolCodecAndTransaction() {
         val definition = DefinitionJsonCodec.decode(definitionJson)
         val factory = definition.protocolFactory()

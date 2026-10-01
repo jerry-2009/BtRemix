@@ -5,6 +5,8 @@ import com.Fusion.Btremix.definition.api.LoadedDeviceDefinition
 import com.Fusion.Btremix.definition.api.ProtocolFieldDefinition
 import com.Fusion.Btremix.definition.api.ProtocolFieldType
 import com.Fusion.Btremix.definition.api.ProtocolFieldType.*
+import com.Fusion.Btremix.definition.api.*
+import com.Fusion.Btremix.device.runtime.StateValue
 
 data class DefinitionValidationError(val path: String, val message: String)
 
@@ -23,6 +25,28 @@ object DefinitionValidator {
         if (manifest.version.isBlank()) errors += DefinitionValidationError("manifest.version", "must not be blank")
         if (manifest.matchers.isEmpty()) errors += DefinitionValidationError("manifest.matchers", "must contain at least one rule")
         manifest.matchers.forEachIndexed { index, matcher -> validateMatcher(matcher, "manifest.matchers[$index]", errors) }
+
+        definition.states.forEach { (key, state) ->
+            if (key.isBlank() || state.key != key) errors += DefinitionValidationError("states.$key.key", "must match the state map key")
+            if (state.displayName?.isBlank() == true) errors += DefinitionValidationError("states.$key.displayName", "must not be blank")
+            validateRange(state.min, state.max, state.step, "states.$key", errors)
+            if (state.type != StateDefinitionType.ENUM && state.enumValues.isNotEmpty()) errors += DefinitionValidationError("states.$key.enumValues", "is only valid for enum states")
+            if (state.type == StateDefinitionType.ENUM && state.enumValues.isEmpty()) errors += DefinitionValidationError("states.$key.enumValues", "must not be empty")
+            state.defaultValue?.let { if (!matchesType(it, state.type)) errors += DefinitionValidationError("states.$key.default", "does not match ${state.type}") }
+        }
+        definition.actions.forEach { (id, action) ->
+            if (id.isBlank() || action.id != id) errors += DefinitionValidationError("actions.$id.id", "must match the action map key")
+            if (action.displayName.isBlank()) errors += DefinitionValidationError("actions.$id.displayName", "must not be blank")
+            val parameterNames = action.parameters.map { it.name }
+            if (parameterNames.any(String::isBlank) || parameterNames.size != parameterNames.toSet().size) errors += DefinitionValidationError("actions.$id.parameters", "parameter names must be non-blank and unique")
+            action.parameters.forEachIndexed { index, parameter ->
+                validateRange(parameter.min, parameter.max, parameter.step, "actions.$id.parameters[$index]", errors)
+                if (parameter.type != StateDefinitionType.ENUM && parameter.enumValues.isNotEmpty()) errors += DefinitionValidationError("actions.$id.parameters[$index].enumValues", "is only valid for enum parameters")
+                if (parameter.type == StateDefinitionType.ENUM && parameter.enumValues.isEmpty()) errors += DefinitionValidationError("actions.$id.parameters[$index].enumValues", "must not be empty")
+            }
+            action.resultState?.let { if (it !in definition.states) errors += DefinitionValidationError("actions.$id.resultState", "unknown state '$it'") }
+        }
+        validateUi(definition.ui.children, "ui.children", definition, errors)
 
         definition.protocol.messages.forEach { (name, message) ->
             if (name.isBlank()) errors += DefinitionValidationError("protocol.messages", "message name must not be blank")
@@ -85,5 +109,37 @@ object DefinitionValidator {
             else -> Unit
         }
         field.parts.forEachIndexed { index, part -> validateField(part, "$path.parts[$index]", errors) }
+    }
+
+    private fun validateRange(min: Double?, max: Double?, step: Double?, path: String, errors: MutableList<DefinitionValidationError>) {
+        if (min != null && max != null && min > max) errors += DefinitionValidationError(path, "min must not exceed max")
+        if (step != null && step <= 0.0) errors += DefinitionValidationError("$path.step", "must be positive")
+    }
+
+    private fun matchesType(value: StateValue, type: StateDefinitionType): Boolean = when (type) {
+        StateDefinitionType.BOOLEAN -> value is StateValue.BooleanValue
+        StateDefinitionType.INTEGER -> value is StateValue.IntValue || value is StateValue.LongValue
+        StateDefinitionType.NUMBER -> value is StateValue.IntValue || value is StateValue.LongValue || value is StateValue.FloatValue || value is StateValue.DoubleValue
+        StateDefinitionType.STRING, StateDefinitionType.ENUM -> value is StateValue.StringValue
+        StateDefinitionType.BYTES -> value is StateValue.BytesValue
+    }
+
+    private fun validateUi(nodes: List<UiNode>, path: String, definition: LoadedDeviceDefinition, errors: MutableList<DefinitionValidationError>) {
+        nodes.forEachIndexed { index, node ->
+            val nodePath = "$path[$index]"
+            fun checkState(key: String) { if (key !in definition.states) errors += DefinitionValidationError("$nodePath.state", "unknown state '$key'") }
+            fun checkAction(id: String) { if (id !in definition.actions) errors += DefinitionValidationError("$nodePath.action", "unknown action '$id'") }
+            when (node) {
+                is UiNode.Column -> validateUi(node.children, "$nodePath.children", definition, errors)
+                is UiNode.Section -> validateUi(node.children, "$nodePath.children", definition, errors)
+                is UiNode.Text -> node.state?.let(::checkState)
+                is UiNode.Value -> checkState(node.state)
+                is UiNode.Switch -> { checkState(node.state); checkAction(node.action) }
+                is UiNode.Slider -> { checkState(node.state); checkAction(node.action) }
+                is UiNode.Button -> checkAction(node.action)
+                is UiNode.Segmented -> { checkState(node.state); checkAction(node.action) }
+                is UiNode.Progress -> checkState(node.state)
+            }
+        }
     }
 }
