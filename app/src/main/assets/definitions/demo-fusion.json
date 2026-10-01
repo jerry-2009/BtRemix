@@ -1,0 +1,31 @@
+{
+  "manifest": {
+    "id": "demo.fusion",
+    "displayName": "Fusion Demo Device",
+    "version": "1.0.0",
+    "capabilities": ["demo"],
+    "matchers": [
+      { "type": "namePrefix", "value": "Fusion", "priority": 10 }
+    ]
+  },
+  "protocol": {
+    "endianness": "little",
+    "packet": { "includesSequence": true },
+    "messages": {
+      "setMode": {
+        "fields": [
+          { "name": "mode", "type": "uint8" }
+        ]
+      }
+    },
+    "transactions": {
+      "setMode": {
+        "requestCommand": 16,
+        "requestMessage": "setMode",
+        "expectedCommand": 144,
+        "timeoutMs": 1000,
+        "retries": 1
+      }
+    }
+  }
+}
