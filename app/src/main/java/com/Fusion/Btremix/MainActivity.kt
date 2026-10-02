@@ -8,6 +8,7 @@ import androidx.activity.compose.setContent
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.activity.viewModels
 import androidx.compose.foundation.layout.Arrangement
+import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
@@ -19,6 +20,7 @@ import androidx.compose.foundation.clickable
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.rememberScrollState
+import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material3.Button
 import androidx.compose.material3.Divider
@@ -32,6 +34,7 @@ import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.setValue
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.saveable.rememberSaveable
@@ -54,21 +57,75 @@ import com.Fusion.Btremix.core.bluetooth.api.ConnectionState
 import com.Fusion.Btremix.core.logging.LogEntry
 import com.Fusion.Btremix.ui.explorer.ExplorerUiState
 import com.Fusion.Btremix.ui.explorer.ExplorerViewModel
+import com.Fusion.Btremix.ui.packages.DefinitionPackagesScreen
+import com.Fusion.Btremix.ui.packages.PackageToolsViewModel
 import com.Fusion.Btremix.ui.theme.BtRemixTheme
 import java.time.ZoneId
 import java.time.format.DateTimeFormatter
 
 class MainActivity : ComponentActivity() {
-    private val viewModel by viewModels<ExplorerViewModel>()
+    private val explorerViewModel by viewModels<ExplorerViewModel>()
+    private val packagesViewModel by viewModels<PackageToolsViewModel>()
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
-        setContent { BtRemixTheme { BleExplorer(viewModel) } }
+        setContent { BtRemixTheme { BtRemixApp(explorerViewModel, packagesViewModel) } }
+    }
+}
+
+private enum class AppPage { Explorer, Packages }
+
+@Composable
+private fun BtRemixApp(explorerViewModel: ExplorerViewModel, packagesViewModel: PackageToolsViewModel) {
+    var page by rememberSaveable { mutableStateOf(AppPage.Explorer) }
+    val packageState by packagesViewModel.state.collectAsState()
+    Scaffold { padding ->
+        Column(Modifier.fillMaxSize().padding(padding)) {
+            Row(
+                modifier = Modifier.fillMaxWidth().padding(horizontal = 20.dp, vertical = 8.dp),
+                horizontalArrangement = Arrangement.spacedBy(8.dp),
+            ) {
+                PageTab("Explorer", page == AppPage.Explorer, Modifier.weight(1f)) { page = AppPage.Explorer }
+                PageTab("Packages", page == AppPage.Packages, Modifier.weight(1f)) { page = AppPage.Packages }
+            }
+            when (page) {
+                AppPage.Explorer -> BleExplorer(explorerViewModel, Modifier.weight(1f))
+                AppPage.Packages -> DefinitionPackagesScreen(
+                    state = packageState,
+                    onPackagePicked = packagesViewModel::install,
+                    onReload = packagesViewModel::reload,
+                    onDelete = packagesViewModel::delete,
+                    onSelect = packagesViewModel::select,
+                    onConfirmReplace = packagesViewModel::confirmReplace,
+                    onCancelReplace = packagesViewModel::cancelReplace,
+                    onDismissMessage = packagesViewModel::dismissMessage,
+                    onClearErrors = packagesViewModel::clearErrors,
+                    modifier = Modifier.weight(1f),
+                )
+            }
+        }
     }
 }
 
 @Composable
-private fun BleExplorer(viewModel: ExplorerViewModel) {
+private fun PageTab(label: String, selected: Boolean, modifier: Modifier, onClick: () -> Unit) {
+    Surface(
+        modifier = modifier.clickable(onClick = onClick),
+        shape = RoundedCornerShape(8.dp),
+        color = if (selected) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.surfaceVariant,
+    ) {
+        Box(Modifier.padding(vertical = 8.dp), contentAlignment = Alignment.Center) {
+            Text(
+                label,
+                style = MaterialTheme.typography.labelLarge,
+                color = if (selected) MaterialTheme.colorScheme.onPrimary else MaterialTheme.colorScheme.onSurfaceVariant,
+            )
+        }
+    }
+}
+
+@Composable
+private fun BleExplorer(viewModel: ExplorerViewModel, modifier: Modifier = Modifier) {
     val state by viewModel.state.collectAsState()
     val context = LocalContext.current
     val lifecycleOwner = LocalLifecycleOwner.current
@@ -89,10 +146,9 @@ private fun BleExplorer(viewModel: ExplorerViewModel) {
         onDispose { lifecycleOwner.lifecycle.removeObserver(observer) }
     }
 
-    Scaffold { padding ->
-        Column(
-            modifier = Modifier.fillMaxSize().padding(padding).padding(horizontal = 20.dp),
-        ) {
+    Column(
+        modifier = modifier.fillMaxSize().padding(horizontal = 20.dp),
+    ) {
             Row(
                 modifier = Modifier.fillMaxWidth().padding(top = 18.dp, bottom = 12.dp),
                 verticalAlignment = Alignment.CenterVertically,
@@ -132,7 +188,6 @@ private fun BleExplorer(viewModel: ExplorerViewModel) {
             Spacer(Modifier.height(10.dp))
             Divider()
             LogPanel(state.logs, viewModel::clearLogs)
-        }
     }
 }
 

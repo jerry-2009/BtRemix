@@ -34,4 +34,5 @@ sealed interface RuntimeError {
         override val message: String = "Action not found: $id"
     }
     data class ActionFailed(val id: String, override val message: String, override val cause: Throwable? = null) : RuntimeError
+    data class ScriptFailed(val id: String, override val message: String, override val cause: Throwable? = null) : RuntimeError
 }

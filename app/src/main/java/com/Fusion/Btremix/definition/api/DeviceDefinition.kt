@@ -11,6 +11,7 @@ import com.Fusion.Btremix.protocol.api.TransactionRequest
 import com.Fusion.Btremix.protocol.api.ValueCodec
 import java.util.UUID
 import kotlin.time.Duration
+import com.Fusion.Btremix.scripting.api.ScriptProgram
 
 enum class StateDefinitionType { BOOLEAN, INTEGER, NUMBER, STRING, ENUM, BYTES }
 
@@ -44,6 +45,7 @@ data class ActionDefinition(
     val description: String? = null,
     val parameters: List<ActionParameterDefinition> = emptyList(),
     val resultState: String? = null,
+    val script: ScriptProgram? = null,
 )
 
 sealed interface UiNode {

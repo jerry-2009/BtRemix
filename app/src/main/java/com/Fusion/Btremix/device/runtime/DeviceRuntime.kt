@@ -59,6 +59,8 @@ interface DeviceSession {
     /** Bridges BLE notifications into the session event bus. */
     fun notifications(characteristic: BleCharacteristic): Flow<ByteArray>
 
+    suspend fun emitScriptEvent(name: String, value: StateValue)
+
     suspend fun close()
 }
 
@@ -201,6 +203,11 @@ private class DeviceSessionImpl(
             eventBus.emit(DeviceEvent.NotificationReceived(device.id, now(), characteristic, snapshot))
             emit(snapshot)
         }
+    }
+
+    override suspend fun emitScriptEvent(name: String, value: StateValue) {
+        require(name.isNotBlank())
+        eventBus.emit(DeviceEvent.ScriptEmitted(device.id, now(), name, value))
     }
 
     override suspend fun close() {

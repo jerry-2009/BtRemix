@@ -15,6 +15,7 @@ import com.Fusion.Btremix.definition.api.StateDefinition
 import com.Fusion.Btremix.definition.api.StateDefinitionType
 import com.Fusion.Btremix.definition.api.UiNode
 import com.Fusion.Btremix.definition.api.UiSchema
+import com.Fusion.Btremix.scripting.api.ScriptCodec
 import com.Fusion.Btremix.device.runtime.StateValue
 import com.Fusion.Btremix.definition.validator.DefinitionValidator
 import java.util.UUID
@@ -128,6 +129,7 @@ object DefinitionJsonCodec {
             )
         } ?: emptyList(),
         resultState = obj.optionalString("resultState"),
+        script = obj.values["script"]?.let { ScriptCodec.parse(it, "actions.$id.script") },
     )
 
     private fun parseActions(value: JsonValue): Map<String, ActionDefinition> = when (value) {

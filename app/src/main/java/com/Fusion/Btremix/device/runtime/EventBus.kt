@@ -60,5 +60,6 @@ sealed interface DeviceEvent {
     data class ActionStarted(override val deviceId: String, override val timestamp: Instant, val action: DeviceAction) : DeviceEvent
     data class ActionCompleted(override val deviceId: String, override val timestamp: Instant, val action: DeviceAction, val result: ActionResult.Success) : DeviceEvent
     data class ActionFailed(override val deviceId: String, override val timestamp: Instant, val action: DeviceAction, val error: RuntimeError) : DeviceEvent
+    data class ScriptEmitted(override val deviceId: String, override val timestamp: Instant, val name: String, val value: StateValue) : DeviceEvent
     data class Error(override val deviceId: String, override val timestamp: Instant, val error: RuntimeError) : DeviceEvent
 }
