@@ -36,24 +36,8 @@ class DefaultScriptDriver(
             val variables = action.args.toMutableMap()
             var steps = 0
             var returned: StateValue? = null
-            suspend fun eval(expression: ScriptExpression): StateValue = when (expression) {
-                is ScriptExpression.Literal -> expression.value
-                is ScriptExpression.Argument -> action.args[expression.name] ?: throw ScriptException("missing argument '${expression.name}'")
-                is ScriptExpression.Variable -> variables[expression.name] ?: throw ScriptException("missing variable '${expression.name}'")
-                is ScriptExpression.State -> host.getState(expression.key) ?: throw ScriptException("missing state '${expression.key}'")
-                is ScriptExpression.ByteAt -> {
-                    val bytes = (eval(expression.value) as? StateValue.BytesValue)?.value ?: throw ScriptException("at requires bytes")
-                    if (expression.index >= bytes.size) throw ScriptException("byte index out of bounds")
-                    StateValue.IntValue(bytes[expression.index].toInt() and 0xff)
-                }
-                is ScriptExpression.Equals -> StateValue.BooleanValue(eval(expression.left) == eval(expression.right))
-                is ScriptExpression.Concat -> {
-                    val parts = expression.values.map { (eval(it) as? StateValue.BytesValue)?.value ?: throw ScriptException("concat requires bytes") }
-                    val bytes = parts.fold(ByteArray(0)) { acc, item -> acc + item }
-                    if (bytes.size > limits.maxBytes) throw ScriptException("byte limit exceeded")
-                    StateValue.BytesValue(bytes)
-                }
-            }
+            suspend fun eval(expression: ScriptExpression): StateValue =
+                evaluateScriptExpression(expression, action.args, variables, limits.maxBytes, host::getState)
             suspend fun run(items: List<ScriptStep>) {
                 for (step in items) {
                     if (++steps > limits.maxSteps) throw ScriptException("step limit exceeded")

@@ -15,7 +15,9 @@ import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
+import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.RoundedCornerShape
+import androidx.compose.foundation.verticalScroll
 import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Button
 import androidx.compose.material3.Divider
@@ -25,11 +27,16 @@ import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.remember
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
+import androidx.compose.ui.window.Dialog
+import androidx.compose.ui.window.DialogProperties
+import com.Fusion.Btremix.definition.api.initialState
+import com.Fusion.Btremix.ui.renderer.DefinitionDevicePage
 
 private val PACKAGE_MIME_TYPES = arrayOf("application/zip", "application/octet-stream", "*/*")
 
@@ -46,6 +53,8 @@ fun DefinitionPackagesScreen(
     onReload: () -> Unit,
     onDelete: (String) -> Unit,
     onSelect: (String) -> Unit,
+    onPreview: (String) -> Unit,
+    onDismissPreview: () -> Unit,
     onConfirmReplace: () -> Unit,
     onCancelReplace: () -> Unit,
     onDismissMessage: () -> Unit,
@@ -105,6 +114,7 @@ fun DefinitionPackagesScreen(
                         item = item,
                         selected = item.packageId == state.selectedPackageId,
                         onSelect = { onSelect(item.packageId) },
+                        onPreview = { onPreview(item.packageId) },
                         onDelete = { onDelete(item.packageId) },
                     )
                 }
@@ -125,6 +135,45 @@ fun DefinitionPackagesScreen(
             confirmButton = { TextButton(onClick = onConfirmReplace) { Text("Replace") } },
             dismissButton = { TextButton(onClick = onCancelReplace) { Text("Cancel") } },
         )
+    }
+
+    state.preview?.let { preview -> PackagePreviewDialog(preview, onDismissPreview) }
+}
+
+@Composable
+private fun PackagePreviewDialog(preview: PackageUiPreview, onDismiss: () -> Unit) {
+    Dialog(onDismissRequest = onDismiss, properties = DialogProperties(usePlatformDefaultWidth = false)) {
+        Surface(modifier = Modifier.fillMaxSize(), color = MaterialTheme.colorScheme.background) {
+            Column(Modifier.fillMaxSize().padding(horizontal = 20.dp)) {
+                Row(
+                    modifier = Modifier.fillMaxWidth().padding(top = 18.dp, bottom = 6.dp),
+                    verticalAlignment = Alignment.CenterVertically,
+                ) {
+                    Column(Modifier.weight(1f)) {
+                        Text("UI preview", style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.SemiBold)
+                        Text(
+                            "${preview.packageId} v${preview.version} · rendered from the ui section",
+                            style = MaterialTheme.typography.bodySmall,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant,
+                        )
+                    }
+                    TextButton(onClick = onDismiss) { Text("Close") }
+                }
+                Text(
+                    "Default state values are shown. Actions are not sent to a device in preview mode.",
+                    style = MaterialTheme.typography.bodySmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                )
+                val previewState = remember(preview.definition) { preview.definition.initialState() }
+                Column(Modifier.weight(1f).verticalScroll(rememberScrollState())) {
+                    DefinitionDevicePage(
+                        definition = preview.definition,
+                        state = previewState,
+                        onAction = {},
+                    )
+                }
+            }
+        }
     }
 }
 
@@ -163,6 +212,7 @@ private fun PackageRow(
     item: PackageListItem,
     selected: Boolean,
     onSelect: () -> Unit,
+    onPreview: () -> Unit,
     onDelete: () -> Unit,
 ) {
     Surface(
@@ -193,6 +243,7 @@ private fun PackageRow(
             if (selected) {
                 Divider(Modifier.padding(vertical = 6.dp))
                 Text("Source: ${item.sourceName}", style = MaterialTheme.typography.labelSmall)
+                TextButton(onClick = onPreview) { Text("Preview UI") }
                 if (!item.isBuiltIn) {
                     TextButton(onClick = onDelete) { Text("Delete package") }
                 } else {

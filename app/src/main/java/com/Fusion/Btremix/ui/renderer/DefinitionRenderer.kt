@@ -13,6 +13,11 @@ import androidx.compose.material3.Surface
 import androidx.compose.material3.Switch
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.LaunchedEffect
+import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.remember
+import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.unit.dp
@@ -31,7 +36,7 @@ fun DefinitionDevicePage(
     onAction: (DeviceAction) -> Unit,
     modifier: Modifier = Modifier,
 ) {
-    Column(modifier.padding(horizontal = 20.dp, vertical = 16.dp), verticalArrangement = Arrangement.spacedBy(16.dp)) {
+    Column(modifier.padding(vertical = 12.dp), verticalArrangement = Arrangement.spacedBy(16.dp)) {
         Text(definition.ui.title ?: definition.displayName, style = MaterialTheme.typography.headlineSmall)
         definition.ui.children.forEach { node -> DefinitionNode(node, definition, state, onAction) }
     }
@@ -65,16 +70,31 @@ private fun DefinitionNode(node: UiNode, definition: LoadedDeviceDefinition, sta
         }
         is UiNode.Slider -> {
             val model = definition.states[node.state]
-            val value = numericValue(state[node.state]?.value).toFloat()
             val range = (model?.min?.toFloat() ?: 0f)..(model?.max?.toFloat() ?: 100f)
+            val external = numericValue(state[node.state]?.value).toFloat()
+            var dragging by remember(node.state) { mutableStateOf(false) }
+            var local by remember(node.state) { mutableStateOf(external) }
+            LaunchedEffect(external, dragging) { if (!dragging) local = external }
             Column {
                 Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween) {
                     Text(model?.displayName ?: node.state)
                     Text(displayValue(state[node.state]?.value))
                 }
-                Slider(value = value.coerceIn(range.start, range.endInclusive), onValueChange = {
-                    onAction(DeviceAction(node.action, mapOf(actionParameter(definition, node.action) to numericArgument(model?.type, it.toDouble()))))
-                }, valueRange = range, steps = steps(model?.step, range))
+                Slider(
+                    value = local.coerceIn(range.start, range.endInclusive),
+                    onValueChange = { dragging = true; local = it },
+                    onValueChangeFinished = {
+                        dragging = false
+                        onAction(
+                            DeviceAction(
+                                node.action,
+                                mapOf(actionParameter(definition, node.action) to numericArgument(model?.type, local.toDouble())),
+                            ),
+                        )
+                    },
+                    valueRange = range,
+                    steps = steps(model?.step, range),
+                )
             }
         }
         is UiNode.Button -> Button(onClick = { onAction(DeviceAction(node.action, node.args)) }, modifier = Modifier.fillMaxWidth()) { Text(node.label) }
@@ -89,7 +109,23 @@ private fun DefinitionNode(node: UiNode, definition: LoadedDeviceDefinition, sta
                 }
             }
         }
-        is UiNode.Progress -> LinearProgressIndicator(progress = { numericValue(state[node.state]?.value).toFloat().coerceIn(0f, 100f) / 100f }, modifier = Modifier.fillMaxWidth())
+        // A progress node renders as one self-contained meter block: a label/value line with the bar
+        // underneath. A bare bar placed right after a `value` node for the same state reads as if it
+        // belonged to the next row, so definitions should use `progress` alone for that state.
+        is UiNode.Progress -> {
+            val model = definition.states[node.state]
+            val progress = numericValue(state[node.state]?.value).toFloat().coerceIn(0f, 100f) / 100f
+            Column(Modifier.fillMaxWidth(), verticalArrangement = Arrangement.spacedBy(6.dp)) {
+                Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween) {
+                    Text(model?.displayName ?: node.state, style = MaterialTheme.typography.labelLarge)
+                    Text(
+                        displayValue(state[node.state]?.value) + (model?.unit?.let { " $it" } ?: ""),
+                        style = MaterialTheme.typography.labelLarge,
+                    )
+                }
+                LinearProgressIndicator(progress = { progress }, modifier = Modifier.fillMaxWidth())
+            }
+        }
     }
 }
 

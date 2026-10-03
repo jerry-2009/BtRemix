@@ -57,6 +57,32 @@ sealed interface DeviceEvent {
         override fun hashCode(): Int = 31 * (31 * (31 * deviceId.hashCode() + timestamp.hashCode()) + characteristic.hashCode()) + data.contentHashCode()
     }
 
+    /** A GATT read operation completed, recorded so every session byte is auditable. */
+    data class GattRead(
+        override val deviceId: String,
+        override val timestamp: Instant,
+        val characteristic: BleCharacteristic,
+        val data: ByteArray,
+    ) : DeviceEvent {
+        override fun equals(other: Any?): Boolean = other is GattRead &&
+            deviceId == other.deviceId && timestamp == other.timestamp && characteristic == other.characteristic && data.contentEquals(other.data)
+        override fun hashCode(): Int = 31 * (31 * (31 * deviceId.hashCode() + timestamp.hashCode()) + characteristic.hashCode()) + data.contentHashCode()
+    }
+
+    /** A GATT write operation was issued, recorded for the packet monitor. */
+    data class GattWritten(
+        override val deviceId: String,
+        override val timestamp: Instant,
+        val characteristic: BleCharacteristic,
+        val data: ByteArray,
+        val withResponse: Boolean,
+    ) : DeviceEvent {
+        override fun equals(other: Any?): Boolean = other is GattWritten &&
+            deviceId == other.deviceId && timestamp == other.timestamp && characteristic == other.characteristic &&
+            withResponse == other.withResponse && data.contentEquals(other.data)
+        override fun hashCode(): Int = 31 * (31 * (31 * (31 * deviceId.hashCode() + timestamp.hashCode()) + characteristic.hashCode()) + withResponse.hashCode()) + data.contentHashCode()
+    }
+
     data class ActionStarted(override val deviceId: String, override val timestamp: Instant, val action: DeviceAction) : DeviceEvent
     data class ActionCompleted(override val deviceId: String, override val timestamp: Instant, val action: DeviceAction, val result: ActionResult.Success) : DeviceEvent
     data class ActionFailed(override val deviceId: String, override val timestamp: Instant, val action: DeviceAction, val error: RuntimeError) : DeviceEvent

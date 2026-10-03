@@ -68,5 +68,8 @@ class DevicePackageStore(private val directory: File) {
 
     companion object {
         const val PACKAGE_EXTENSION: String = "dcpkg"
+
+        /** Directory under `filesDir` that holds installed `.dcpkg` files. */
+        const val DIRECTORY_NAME: String = "device-packages"
     }
 }

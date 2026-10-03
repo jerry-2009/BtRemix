@@ -33,35 +33,45 @@ interface DeviceRuntime {
     suspend fun open(device: BleDevice, connection: BleConnection): DeviceSession
 }
 
-/** Runtime view of a BLE device after the BLE layer has established a connection. */
-interface DeviceSession {
+/**
+ * Transport-neutral view of a live device session.
+ *
+ * GATT sessions ([DeviceSession]) and classic-Bluetooth byte-stream sessions ([StreamDeviceSession])
+ * both expose lifecycle, state, events and executable actions; only the transport below them
+ * differs. Definition binding, the state store and the UI all build on this interface.
+ */
+interface ProtocolSession {
     val device: BleDevice
     val lifecycle: StateFlow<DeviceLifecycleState>
     val lifecycleState: StateFlow<DeviceLifecycleState>
         get() = lifecycle
     val state: StateStore
     val stateStore: StateStore
-    val services: StateFlow<List<BleService>>
     val events: SharedFlow<DeviceEvent>
 
     suspend fun execute(action: DeviceAction): ActionResult
 
     suspend fun executeAction(action: DeviceAction): ActionResult = execute(action)
 
+    /** Registers the handler used when [DeviceAction.id] matches [id]. */
+    fun registerAction(id: String, handler: DeviceActionHandler)
+
+    suspend fun close()
+}
+
+/** Runtime view of a BLE device after the BLE layer has established a connection. */
+interface DeviceSession : ProtocolSession {
+    val services: StateFlow<List<BleService>>
+
     /** Generic BLE explorer operations kept behind the runtime session boundary. */
     suspend fun read(characteristic: BleCharacteristic): ByteArray
 
     suspend fun write(characteristic: BleCharacteristic, data: ByteArray, withResponse: Boolean = true)
 
-    /** Registers the handler used when [DeviceAction.id] matches [id]. */
-    fun registerAction(id: String, handler: DeviceActionHandler)
-
     /** Bridges BLE notifications into the session event bus. */
     fun notifications(characteristic: BleCharacteristic): Flow<ByteArray>
 
     suspend fun emitScriptEvent(name: String, value: StateValue)
-
-    suspend fun close()
 }
 
 /** Default Phase 2 runtime implementation. */
@@ -191,10 +201,15 @@ private class DeviceSessionImpl(
         }
     }
 
-    override suspend fun read(characteristic: BleCharacteristic): ByteArray = connection.read(characteristic)
+    override suspend fun read(characteristic: BleCharacteristic): ByteArray {
+        val data = connection.read(characteristic)
+        eventBus.emit(DeviceEvent.GattRead(device.id, now(), characteristic, data.clone()))
+        return data
+    }
 
     override suspend fun write(characteristic: BleCharacteristic, data: ByteArray, withResponse: Boolean) {
         connection.write(characteristic, data, withResponse)
+        eventBus.emit(DeviceEvent.GattWritten(device.id, now(), characteristic, data.clone(), withResponse))
     }
 
     override fun notifications(characteristic: BleCharacteristic): Flow<ByteArray> = flow {

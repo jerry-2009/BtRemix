@@ -26,8 +26,11 @@ interface PacketDecoder {
     fun decode(bytes: ByteArray): Packet
 }
 
+/** A codec that can both encode and decode packets. */
+interface PacketCodec : PacketEncoder, PacketDecoder
+
 /** Simple wire format: command, optional sequence, then payload. */
-class SimplePacketCodec(private val includesSequence: Boolean = true) : PacketEncoder, PacketDecoder {
+class SimplePacketCodec(private val includesSequence: Boolean = true) : PacketCodec {
     override fun encode(packet: Packet): ByteArray {
         if (includesSequence) require(packet.sequence != null) { "Packet sequence is required" }
         val output = ByteArray(1 + (if (includesSequence) 1 else 0) + packet.payload.size)

@@ -11,11 +11,15 @@ import com.Fusion.Btremix.definition.api.ProtocolFieldType
 import com.Fusion.Btremix.definition.api.TransactionDefinition
 import com.Fusion.Btremix.definition.api.ActionDefinition
 import com.Fusion.Btremix.definition.api.ActionParameterDefinition
+import com.Fusion.Btremix.definition.api.DefinitionSchema
+import com.Fusion.Btremix.definition.api.NotifyDefinition
 import com.Fusion.Btremix.definition.api.StateDefinition
 import com.Fusion.Btremix.definition.api.StateDefinitionType
+import com.Fusion.Btremix.definition.api.TransportDefinition
 import com.Fusion.Btremix.definition.api.UiNode
 import com.Fusion.Btremix.definition.api.UiSchema
 import com.Fusion.Btremix.scripting.api.ScriptCodec
+import com.Fusion.Btremix.scripting.api.ScriptExpression
 import com.Fusion.Btremix.device.runtime.StateValue
 import com.Fusion.Btremix.definition.validator.DefinitionValidator
 import java.util.UUID
@@ -42,6 +46,7 @@ object DefinitionJsonCodec {
         id = obj.requiredString("id"),
         displayName = obj.requiredString("displayName"),
         version = obj.requiredString("version"),
+        schemaVersion = obj.optionalInt("schemaVersion") ?: DefinitionSchema.VERSION_SCRIPT_ONLY,
         runtime = obj.optionalString("runtime"),
         capabilities = obj.optionalArray("capabilities")?.values?.mapIndexed { index, value -> value.string("manifest.capabilities[$index]") }?.toSet() ?: emptySet(),
         matchers = obj.optionalArray("matchers")?.values?.mapIndexed { index, value -> parseMatcher(value.obj("manifest.matchers[$index]"), index) } ?: emptyList(),
@@ -87,10 +92,49 @@ object DefinitionJsonCodec {
                 else -> throw DefinitionJsonException("protocol.endianness", "must be 'little' or 'big'")
             },
             packet = packet,
+            transport = obj.optionalObj("transport")?.let(::parseTransport),
+            framing = obj.optionalObj("framing")?.let(::parseFraming),
             messages = messages,
             transactions = transactions,
+            initialize = obj.optionalArray("initialize")?.values?.mapIndexed { index, value ->
+                value.string("protocol.initialize[$index]")
+            } ?: emptyList(),
         )
     }
+
+    private fun parseTransport(obj: JsonValue.Object): TransportDefinition = TransportDefinition(
+        service = obj.requiredString("service"),
+        characteristic = obj.optionalString("characteristic"),
+        withResponse = obj.optionalBoolean("withResponse") ?: true,
+        type = when (val type = (obj.optionalString("type") ?: "gatt").lowercase()) {
+            "gatt" -> com.Fusion.Btremix.definition.api.TransportType.GATT
+            "rfcomm", "spp", "classic" -> com.Fusion.Btremix.definition.api.TransportType.RFCOMM
+            else -> throw DefinitionJsonException("protocol.transport.type", "must be 'gatt' or 'rfcomm', not '$type'")
+        },
+        bonded = obj.optionalBoolean("bonded") ?: true,
+    )
+
+    private fun parseFraming(obj: JsonValue.Object): com.Fusion.Btremix.definition.api.FramingDefinition =
+        com.Fusion.Btremix.definition.api.FramingDefinition(
+            codec = obj.requiredString("codec"),
+            header = obj.optionalInt("header"),
+            trailer = obj.optionalInt("trailer"),
+            escape = obj.optionalInt("escape"),
+            escapeMask = obj.optionalInt("escapeMask") ?: 0xEF,
+            checksum = obj.optionalString("checksum"),
+            messageTypeOffset = obj.optionalObj("layout")?.optionalInt("messageTypeOffset") ?: 0,
+            sequenceOffset = obj.optionalObj("layout")?.let { layout -> layout.optionalInt("sequenceOffset") } ?: 1,
+            lengthOffset = obj.optionalObj("layout")?.optionalInt("lengthOffset") ?: 2,
+            lengthBytes = obj.optionalObj("layout")?.optionalInt("lengthBytes") ?: 4,
+            lengthByteOrder = obj.optionalObj("layout")?.optionalString("lengthByteOrder")
+                ?.let { parseEndianness(it, "protocol.framing.layout.lengthByteOrder") }
+                ?: com.Fusion.Btremix.protocol.api.Endianness.BIG,
+            acknowledgeMessageTypes = obj.optionalObj("acknowledge")?.optionalArray("messageTypes")
+                ?.values?.mapIndexed { index, value -> value.number("protocol.framing.acknowledge.messageTypes[$index]").raw.toIntOrNull() ?: throw DefinitionJsonException("protocol.framing.acknowledge.messageTypes[$index]", "must be an integer") }
+                ?: emptyList(),
+            acknowledgeReplyMessageType = obj.optionalObj("acknowledge")?.optionalInt("replyMessageType"),
+            acknowledgeSequence = obj.optionalObj("acknowledge")?.optionalString("sequence") ?: "complement",
+        )
 
     private fun parseState(key: String, obj: JsonValue.Object): StateDefinition = StateDefinition(
         key = key,
@@ -101,6 +145,21 @@ object DefinitionJsonCodec {
         unit = obj.optionalString("unit"),
         enumValues = parseStringMap(obj.optionalObj("enumValues"), "states.$key.enumValues"),
         min = obj.optionalDouble("min"), max = obj.optionalDouble("max"), step = obj.optionalDouble("step"),
+        notify = obj.optionalObj("notify")?.let { parseNotify(key, it) },
+    )
+
+    private fun parseNotify(stateKey: String, obj: JsonValue.Object): NotifyDefinition = NotifyDefinition(
+        service = obj.optionalString("service"),
+        characteristic = obj.optionalString("characteristic"),
+        decode = obj.values["decode"]?.let { ScriptCodec.parseExpression(it, "states.$stateKey.notify.decode") },
+        payloadTypes = buildSet {
+            obj.optionalInt("payloadType")?.let(::add)
+            obj.optionalArray("payloadTypes")?.values?.forEachIndexed { index, value ->
+                add(value.number("states.$stateKey.notify.payloadTypes[$index]").raw.toIntOrNull()
+                    ?: throw DefinitionJsonException("states.$stateKey.notify.payloadTypes[$index]", "must be an integer"))
+            }
+        },
+        condition = obj.values["if"]?.let { ScriptCodec.parseExpression(it, "states.$stateKey.notify.if") },
     )
 
     private fun parseStates(value: JsonValue): Map<String, StateDefinition> = when (value) {
@@ -130,7 +189,21 @@ object DefinitionJsonCodec {
         } ?: emptyList(),
         resultState = obj.optionalString("resultState"),
         script = obj.values["script"]?.let { ScriptCodec.parse(it, "actions.$id.script") },
+        transaction = obj.optionalString("transaction"),
+        arguments = obj.optionalObj("arguments")?.values?.mapValues { (field, value) ->
+            ScriptCodec.parseExpression(value, "actions.$id.arguments.$field")
+        } ?: emptyMap(),
+        result = obj.values["result"]?.let { ScriptCodec.parseExpression(it, "actions.$id.result") },
+        refresh = parseTransactionNames(obj.values["refresh"], "actions.$id.refresh"),
     )
+
+    /** `refresh` accepts one transaction name or an ordered list of names. */
+    private fun parseTransactionNames(value: JsonValue?, path: String): List<String> = when (value) {
+        null -> emptyList()
+        is JsonValue.StringValue -> listOf(value.value)
+        is JsonValue.Array -> value.values.mapIndexed { index, item -> item.string("$path[$index]") }
+        else -> throw DefinitionJsonException(path, "must be a string or an array of strings")
+    }
 
     private fun parseActions(value: JsonValue): Map<String, ActionDefinition> = when (value) {
         is JsonValue.Object -> value.values.mapValues { (id, item) -> parseAction(id, item.obj("actions.$id")) }
@@ -237,8 +310,18 @@ object DefinitionJsonCodec {
         requestCommand = obj.requiredInt("requestCommand"),
         requestMessage = obj.optionalString("requestMessage"),
         expectedCommand = obj.optionalInt("expectedCommand"),
+        responseMessage = obj.optionalString("responseMessage"),
         timeout = obj.optionalLong("timeoutMs")?.milliseconds,
         retries = obj.optionalInt("retries") ?: 0,
+        expectedPayloadTypes = buildSet {
+            obj.optionalInt("expectedPayloadType")?.let(::add)
+            obj.optionalArray("expectedPayloadTypes")?.values?.forEachIndexed { index, value ->
+                add(value.number("protocol.transactions.$name.expectedPayloadTypes[$index]").raw.toIntOrNull()
+                    ?: throw DefinitionJsonException("protocol.transactions.$name.expectedPayloadTypes[$index]", "must be an integer"))
+            }
+        },
+        expectsResponse = obj.optionalBoolean("expectsResponse") ?: true,
+        requestPayload = obj.optionalString("requestPayload")?.let { parseBytes(it, "protocol.transactions.$name.requestPayload") },
     )
 
     private fun parseEndianness(value: String, path: String) = when (value.lowercase()) {

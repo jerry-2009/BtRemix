@@ -1,17 +1,9 @@
 package com.Fusion.Btremix.device.runtime
 
-import com.Fusion.Btremix.core.bluetooth.api.BleCharacteristic
-import com.Fusion.Btremix.core.bluetooth.api.BleConnection
 import com.Fusion.Btremix.core.bluetooth.api.BleDevice
-import com.Fusion.Btremix.core.bluetooth.api.BleService
-import com.Fusion.Btremix.core.bluetooth.api.ConnectionState
 import java.time.Clock
 import java.time.Instant
 import java.time.ZoneOffset
-import java.util.UUID
-import kotlinx.coroutines.flow.Flow
-import kotlinx.coroutines.flow.MutableStateFlow
-import kotlinx.coroutines.flow.emptyFlow
 import kotlinx.coroutines.runBlocking
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertTrue
@@ -72,27 +64,4 @@ class DeviceRuntimeTest {
         session.close()
     }
 
-    private class FakeBleConnection : BleConnection {
-        private val mutableState = MutableStateFlow<ConnectionState>(ConnectionState.Connected)
-        var discoverCount = 0
-        var disconnected = false
-
-        override val state = mutableState
-
-        override suspend fun discoverServices(): List<BleService> {
-            discoverCount++
-            return listOf(BleService(UUID.fromString("0000180f-0000-1000-8000-00805f9b34fb")))
-        }
-
-        override suspend fun read(characteristic: BleCharacteristic): ByteArray = byteArrayOf()
-
-        override suspend fun write(characteristic: BleCharacteristic, data: ByteArray, withResponse: Boolean) = Unit
-
-        override fun notifications(characteristic: BleCharacteristic): Flow<ByteArray> = emptyFlow()
-
-        override suspend fun disconnect() {
-            disconnected = true
-            mutableState.value = ConnectionState.Disconnected
-        }
-    }
 }

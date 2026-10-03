@@ -5,12 +5,10 @@ import android.net.Uri
 import android.provider.OpenableColumns
 import androidx.lifecycle.AndroidViewModel
 import androidx.lifecycle.viewModelScope
+import com.Fusion.Btremix.BtRemixApplication
 import com.Fusion.Btremix.definition.api.LoadedDeviceDefinition
-import com.Fusion.Btremix.definition.loader.AndroidAssetDefinitionSource
-import com.Fusion.Btremix.definition.loader.DefinitionLoader
 import com.Fusion.Btremix.definition.packages.DevicePackage
-import com.Fusion.Btremix.definition.packages.DevicePackageManager
-import com.Fusion.Btremix.definition.packages.DevicePackageStore
+import com.Fusion.Btremix.definition.packages.PackageLoadFailure
 import com.Fusion.Btremix.definition.packages.PackageError
 import com.Fusion.Btremix.definition.packages.PackageException
 import com.Fusion.Btremix.definition.packages.PackageInstallResult
@@ -51,6 +49,14 @@ data class ReplacePrompt(
     val candidateVersion: String,
 )
 
+/** Renders a registered package's `ui` section without connecting to a device. */
+data class PackageUiPreview(
+    val packageId: String,
+    val displayName: String,
+    val version: String,
+    val definition: LoadedDeviceDefinition,
+)
+
 data class PackageToolsUiState(
     val packages: List<PackageListItem> = emptyList(),
     val loading: Boolean = false,
@@ -58,18 +64,21 @@ data class PackageToolsUiState(
     val errors: List<PackageErrorItem> = emptyList(),
     val selectedPackageId: String? = null,
     val replacePrompt: ReplacePrompt? = null,
+    val preview: PackageUiPreview? = null,
     val message: String? = null,
 )
 
 /**
  * Developer tools state for installing, listing and removing `.dcpkg` device packages.
  *
- * The ViewModel owns the Android-specific parts (file picker URI, private directory) and delegates
- * package semantics to [DevicePackageManager].
+ * The ViewModel owns the Android-specific parts (file picker URI, cache copy) and delegates package
+ * semantics to the process-scoped manager owned by [BtRemixApplication]. Sharing that manager is what
+ * lets the BLE Explorer see packages installed from this screen without a reload.
  */
 class PackageToolsViewModel(application: Application) : AndroidViewModel(application) {
-    private val store = DevicePackageStore(File(application.filesDir, PACKAGE_DIRECTORY))
-    private val manager = DevicePackageManager(store)
+    private val app = application as BtRemixApplication
+    private val bootstrap = app.packageBootstrap
+    private val manager = app.packages
     private val mutableState = MutableStateFlow(PackageToolsUiState(loading = true))
     val state: StateFlow<PackageToolsUiState> = mutableState.asStateFlow()
 
@@ -84,12 +93,20 @@ class PackageToolsViewModel(application: Application) : AndroidViewModel(applica
                 }
             }
         }
-        viewModelScope.launch { load() }
+        viewModelScope.launch {
+            bootstrap.ready.collect { ready -> mutableState.update { it.copy(loading = !ready) } }
+        }
+        viewModelScope.launch {
+            bootstrap.failures.collect { failures ->
+                mutableState.update { it.copy(errors = failures.map(::toErrorItem)) }
+            }
+        }
+        viewModelScope.launch { withContext(Dispatchers.IO) { bootstrap.loadIfNeeded() } }
     }
 
     /** Re-reads built-in definitions and re-scans the private package directory. */
     fun reload() {
-        viewModelScope.launch { load() }
+        viewModelScope.launch { withContext(Dispatchers.IO) { bootstrap.load() } }
     }
 
     fun install(uri: Uri) {
@@ -133,12 +150,35 @@ class PackageToolsViewModel(application: Application) : AndroidViewModel(applica
                 runCatching { manager.uninstall(packageId) }.exceptionOrNull()?.asPackageError(packageId)
             }
             if (failure == null) {
-                mutableState.update { it.copy(message = "Removed $packageId", selectedPackageId = null) }
+                mutableState.update {
+                    it.copy(
+                        message = "Removed $packageId",
+                        selectedPackageId = null,
+                        preview = it.preview?.takeUnless { preview -> preview.packageId == packageId },
+                    )
+                }
             } else {
                 mutableState.update { it.copy(errors = listOf(PackageErrorItem(packageId, failure)) + it.errors) }
             }
         }
     }
+
+    /** Opens the developer-tools UI preview for a registered package. */
+    fun preview(packageId: String) {
+        val packageToPreview = manager.registry.find(packageId) ?: return
+        mutableState.update {
+            it.copy(
+                preview = PackageUiPreview(
+                    packageId = packageToPreview.packageId,
+                    displayName = packageToPreview.displayName,
+                    version = packageToPreview.version,
+                    definition = packageToPreview.definition,
+                ),
+            )
+        }
+    }
+
+    fun dismissPreview() = mutableState.update { it.copy(preview = null) }
 
     fun select(packageId: String?) {
         mutableState.update { it.copy(selectedPackageId = if (it.selectedPackageId == packageId) null else packageId) }
@@ -147,38 +187,6 @@ class PackageToolsViewModel(application: Application) : AndroidViewModel(applica
     fun dismissMessage() = mutableState.update { it.copy(message = null) }
 
     fun clearErrors() = mutableState.update { it.copy(errors = emptyList()) }
-
-    private suspend fun load() = withContext(Dispatchers.IO) {
-        mutableState.update { it.copy(loading = true) }
-        val (definitions, builtInErrors) = loadBuiltInDefinitions()
-        val errors = mutableListOf<PackageErrorItem>()
-        errors += builtInErrors
-        errors += manager.registerBuiltIns(definitions).map { PackageErrorItem(null, it) }
-        errors += manager.refreshInstalled().map { PackageErrorItem(null, it) }
-        mutableState.update { it.copy(loading = false, errors = errors) }
-    }
-
-    private fun loadBuiltInDefinitions(): Pair<List<LoadedDeviceDefinition>, List<PackageErrorItem>> {
-        val assets = getApplication<Application>().assets
-        val source = AndroidAssetDefinitionSource(assets)
-        val loader = DefinitionLoader()
-        val definitions = mutableListOf<LoadedDeviceDefinition>()
-        val errors = mutableListOf<PackageErrorItem>()
-        val paths = runCatching { source.paths(DEFINITIONS_DIRECTORY) }.getOrElse { failure ->
-            return emptyList<LoadedDeviceDefinition>() to listOf(
-                PackageErrorItem(
-                    null,
-                    PackageError.StorageFailure("cannot list built-in definitions: ${failure.message}"),
-                ),
-            )
-        }
-        paths.forEach { name ->
-            runCatching { loader.load(source, "$DEFINITIONS_DIRECTORY/$name") }
-                .onSuccess(definitions::add)
-                .onFailure { errors += PackageErrorItem(name, it.asPackageError(name)) }
-        }
-        return definitions to errors
-    }
 
     private fun commitInstall(file: File, sourceName: String, replace: Boolean): InstallOutcome =
         runCatching { manager.install(file.readBytes(), sourceName, replace) }
@@ -275,6 +283,8 @@ class PackageToolsViewModel(application: Application) : AndroidViewModel(applica
         assetCount = packageItem.assets.size,
     )
 
+    private fun toErrorItem(failure: PackageLoadFailure) = PackageErrorItem(failure.sourceName, failure.error)
+
     private sealed interface InstallOutcome {
         val tempFile: File?
 
@@ -288,9 +298,7 @@ class PackageToolsViewModel(application: Application) : AndroidViewModel(applica
     }
 
     companion object {
-        const val PACKAGE_DIRECTORY = "device-packages"
         private const val INSTALL_CACHE_DIRECTORY = "package-install"
-        private const val DEFINITIONS_DIRECTORY = "definitions"
         private val MAX_ARCHIVE_BYTES = PackageLimits().maxArchiveBytes
     }
 }

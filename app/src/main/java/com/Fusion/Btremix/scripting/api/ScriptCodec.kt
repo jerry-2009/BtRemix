@@ -12,17 +12,22 @@ object ScriptCodec {
     private const val MAX_DEPTH = 8
     private const val MAX_BYTES = 4096
 
-    fun parse(value: JsonValue, path: String): ScriptProgram {
-        var nodes = 0
-        fun visit() {
+    fun parse(value: JsonValue, path: String): ScriptProgram = ScriptProgram(Parser().steps(value, path, 0))
+
+    /** Parses one expression, used by declarative bindings such as `notify.decode`. */
+    fun parseExpression(value: JsonValue, path: String): ScriptExpression = Parser().expression(value, path, 0)
+
+    private class Parser {
+        private var nodes = 0
+
+        private fun visit(path: String) {
             if (++nodes > MAX_NODES) throw ScriptFormatException(path, "script exceeds $MAX_NODES nodes")
         }
-        lateinit var expression: (JsonValue, String, Int) -> ScriptExpression
-        lateinit var steps: (JsonValue, String, Int) -> List<ScriptStep>
-        expression = { input, at, depth ->
-            visit()
+
+        fun expression(input: JsonValue, at: String, depth: Int): ScriptExpression {
+            visit(at)
             if (depth > MAX_DEPTH) throw ScriptFormatException(at, "expression nesting exceeds $MAX_DEPTH")
-            when (input) {
+            return when (input) {
                 is JsonValue.BooleanValue -> ScriptExpression.Literal(StateValue.BooleanValue(input.value))
                 is JsonValue.NumberValue -> ScriptExpression.Literal(number(input.raw, at))
                 is JsonValue.StringValue -> ScriptExpression.Literal(StateValue.StringValue(input.value))
@@ -47,16 +52,41 @@ object ScriptCodec {
                             ScriptExpression.Equals(expression(parts[0], "$at[0]", depth + 1), expression(parts[1], "$at[1]", depth + 1))
                         }
                         "concat" -> ScriptExpression.Concat(argument.array(at).mapIndexed { index, part -> expression(part, "$at[$index]", depth + 1) })
+                        "len" -> ScriptExpression.Length(expression(argument, at, depth + 1))
+                        "if" -> {
+                            val parts = argument.array(at)
+                            if (parts.size != 3) throw ScriptFormatException(at, "if requires condition, then and else")
+                            ScriptExpression.Conditional(
+                                condition = expression(parts[0], "$at[0]", depth + 1),
+                                whenTrue = expression(parts[1], "$at[1]", depth + 1),
+                                whenFalse = expression(parts[2], "$at[2]", depth + 1),
+                            )
+                        }
+                        "map" -> {
+                            val mapping = argument.obj("$at.value")
+                            val table = mapping.values["table"]?.obj("$at.table")?.values
+                                ?.mapValues { (key, value) -> value.string("$at.table.$key") }
+                                ?: throw ScriptFormatException("$at.table", "map requires a table")
+                            ScriptExpression.Mapping(
+                                value = expression(
+                                    mapping.values["value"] ?: throw ScriptFormatException("$at.value", "map requires a value"),
+                                    "$at.value",
+                                    depth + 1,
+                                ),
+                                table = table,
+                            )
+                        }
                         else -> throw ScriptFormatException(at, "unsupported expression '$op'")
                     }
                 }
                 else -> throw ScriptFormatException(at, "unsupported expression")
             }
         }
-        steps = { input, at, depth ->
+
+        fun steps(input: JsonValue, at: String, depth: Int): List<ScriptStep> {
             if (depth > MAX_DEPTH) throw ScriptFormatException(at, "step nesting exceeds $MAX_DEPTH")
-            input.array(at).mapIndexed { index, item ->
-                visit()
+            return input.array(at).mapIndexed { index, item ->
+                visit(at)
                 val stepPath = "$at[$index]"
                 val fields = item.obj(stepPath)
                 val op = fields.requiredString("op", stepPath)
@@ -64,7 +94,7 @@ object ScriptCodec {
                 fun value() = expression(fields.required("value", stepPath), "$stepPath.value", 0)
                 fun characteristic() = UUID.fromString(required("characteristic")).toString()
                 fun service() = UUID.fromString(required("service")).toString()
-                val step = try {
+                try {
                     when (op) {
                         "ble.read" -> ScriptStep.Read(service(), characteristic(), required("into"))
                         "ble.write" -> ScriptStep.Write(service(), characteristic(), value(), fields.optionalBoolean("withResponse", stepPath) ?: true)
@@ -82,10 +112,8 @@ object ScriptCodec {
                     if (error is ScriptFormatException) throw error
                     throw ScriptFormatException(stepPath, error.message ?: "invalid step")
                 }
-                step
             }
         }
-        return ScriptProgram(steps(value, path, 0))
     }
 
     private fun number(raw: String, path: String): StateValue = raw.toIntOrNull()?.let(StateValue::IntValue)

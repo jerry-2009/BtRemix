@@ -31,6 +31,25 @@ class IncrementingSequenceGenerator(start: Int = 0) : SequenceGenerator {
     }
 }
 
+/**
+ * Alternates between 0 and 1.
+ *
+ * Some byte-stream protocols expect the request sequence to toggle between two values rather than
+ * increment; an incrementing counter would drift away from what the peer accepts.
+ */
+class TogglingSequenceGenerator(private var value: Int = 0) : SequenceGenerator {
+    init {
+        require(value in 0..1) { "Toggling sequence must start at 0 or 1" }
+    }
+
+    @Synchronized
+    override fun next(): Int {
+        val current = value
+        value = 1 - value
+        return current
+    }
+}
+
 data class TransactionRequest(
     val request: Packet,
     val expectedCommand: Int? = null,
@@ -107,6 +126,12 @@ class TransactionRuntime(
         return TransactionResult.Failure(
             if (retries == 0) lastError!! else TransactionError.RetryExhausted(lastError!!, retries + 1),
         )
+    }
+
+    /** Writes [packet] once, assigning a sequence when the packet has none. */
+    suspend fun send(packet: Packet) {
+        val sequence = packet.sequence ?: sequenceGenerator.next()
+        transport.write(packetEncoder.encode(packet.copy(sequence = sequence)))
     }
 
     private suspend fun runAttempt(

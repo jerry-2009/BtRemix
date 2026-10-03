@@ -10,6 +10,15 @@ interface ProtocolRuntime {
     val packetDecoder: PacketDecoder
 
     suspend fun execute(request: TransactionRequest): TransactionResult
+
+    /**
+     * Writes [packet] once without waiting for a response.
+     *
+     * Many protocols acknowledge a SET command only at the framing layer and never answer it at the
+     * application layer; declaring such a transaction as write-only keeps the action honest instead
+     * of reporting a timeout for a command the device accepted.
+     */
+    suspend fun send(packet: Packet)
 }
 
 /** A small production-facing implementation for packet transactions. */
@@ -32,4 +41,6 @@ class DefaultProtocolRuntime(
 
     override suspend fun execute(request: TransactionRequest): TransactionResult =
         transactionRuntime.execute(request)
+
+    override suspend fun send(packet: Packet) = transactionRuntime.send(packet)
 }

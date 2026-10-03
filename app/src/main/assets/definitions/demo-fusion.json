@@ -2,29 +2,62 @@
   "manifest": {
     "id": "demo.fusion",
     "displayName": "Fusion Demo Device",
-    "version": "1.0.0",
-    "capabilities": ["demo"],
+    "version": "1.1.0",
+    "schemaVersion": 2,
+    "capabilities": ["demo", "battery", "noise-control"],
     "matchers": [
-      { "type": "namePrefix", "value": "Fusion", "priority": 10 }
+      { "type": "namePrefix", "value": "Fusion", "priority": 10 },
+      { "type": "serviceUuid", "value": "0000ffe0-0000-1000-8000-00805f9b34fb", "priority": 180 }
     ]
   },
   "protocol": {
     "endianness": "little",
     "packet": { "includesSequence": true },
+    "transport": {
+      "service": "0000ffe0-0000-1000-8000-00805f9b34fb",
+      "characteristic": "0000ffe1-0000-1000-8000-00805f9b34fb",
+      "withResponse": true
+    },
     "messages": {
+      "setVolume": {
+        "fields": [
+          { "name": "value", "type": "uint8" }
+        ]
+      },
       "setMode": {
         "fields": [
-          { "name": "mode", "type": "uint8" }
+          { "name": "mode", "type": "enum", "enumValues": { "0": "off", "1": "transparency", "2": "noiseCanceling" } }
+        ]
+      },
+      "setMute": {
+        "fields": [
+          { "name": "muted", "type": "uint8" }
         ]
       }
     },
     "transactions": {
-      "setMode": {
+      "volume.set": {
         "requestCommand": 16,
-        "requestMessage": "setMode",
+        "requestMessage": "setVolume",
         "expectedCommand": 144,
+        "responseMessage": "setVolume",
         "timeoutMs": 1000,
         "retries": 1
+      },
+      "anc.set": {
+        "requestCommand": 17,
+        "requestMessage": "setMode",
+        "expectedCommand": 145,
+        "responseMessage": "setMode",
+        "timeoutMs": 1000,
+        "retries": 1
+      },
+      "mute.set": {
+        "requestCommand": 18,
+        "requestMessage": "setMute",
+        "expectedCommand": 146,
+        "responseMessage": "setMute",
+        "timeoutMs": 1000
       }
     }
   },
@@ -36,7 +69,12 @@
       "default": 82,
       "min": 0,
       "max": 100,
-      "step": 1
+      "step": 1,
+      "notify": {
+        "service": "0000180f-0000-1000-8000-00805f9b34fb",
+        "characteristic": "00002a19-0000-1000-8000-00805f9b34fb",
+        "decode": { "at": [{ "var": "raw" }, 0] }
+      }
     },
     "ancMode": {
       "type": "enum",
@@ -44,28 +82,57 @@
       "default": "transparency",
       "enumValues": { "noiseCanceling": "Noise canceling", "transparency": "Transparency", "off": "Off" }
     },
-    "muted": { "type": "boolean", "displayName": "Mute", "default": false }
+    "muted": { "type": "boolean", "displayName": "Mute", "default": false },
+    "volume": {
+      "type": "integer",
+      "displayName": "Volume",
+      "default": 50,
+      "min": 0,
+      "max": 100,
+      "step": 5
+    }
   },
   "actions": {
     "volume.set": {
       "displayName": "Set volume",
-      "parameters": [{ "name": "value", "type": "integer", "min": 0, "max": 100, "step": 1 }]
+      "parameters": [{ "name": "value", "type": "integer", "min": 0, "max": 100, "step": 1 }],
+      "resultState": "volume",
+      "transaction": "volume.set",
+      "arguments": { "value": { "arg": "value" } }
     },
     "anc.setMode": {
       "displayName": "Set noise control",
       "parameters": [{ "name": "value", "type": "enum", "enumValues": { "noiseCanceling": "Noise canceling", "transparency": "Transparency", "off": "Off" } }],
-      "resultState": "ancMode"
+      "resultState": "ancMode",
+      "transaction": "anc.set",
+      "arguments": { "mode": { "arg": "value" } }
     },
-    "mute.set": { "displayName": "Set mute", "parameters": [{ "name": "value", "type": "boolean" }], "resultState": "muted" }
+    "mute.set": {
+      "displayName": "Set mute",
+      "parameters": [{ "name": "value", "type": "boolean" }],
+      "resultState": "muted",
+      "transaction": "mute.set",
+      "arguments": { "muted": { "arg": "value" } }
+    },
+    "battery.sync": {
+      "displayName": "Sync battery",
+      "resultState": "battery",
+      "script": [
+        { "op": "ble.subscribe", "service": "0000180f-0000-1000-8000-00805f9b34fb", "characteristic": "00002a19-0000-1000-8000-00805f9b34fb", "into": "raw" },
+        { "op": "state.set", "key": "battery", "value": { "at": [{ "var": "raw" }, 0] } },
+        { "op": "return", "value": { "state": "battery" } }
+      ]
+    }
   },
   "ui": {
     "title": "Fusion Demo Device",
     "children": [
       { "type": "section", "title": "Overview", "children": [
-        { "type": "value", "state": "battery" },
-        { "type": "progress", "state": "battery" }
+        { "type": "progress", "state": "battery" },
+        { "type": "button", "label": "Sync battery (script escape hatch)", "action": "battery.sync" }
       ]},
       { "type": "section", "title": "Controls", "children": [
+        { "type": "slider", "state": "volume", "action": "volume.set" },
         { "type": "segmented", "state": "ancMode", "action": "anc.setMode", "options": ["noiseCanceling", "transparency", "off"] },
         { "type": "switch", "state": "muted", "action": "mute.set" }
       ]}

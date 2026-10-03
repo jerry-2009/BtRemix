@@ -35,4 +35,9 @@ sealed interface RuntimeError {
     }
     data class ActionFailed(val id: String, override val message: String, override val cause: Throwable? = null) : RuntimeError
     data class ScriptFailed(val id: String, override val message: String, override val cause: Throwable? = null) : RuntimeError
+    data class DefinitionBindingFailed(
+        val definitionId: String,
+        override val message: String,
+        override val cause: Throwable? = null,
+    ) : RuntimeError
 }

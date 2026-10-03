@@ -15,6 +15,22 @@ sealed interface ScriptExpression {
     data class ByteAt(val value: ScriptExpression, val index: Int) : ScriptExpression
     data class Equals(val left: ScriptExpression, val right: ScriptExpression) : ScriptExpression
     data class Concat(val values: List<ScriptExpression>) : ScriptExpression
+    /** Picks [whenTrue] or [whenFalse] from [condition]; used to derive protocol bytes from a mode. */
+    data class Conditional(
+        val condition: ScriptExpression,
+        val whenTrue: ScriptExpression,
+        val whenFalse: ScriptExpression,
+    ) : ScriptExpression
+    /** Maps a numeric or string value through [table], falling back to the raw value as text. */
+    data class Mapping(
+        val value: ScriptExpression,
+        val table: Map<String, String>,
+    ) : ScriptExpression
+    /**
+     * Byte length of a bytes value. Firmware often answers the same parameter with differently
+     * shaped payloads ([value][…]), so a decode can pick the field position from the frame length.
+     */
+    data class Length(val value: ScriptExpression) : ScriptExpression
 }
 
 sealed interface ScriptStep {

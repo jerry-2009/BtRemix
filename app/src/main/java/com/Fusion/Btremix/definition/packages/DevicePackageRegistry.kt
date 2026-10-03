@@ -1,11 +1,20 @@
 package com.Fusion.Btremix.definition.packages
 
 import com.Fusion.Btremix.core.bluetooth.api.BleScanResult
+import com.Fusion.Btremix.core.bluetooth.api.BleService
+import com.Fusion.Btremix.definition.api.DeviceMatchRule
 import com.Fusion.Btremix.definition.api.LoadedDeviceDefinition
 import com.Fusion.Btremix.definition.matcher.DefinitionMatcher
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
+
+/** A matching package together with the rule and priority that produced the match. */
+data class DevicePackageMatch(
+    val devicePackage: DevicePackage,
+    val priority: Int,
+    val rule: DeviceMatchRule,
+)
 
 /**
  * Keeps the set of loaded device packages, keyed by `packageId`.
@@ -82,14 +91,35 @@ class DevicePackageRegistry {
 
     fun definitions(): List<LoadedDeviceDefinition> = mutablePackages.value.map { it.definition }
 
-    /** Finds the highest-priority matching package for a scan result, preserving registry order on ties. */
-    fun findMatch(scan: BleScanResult): DevicePackage? = mutablePackages.value
+    /**
+     * Finds the highest-priority matching package for a scan result and reports which rule matched,
+     * preserving registry order on ties. The extra detail lets the UI show why a device was
+     * recognised instead of silently applying a definition.
+     */
+    fun match(scan: BleScanResult): DevicePackageMatch? = mutablePackages.value
         .asSequence()
         .mapNotNull { packageToCheck ->
-            DefinitionMatcher.rank(packageToCheck.definition, scan)?.let { packageToCheck to it.priority }
+            DefinitionMatcher.rank(packageToCheck.definition, scan)?.let { match ->
+                DevicePackageMatch(packageToCheck, match.priority, match.rule)
+            }
         }
-        .maxByOrNull { it.second }
-        ?.first
+        .maxByOrNull { it.priority }
+
+    /**
+     * Connect-time match over discovered GATT services, used when the advertised scan data did not
+     * identify the device. Ties keep registry order, like [match].
+     */
+    fun match(services: List<BleService>): DevicePackageMatch? = mutablePackages.value
+        .asSequence()
+        .mapNotNull { packageToCheck ->
+            DefinitionMatcher.rankServices(packageToCheck.definition, services)?.let { match ->
+                DevicePackageMatch(packageToCheck, match.priority, match.rule)
+            }
+        }
+        .maxByOrNull { it.priority }
+
+    /** Finds the highest-priority matching package for a scan result. */
+    fun findMatch(scan: BleScanResult): DevicePackage? = match(scan)?.devicePackage
 
     private fun publish(packages: List<DevicePackage>): List<DevicePackage> {
         val sorted = packages.sortedWith(
