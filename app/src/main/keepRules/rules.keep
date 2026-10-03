@@ -10,3 +10,17 @@
 #-keepclassmembers class fqcn.of.javascript.interface.for.webview {
 #   public *;
 #}
+
+# --- Melody bridge (LSPosed) ---------------------------------------------------------------
+# The libxposed framework loads the entry point by its exact class name from
+# META-INF/xposed/java_init.list, so it and its no-argument constructor must survive R8.
+-keep class com.Fusion.Btremix.melody.hook.MelodyBridgeEntry {
+    public <init>();
+}
+
+# Compiled AIDL types are looked up by interface name across the process boundary (M2+).
+-keep interface com.Fusion.Btremix.melody.bridge.** { *; }
+-keep class com.Fusion.Btremix.melody.bridge.** { *; }
+
+# The Xposed API is compile-only; the runtime classes come from the framework.
+-dontwarn io.github.libxposed.**

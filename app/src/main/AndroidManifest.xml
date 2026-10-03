@@ -9,6 +9,14 @@
     <uses-permission android:name="android.permission.ACCESS_FINE_LOCATION" android:maxSdkVersion="30" />
     <uses-permission android:name="android.permission.BLUETOOTH_SCAN" android:usesPermissionFlags="neverForLocation" />
     <uses-permission android:name="android.permission.BLUETOOTH_CONNECT" />
+    <!-- Melody bridge (MELODY_BRIDGE_SPEC §6.4): the bridge session host is a foreground service. -->
+    <uses-permission android:name="android.permission.FOREGROUND_SERVICE" />
+    <uses-permission android:name="android.permission.FOREGROUND_SERVICE_CONNECTED_DEVICE" />
+
+    <!-- The bridge talks to com.oplus.melody; package visibility is required on API 30+. -->
+    <queries>
+        <package android:name="com.oplus.melody" />
+    </queries>
 
     <application
         android:allowBackup="true"
@@ -31,7 +39,19 @@
 
                 <category android:name="android.intent.category.LAUNCHER" />
             </intent-filter>
+            <!-- Lets LSPosed open the bridge entry point as this module's settings screen. -->
+            <intent-filter>
+                <action android:name="android.intent.action.MAIN" />
+
+                <category android:name="de.robv.android.xposed.category.MODULE_SETTINGS" />
+            </intent-filter>
         </activity>
+
+        <!-- Declared in M0; the AIDL binder and session wiring are implemented in M2. -->
+        <service
+            android:name=".melody.bridge.MelodySessionService"
+            android:exported="true"
+            android:foregroundServiceType="connectedDevice" />
     </application>
 
 </manifest>

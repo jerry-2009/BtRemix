@@ -32,6 +32,17 @@ android {
     }
     buildFeatures {
         compose = true
+        // MELODY_BRIDGE_SPEC §11.1: the Melody bridge talks to BtRemix over AIDL.
+        aidl = true
+        buildConfig = true
+    }
+    packaging {
+        resources {
+            // libxposed module metadata (module.prop / scope.list / java_init.list) must
+            // survive resource merging so LSPosed can discover the module.
+            merges += "META-INF/xposed/*"
+            excludes += "META-INF/*.kotlin_module"
+        }
     }
 }
 
@@ -45,6 +56,10 @@ dependencies {
     implementation(libs.androidx.core.ktx)
     implementation(libs.androidx.lifecycle.runtime.ktx)
     implementation(libs.kotlinx.coroutines.android)
+    // libxposed API 101 entry point; the framework supplies the implementation at runtime.
+    compileOnly(libs.libxposed.api)
+    // Host (com.oplus.melody) class lookup for R8-renamed anchors; used from M1 onwards.
+    implementation(libs.dexkit)
     testImplementation(libs.junit)
     androidTestImplementation(platform(libs.androidx.compose.bom))
     androidTestImplementation(libs.androidx.compose.ui.test.junit4)
