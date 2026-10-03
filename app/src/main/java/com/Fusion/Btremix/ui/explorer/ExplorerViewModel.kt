@@ -4,17 +4,12 @@ import android.app.Application
 import androidx.lifecycle.AndroidViewModel
 import androidx.lifecycle.viewModelScope
 import com.Fusion.Btremix.BtRemixApplication
-import com.Fusion.Btremix.core.bluetooth.BleRepository
-import com.Fusion.Btremix.core.bluetooth.android.AndroidBleManager
-import com.Fusion.Btremix.core.classic.android.AndroidRfcommManager
 import com.Fusion.Btremix.core.bluetooth.api.BleCharacteristic
 import com.Fusion.Btremix.core.bluetooth.api.BleDevice
 import com.Fusion.Btremix.core.bluetooth.api.BleScanResult
 import com.Fusion.Btremix.core.bluetooth.api.BleService
 import com.Fusion.Btremix.core.classic.api.ClassicDevice
 import com.Fusion.Btremix.core.bluetooth.api.ConnectionState
-import com.Fusion.Btremix.core.classic.api.RfcommManager
-import com.Fusion.Btremix.core.logging.InMemoryLogger
 import com.Fusion.Btremix.core.logging.LogCategory
 import com.Fusion.Btremix.core.logging.LogEntry
 import com.Fusion.Btremix.core.permissions.AndroidBluetoothPermissionManager
@@ -24,17 +19,16 @@ import com.Fusion.Btremix.definition.api.TransportType
 import com.Fusion.Btremix.definition.matcher.DefinitionMatcher
 import com.Fusion.Btremix.definition.packages.DevicePackage
 import com.Fusion.Btremix.definition.packages.DevicePackageManager
-import com.Fusion.Btremix.definition.session.DefinitionSessionFactory
 import com.Fusion.Btremix.device.runtime.ActionResult
-import com.Fusion.Btremix.device.runtime.DefaultDeviceRuntime
 import com.Fusion.Btremix.device.runtime.DeviceAction
 import com.Fusion.Btremix.device.runtime.DeviceEvent
 import com.Fusion.Btremix.device.runtime.DeviceLifecycleState
-import com.Fusion.Btremix.device.runtime.DeviceRuntime
 import com.Fusion.Btremix.device.runtime.DeviceSession
 import com.Fusion.Btremix.device.runtime.ProtocolSession
 import com.Fusion.Btremix.device.runtime.StateEntry
+import com.Fusion.Btremix.device.session.SessionRegistry
 import java.util.UUID
+import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.asStateFlow
@@ -90,16 +84,25 @@ data class ExplorerUiState(
 )
 
 class ExplorerViewModel(application: Application) : AndroidViewModel(application) {
-    private val logger = InMemoryLogger()
-    private val repository = BleRepository(AndroidBleManager(application), logger)
-    private val rfcomm: RfcommManager = AndroidRfcommManager(application)
+    /**
+     * Session-creation material is process-scoped (MELODY_BRIDGE_SPEC §11.2/§12 M2a): the Explorer
+     * borrows the shared repository, RFCOMM backend, runtime and definition factory so the Compose
+     * page and the Melody bridge work on one [SessionRegistry] session per MAC.
+     */
+    private val app = application as BtRemixApplication
+    private val logger = app.logger
+    private val repository = app.bleRepository
+    private val rfcomm = app.rfcomm
+    private val deviceRuntime = app.deviceRuntime
+    private val sessionFactory = app.sessionFactory
+    private val sessions: SessionRegistry = app.sessions
     private val permissionManager = AndroidBluetoothPermissionManager()
-    private val deviceRuntime: DeviceRuntime = DefaultDeviceRuntime()
-    private val sessionFactory = DefinitionSessionFactory(deviceRuntime)
-    private val packages: DevicePackageManager = (application as BtRemixApplication).packages
+    private val packages: DevicePackageManager = app.packages
     private val mutableState = MutableStateFlow(ExplorerUiState())
     val state = mutableState.asStateFlow()
     private var session: ProtocolSession? = null
+    /** Normalised MAC of the session this ViewModel currently holds a reference to, if any. */
+    private var heldMac: String? = null
     private var gattSession: DeviceSession? = null
     private var scanJob: Job? = null
     private var connectionStateJob: Job? = null
@@ -194,7 +197,7 @@ class ExplorerViewModel(application: Application) : AndroidViewModel(application
         }
         viewModelScope.launch {
             stopScan()
-            disconnect()
+            detachHeldSession()
             mutableState.update {
                 it.copy(
                     connectedDevice = device,
@@ -207,14 +210,46 @@ class ExplorerViewModel(application: Application) : AndroidViewModel(application
             val scannedMatch = mutableState.value.matches[device.id]
             val scannedPackage: DevicePackage? = scannedMatch?.let { packages.registry.find(it.packageId) }
                 ?: packages.registry.match(BleScanResult(device, rssi = 0))?.devicePackage
-            runCatching {
+            try {
                 val definition = scannedPackage?.definition
-                if (definition?.protocol?.transport?.type == TransportType.RFCOMM) {
-                    connectStream(device, definition)
+                val key = SessionRegistry.normalize(device.id)
+                val active = sessions.acquire(key) { openSession(device, definition) }
+                session = active
+                heldMac = key
+                gattSession = active as? DeviceSession
+                val services = (active as? DeviceSession)?.services?.value ?: emptyList()
+                val matchedDefinition = definition
+                    ?: (active as? DeviceSession)?.let {
+                        packages.registry.match(it.services.value)?.devicePackage?.definition
+                    }
+                // Reuse the match the list already showed when there is one; otherwise fall back to
+                // the GATT match (for BLE) or the advertised name (for classic peers).
+                val match = if (active is DeviceSession) {
+                    mutableState.value.matches[device.id]?.copy(matchedBy = DeviceDefinitionMatch.MATCH_SCAN)
+                        ?: packages.registry.match(services)?.let { it.toUiMatch(DeviceDefinitionMatch.MATCH_GATT) }
                 } else {
-                    connectGatt(device, scannedPackage)
+                    mutableState.value.matches[device.id]
+                        ?: packages.registry.match(BleScanResult(device, rssi = 0))?.toUiMatch(DeviceDefinitionMatch.MATCH_SCAN)
                 }
-            }.onFailure { error ->
+                if (match != null) mutableState.update { it.copy(matches = it.matches + (device.id to match)) }
+                mutableState.update { it.copy(supportsRawGatt = active is DeviceSession, view = ExplorerView.DEVICE) }
+                wireSession(active, matchedDefinition)
+                repository.log(
+                    LogCategory.GATT,
+                    if (active is DeviceSession) {
+                        "Discovered ${services.size} services" +
+                            (matchedDefinition?.let { " · definition ${it.id} v${it.manifest.version}" } ?: "")
+                    } else {
+                        "Opened SPP session to ${device.address}" +
+                            (matchedDefinition?.let { " · definition ${it.id} v${it.manifest.version}" } ?: "")
+                    },
+                    device.id,
+                )
+            } catch (cancelled: CancellationException) {
+                detachHeldSession()
+                throw cancelled
+            } catch (error: Throwable) {
+                detachHeldSession()
                 mutableState.update {
                     it.copy(connectionState = ConnectionState.Error(com.Fusion.Btremix.core.bluetooth.api.BleError.Unknown(error.message ?: "Connection failed", error)), error = error.message ?: "Connection failed")
                 }
@@ -223,58 +258,25 @@ class ExplorerViewModel(application: Application) : AndroidViewModel(application
         }
     }
 
-    /** Connects a classic Bluetooth (SPP) device using the definition's `protocol.transport`. */
-    private suspend fun connectStream(device: BleDevice, definition: LoadedDeviceDefinition) {
-        val transport = requireNotNull(definition.protocol.transport) {
-            "Definition '${definition.id}' has no protocol.transport"
+    /**
+     * Opens a fresh session for [device]. Only [SessionRegistry.acquire] calls this, and only when
+     * no live session exists for the MAC; UI code must never open a connection on its own.
+     */
+    private suspend fun openSession(device: BleDevice, definition: LoadedDeviceDefinition?): ProtocolSession {
+        if (definition != null && definition.protocol.transport?.type == TransportType.RFCOMM) {
+            val transport = requireNotNull(definition.protocol.transport) {
+                "Definition '${definition.id}' has no protocol.transport"
+            }
+            val connection = rfcomm.connect(device.address, UUID.fromString(transport.service))
+            return sessionFactory.openStream(device, connection, definition)
         }
-        val connection = rfcomm.connect(device.address, UUID.fromString(transport.service))
-        val active = sessionFactory.openStream(device, connection, definition)
-        session = active
-        gattSession = null
-        val match = mutableState.value.matches[device.id]
-            ?: packages.registry.match(BleScanResult(device, rssi = 0))?.toUiMatch(DeviceDefinitionMatch.MATCH_SCAN)
-        if (match != null) mutableState.update { it.copy(matches = it.matches + (device.id to match)) }
-        mutableState.update { it.copy(supportsRawGatt = false, view = ExplorerView.DEVICE) }
-        wireSession(active, definition)
-        repository.log(
-            LogCategory.GATT,
-            "Opened SPP session to ${device.address}" +
-                " · definition ${definition.id} v${definition.manifest.version}",
-            device.id,
-        )
-    }
-
-    private suspend fun connectGatt(device: BleDevice, scannedPackage: DevicePackage?) {
         val connection = repository.connect(device)
-        val scannedDefinition = scannedPackage?.definition
-        val opened = if (scannedDefinition != null) {
-            sessionFactory.open(device, connection, scannedDefinition) to scannedDefinition
-        } else {
-            // Only the advertised name/address was inspected so far; a definition that needs
-            // service discovery gets its chance before the session is handed to the UI.
-            val plain = deviceRuntime.open(device, connection)
-            val gattMatch = packages.registry.match(plain.services.value)
-            val attached = gattMatch?.let { sessionFactory.attach(plain, it.devicePackage.definition) } ?: plain
-            attached to gattMatch?.devicePackage?.definition
-        }
-        val active = opened.first
-        val definition = opened.second
-        session = active
-        gattSession = active
-        if (definition != null) {
-            val match = mutableState.value.matches[device.id]?.copy(matchedBy = DeviceDefinitionMatch.MATCH_SCAN)
-                ?: packages.registry.match(active.services.value)?.let { it.toUiMatch(DeviceDefinitionMatch.MATCH_GATT) }
-            if (match != null) mutableState.update { it.copy(matches = it.matches + (device.id to match)) }
-        }
-        wireSession(active, definition)
-        val services = active.services.value
-        repository.log(
-            LogCategory.GATT,
-            "Discovered ${services.size} services" +
-                (definition?.let { " · definition ${it.id} v${it.manifest.version}" } ?: ""),
-            device.id,
-        )
+        if (definition != null) return sessionFactory.open(device, connection, definition)
+        // Only the advertised name/address was inspected so far; a definition that needs service
+        // discovery gets its chance before the session is handed to the UI.
+        val plain = deviceRuntime.open(device, connection)
+        val gattMatch = packages.registry.match(plain.services.value)
+        return gattMatch?.let { sessionFactory.attach(plain, it.devicePackage.definition) } ?: plain
     }
 
     /** Shared session wiring for both transports: lifecycle, events, definition state and actions. */
@@ -370,18 +372,15 @@ class ExplorerViewModel(application: Application) : AndroidViewModel(application
         }
     }
 
+    /**
+     * Releases this ViewModel's reference to the active session.
+     *
+     * MELODY_BRIDGE_SPEC D6: the front-end never closes a session it does not exclusively own. The
+     * registry closes the connection only once the last holder releases it, so a session shared with
+     * the Melody bridge (M2b) survives the Compose page disconnecting.
+     */
     fun disconnect() {
-        notificationJobs.values.forEach(Job::cancel)
-        notificationJobs.clear()
-        connectionStateJob?.cancel()
-        definitionStateJob?.cancel()
-        definitionStateJob = null
-        sessionEventsJob?.cancel()
-        sessionEventsJob = null
-        val active = session
-        session = null
-        gattSession = null
-        if (active != null) viewModelScope.launch { runCatching { active.close() } }
+        viewModelScope.launch { detachHeldSession() }
         mutableState.update {
             it.copy(
                 connectedDevice = null,
@@ -397,6 +396,46 @@ class ExplorerViewModel(application: Application) : AndroidViewModel(application
                 monitorQuery = "",
             )
         }
+    }
+
+    /**
+     * Cancels the collectors wired to the active session and releases the registry reference held by
+     * this ViewModel. Idempotent: at most one reference is released per held session.
+     */
+    private suspend fun detachHeldSession() {
+        cancelSessionJobs()
+        val mac = heldMac
+        heldMac = null
+        session = null
+        gattSession = null
+        if (mac != null) sessions.release(mac)
+    }
+
+    private fun cancelSessionJobs() {
+        notificationJobs.values.forEach(Job::cancel)
+        notificationJobs.clear()
+        connectionStateJob?.cancel()
+        connectionStateJob = null
+        definitionStateJob?.cancel()
+        definitionStateJob = null
+        sessionEventsJob?.cancel()
+        sessionEventsJob = null
+    }
+
+    /**
+     * Releases the last held session when the ViewModel goes away.
+     *
+     * `viewModelScope` is already cancelled by the time this runs, so the reference is handed to the
+     * process-scoped registry (the missing cleanup that used to leak a connected session).
+     */
+    override fun onCleared() {
+        super.onCleared()
+        cancelSessionJobs()
+        val mac = heldMac ?: return
+        heldMac = null
+        session = null
+        gattSession = null
+        sessions.releaseAsync(mac)
     }
 
     fun read(characteristic: BleCharacteristic) {

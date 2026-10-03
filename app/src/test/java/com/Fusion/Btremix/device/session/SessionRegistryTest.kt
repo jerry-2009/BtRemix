@@ -4,9 +4,17 @@ import com.Fusion.Btremix.core.bluetooth.api.BleDevice
 import com.Fusion.Btremix.device.runtime.DefaultDeviceRuntime
 import com.Fusion.Btremix.device.runtime.DeviceLifecycleState
 import com.Fusion.Btremix.device.runtime.FakeBleConnection
+import com.Fusion.Btremix.device.runtime.StateSource
+import com.Fusion.Btremix.device.runtime.StateValue
 import java.time.Clock
 import java.time.Instant
 import java.time.ZoneOffset
+import java.util.concurrent.atomic.AtomicInteger
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.async
+import kotlinx.coroutines.awaitAll
+import kotlinx.coroutines.coroutineScope
+import kotlinx.coroutines.delay
 import kotlinx.coroutines.runBlocking
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertNull
@@ -77,6 +85,112 @@ class SessionRegistryTest {
         assertTrue(registry.managedMacs().isEmpty())
         assertEquals(DeviceLifecycleState.Disconnected, first.lifecycle.value)
         assertEquals(DeviceLifecycleState.Disconnected, second.lifecycle.value)
+    }
+
+    /**
+     * M2a ownership contract (§12): the registry is the sole creator. Two acquires for the same MAC
+     * yield one session, and one release never disturbs the other holder.
+     */
+    @Test
+    fun acquire_reusesOneSessionAndCountsReferences() = runBlocking {
+        val registry = SessionRegistry()
+        val opened = AtomicInteger()
+
+        val first = registry.acquire(mac) {
+            opened.incrementAndGet()
+            openSession()
+        }
+        val second = registry.acquire("  aa:bb:cc:dd:ee:ff  ") {
+            opened.incrementAndGet()
+            openSession()
+        }
+
+        assertSame(first, second)
+        assertEquals(1, opened.get())
+        assertEquals(2, registry.refCount(mac))
+
+        registry.release(mac)
+        assertSame(first, registry.find(mac))
+        assertEquals(1, registry.refCount(mac))
+        assertEquals(DeviceLifecycleState.Ready, first.lifecycle.value)
+
+        registry.release(mac)
+        assertNull(registry.find(mac))
+        assertEquals(0, registry.refCount(mac))
+        assertEquals(DeviceLifecycleState.Disconnected, first.lifecycle.value)
+    }
+
+    /** Concurrent acquires for the same MAC must not open two connections. */
+    @Test
+    fun acquire_singleFlightsConcurrentOpens() = runBlocking {
+        val registry = SessionRegistry()
+        val opened = AtomicInteger()
+
+        val results = coroutineScope {
+            (1..8).map {
+                async(Dispatchers.Default) {
+                    registry.acquire(mac) {
+                        opened.incrementAndGet()
+                        delay(50)
+                        openSession()
+                    }
+                }
+            }.awaitAll()
+        }
+
+        assertTrue(results.all { it === results.first() })
+        assertEquals(1, opened.get())
+        assertEquals(8, registry.refCount(mac))
+
+        repeat(8) { registry.release(mac) }
+        assertNull(registry.find(mac))
+    }
+
+    /** Releasing an unknown MAC is a no-op so a raced disconnect cannot throw. */
+    @Test
+    fun release_isNoOpForUnknownMac() = runBlocking {
+        val registry = SessionRegistry()
+        registry.release(mac)
+        assertEquals(0, registry.refCount(mac))
+    }
+
+    /** A fresh acquire after the last release opens a brand new session. */
+    @Test
+    fun acquire_reopensAfterTheLastRelease() = runBlocking {
+        val registry = SessionRegistry()
+        val first = registry.acquire(mac) { openSession() }
+        registry.release(mac)
+
+        val second = registry.acquire(mac) { openSession() }
+
+        assertTrue(first !== second)
+        registry.closeAll()
+    }
+
+    /** Snapshot is a detached copy, so mutating live data never reaches the snapshot. */
+    @Test
+    fun snapshot_detachesLifecycleAndState() = runBlocking {
+        val registry = SessionRegistry()
+        val registrySession = openSession()
+        registry.register(mac, registrySession)
+        val payload = byteArrayOf(1, 2, 3)
+        registrySession.state.set("battery.left", payload, StateSource.NOTIFICATION)
+
+        val snapshot = registry.snapshot("  aa:bb:cc:dd:ee:ff  ")!!
+        payload[0] = 9
+
+        assertEquals(mac, snapshot.mac)
+        assertEquals(DeviceLifecycleState.Ready, snapshot.lifecycle)
+        val value = snapshot.state.getValue("battery.left").value
+        assertTrue(value is StateValue.BytesValue)
+        assertTrue((value as StateValue.BytesValue).value.contentEquals(byteArrayOf(1, 2, 3)))
+
+        registry.closeAll()
+    }
+
+    @Test
+    fun snapshot_isNullForUnmanagedMac() {
+        assertNull(SessionRegistry().snapshot(mac))
     }
 
     private suspend fun openSession() =
