@@ -18,6 +18,10 @@
     public <init>();
 }
 
+# M1+ observation hooks are resolved from the entry point at runtime inside the host process.
+-keep class com.Fusion.Btremix.melody.hook.** { *; }
+-keep class com.Fusion.Btremix.melody.api.** { *; }
+
 # Compiled AIDL types are looked up by interface name across the process boundary (M2+).
 -keep interface com.Fusion.Btremix.melody.bridge.** { *; }
 -keep class com.Fusion.Btremix.melody.bridge.** { *; }
