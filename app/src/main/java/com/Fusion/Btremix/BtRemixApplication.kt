@@ -157,7 +157,16 @@ class BtRemixApplication : Application() {
     }
 
     private fun startMelodyBridgeService(deviceCount: Int) {
-        if (!hasMelodyHost()) return
+        if (!hasMelodyHost()) {
+            // Silent before: a host that is actually installed but filtered out by package visibility
+            // looked exactly like "BtRemix was never started". One line is enough to tell them apart.
+            bridgeLog.event(
+                "melody.bridge.service_skipped",
+                "reason" to "no_host",
+                "devices" to deviceCount,
+            )
+            return
+        }
         val result = runCatching {
             startForegroundService(Intent(this, MelodySessionService::class.java))
         }

@@ -17,6 +17,11 @@ class MelodyBridgeCache(private val clock: () -> Long = { System.currentTimeMill
         val mac: String,
         val lifecycle: String,
         val stateKeys: List<String>,
+        /**
+         * Levels decoded at record time (M4.3a). The header projection asks for this on every
+         * `EarphoneDTO` getter call, so it must be a plain read - never a Bundle decode per call.
+         */
+        val battery: MelodyEarphoneBattery?,
         val updatedAtMs: Long,
     )
 
@@ -45,12 +50,18 @@ class MelodyBridgeCache(private val clock: () -> Long = { System.currentTimeMill
     fun managedMacs(): List<String> = managed
 
     @Synchronized
-    fun recordSnapshot(mac: String, lifecycle: String, stateKeys: Collection<String>): CachedSnapshot {
+    fun recordSnapshot(
+        mac: String,
+        lifecycle: String,
+        stateKeys: Collection<String>,
+        battery: MelodyEarphoneBattery? = null,
+    ): CachedSnapshot {
         val key = MelodyMac.normalize(mac)
         val entry = CachedSnapshot(
             mac = key,
             lifecycle = lifecycle,
             stateKeys = stateKeys.sorted(),
+            battery = battery,
             updatedAtMs = clock(),
         )
         snapshots[key] = entry

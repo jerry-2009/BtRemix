@@ -12,6 +12,8 @@ import com.Fusion.Btremix.melody.api.MelodyDeviceInfoIdentity
 import com.Fusion.Btremix.melody.api.MelodyDeviceInfoProjection
 import com.Fusion.Btremix.melody.api.MelodyDevicePolicy
 import com.Fusion.Btremix.melody.api.MelodyDoorbellProtocol
+import com.Fusion.Btremix.melody.api.MelodyEarphoneBattery
+import com.Fusion.Btremix.melody.api.MelodyEarphoneProjection
 import com.Fusion.Btremix.melody.api.MelodyMac
 import com.Fusion.Btremix.melody.api.MelodyPanelPolicy
 import com.Fusion.Btremix.melody.api.MelodyProjectionStore
@@ -80,6 +82,22 @@ internal class MelodyBridgeClient(
      */
     private val panels = ConcurrentHashMap<String, MelodyPanelPolicy>()
 
+    /**
+     * The header projection per MAC (M4.3a), keyed to the exact snapshot it was built from. The
+     * `EarphoneDTO` getters are polled continuously by the header, so this has to be an identity read
+     * in steady state: a fresh value is computed only when a push actually replaced the snapshot.
+     */
+    private val earphones = ConcurrentHashMap<String, Pair<MelodyBridgeCache.CachedSnapshot, MelodyEarphoneProjection>>()
+
+    /** Last "header cache was cold" diagnostic per MAC, so a cold cache logs once, not per getter call. */
+    private val headerSkips = ConcurrentHashMap<String, String>()
+
+    /** Last on-demand snapshot pull per MAC; the header getters must never turn into a poll loop. */
+    private val snapshotPulls = ConcurrentHashMap<String, Long>()
+
+    /** MACs that already paid for the one bounded synchronous pull of [firstSnapshot]. */
+    private val firstSnapshotPulled = ConcurrentHashMap<String, Boolean>()
+
     private val lock = Any()
 
     /** Single worker: one wedged call fails the queued ones fast instead of piling up binder transactions. */
@@ -133,7 +151,7 @@ internal class MelodyBridgeClient(
         override fun onSnapshot(mac: String?, snapshot: MelodySnapshot?) {
             if (snapshot == null) return
             val key = MelodyMac.normalize(mac ?: snapshot.mac)
-            cache.recordSnapshot(key, snapshot.lifecycle, snapshot.stateKeys)
+            cache.recordSnapshot(key, snapshot.lifecycle, snapshot.stateKeys, MelodyEarphoneBattery.ofSnapshot(snapshot))
             log.event(
                 "melody.bridge.push",
                 "side" to SIDE,
@@ -150,6 +168,9 @@ internal class MelodyBridgeClient(
             identities.clear()
             policies.clear()
             panels.clear()
+            earphones.clear()
+            headerSkips.clear()
+            firstSnapshotPulled.clear()
             // Refresh on the link stage: this callback runs on a binder thread, and the refresh pulls
             // one `managedMacs` plus one `resolveProjection` per device.
             link.execute { runCatching { refreshFromBridge() }.onFailure { log.warn("melody.bridge.list_failed", it) } }
@@ -232,7 +253,7 @@ internal class MelodyBridgeClient(
             )
             return null
         }
-        cache.recordSnapshot(key, snapshot.lifecycle, snapshot.stateKeys)
+        cache.recordSnapshot(key, snapshot.lifecycle, snapshot.stateKeys, MelodyEarphoneBattery.ofSnapshot(snapshot))
         log.event(
             "melody.bridge.snapshot",
             "side" to SIDE,
@@ -258,6 +279,8 @@ internal class MelodyBridgeClient(
         identities.remove(key)
         policies.remove(key)
         panels.remove(key)
+        earphones.remove(key)
+        headerSkips.remove(key)
         return json
     }
 
@@ -305,6 +328,79 @@ internal class MelodyBridgeClient(
      * exists, and a paired-but-not-connected device correctly reads as `null` (=> disconnected).
      */
     fun lifecycleFast(mac: String): String? = cache.snapshot(MelodyMac.normalize(mac))?.lifecycle
+
+    /**
+     * The M4.3a detail/OneSpace header projection for [mac], or `null` when there is nothing to
+     * project. Cheap after the first call - the lifecycle and the battery levels are both read from
+     * the snapshot cache the `onSnapshot` pushes keep warm, so the `EarphoneDTO` getters never pay for
+     * IPC. A device without a (cached) envelope is left alone, which is what keeps the injection off
+     * official, non-managed devices.
+     */
+    fun earphoneFast(mac: String): MelodyEarphoneProjection? {
+        val key = MelodyMac.normalize(mac)
+        val cached = cache.snapshot(key) ?: firstSnapshot(key)
+        if (cached == null) {
+            // Still nothing even after the one bounded pull: keep asking on the link thread, but never
+            // block this (host) thread again.
+            requestSnapshot(key)
+            return noteHeaderSkip(key, "no_snapshot")
+        }
+        earphones[key]?.let { (stamp, projection) -> if (stamp === cached) return projection }
+        // The envelope is the same "do we own this device" gate the panel uses; a missing one means
+        // fail-open (the host's own value stands).
+        if (whitelistIdentityFast(key) == null) {
+            earphones.remove(key)
+            return noteHeaderSkip(key, "no_envelope")
+        }
+        val projection = MelodyEarphoneProjection.from(cached.lifecycle, cached.battery)
+        earphones[key] = cached to projection
+        headerSkips.remove(key)
+        return projection
+    }
+
+    /**
+     * One bounded, synchronous snapshot pull per MAC.
+     *
+     * The header builds its `BatteryInfoVO` **once** from the DTO and that VO keeps the connection state
+     * it saw (the battery levels are only copied when that state is already "connected"), so a build that
+     * happens before our first push would keep the header empty forever. Paying a single ~50 ms provider
+     * budget on the first cold lookup is what makes the first render correct; every later cold lookup goes
+     * through [requestSnapshot] instead.
+     */
+    private fun firstSnapshot(mac: String): MelodyBridgeCache.CachedSnapshot? {
+        if (firstSnapshotPulled.putIfAbsent(mac, true) != null) return null
+        val bridge = service ?: run {
+            firstSnapshotPulled.remove(mac)
+            return null
+        }
+        val payload = runCatching {
+            calls.submit(Callable { bridge.snapshot(mac) }).get(PROVIDER_CALL_TIMEOUT_MS, TimeUnit.MILLISECONDS)
+        }.getOrNull() ?: return null
+        return cache.recordSnapshot(mac, payload.lifecycle, payload.stateKeys, MelodyEarphoneBattery.ofSnapshot(payload))
+    }
+
+    /**
+     * Pulls one snapshot for [mac] on the link thread, at most once per [SNAPSHOT_PULL_INTERVAL_MS].
+     * Without this, a host process whose listener never received a push (or that attached while there was
+     * no live session yet) would never see the M4.3a projection at all.
+     */
+    private fun requestSnapshot(mac: String) {
+        val now = SystemClock.elapsedRealtime()
+        val last = snapshotPulls[mac]
+        if (last != null && now - last < SNAPSHOT_PULL_INTERVAL_MS) return
+        snapshotPulls[mac] = now
+        link.execute {
+            runCatching { snapshot(mac) }.onFailure { log.warn("melody.bridge.snapshot_failed", it) }
+        }
+    }
+
+    /** One `melody.panel.header.skip` line per MAC and reason; returns `null` for the caller to pass on. */
+    private fun noteHeaderSkip(mac: String, reason: String): MelodyEarphoneProjection? {
+        if (headerSkips.put(mac, reason) != reason) {
+            log.event("melody.panel.header.skip", "side" to SIDE, "mac" to mac, "reason" to reason)
+        }
+        return null
+    }
 
     /**
      * The M3.4 `DeviceInfo` projection for [mac] (identity + connection state), or `null` when there is
@@ -430,6 +526,9 @@ internal class MelodyBridgeClient(
     private fun refreshFromBridge() {
         managedMacs().forEach { mac ->
             runCatching { projection(mac) }.onFailure { log.warn("melody.bridge.projection_failed", it) }
+            // M4.3a: warm the header cache for every managed device, not only for the MACs BtRemix has a
+            // live session for - the detail/OneSpace header reads the DTO before a session may exist.
+            runCatching { snapshot(mac) }.onFailure { log.warn("melody.bridge.snapshot_failed", it) }
         }
     }
 
@@ -482,7 +581,10 @@ internal class MelodyBridgeClient(
         val key = snapshot.state.keySet()
             .firstOrNull { name -> WEAR_KEYS.any { it.equals(name, ignoreCase = true) } }
             ?: return null
-        return when (val value = MelodyBundleCodec.decode(snapshot.state.getBundle(key))) {
+        // `state` maps a state name to the **entry** bundle (`{value, ts, src, q}`), not to the raw
+        // value bundle - decoding the entry itself silently yields `Text("")` and loses every state.
+        val entry = snapshot.state.getBundle(key) ?: return null
+        return when (val value = MelodyBundleCodec.decodeEntry(entry).value) {
             is WireValue.Bool -> value.value
             is WireValue.Int32 -> value.value != 0
             is WireValue.Int64 -> value.value != 0L
@@ -505,6 +607,9 @@ internal class MelodyBridgeClient(
 
         /** Serve the persisted envelope regardless of age, but tell the truth when it is older than this. */
         const val PROVIDER_STALE_AFTER_MS = 10 * 60 * 1000L
+
+        /** Floor between two on-demand snapshot pulls triggered by a cold M4.3a header cache. */
+        const val SNAPSHOT_PULL_INTERVAL_MS = 3_000L
 
         /** Session state keys a Definition may use for "both earbuds are in"; none exist for XM3 (M3). */
         val WEAR_KEYS = listOf("bothInEar", "inEar")

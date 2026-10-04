@@ -2,6 +2,7 @@ package com.Fusion.Btremix.melody.hook.injection
 
 import com.Fusion.Btremix.melody.hook.MelodyLog
 import io.github.libxposed.api.XposedInterface
+import java.io.File
 
 /**
  * Installs the M3.3 provider injection (`HANDOFF_MELODY_M3_PLAN.md` §4 M3.3).
@@ -24,7 +25,14 @@ internal class MelodyInjectionInstaller(
 ) {
 
     fun install() {
-        log.event("melody.injection.install", "process" to processName)
+        log.event(
+            "melody.injection.install",
+            "process" to processName,
+            // APK mtime of the module dex this process actually loaded. LSPosed only re-reads a module
+            // when the process starts, so a host that was not restarted after an install keeps answering
+            // with the previous stamp - the fastest way to tell "code is old" from "code did nothing".
+            "module_apk_ms" to moduleApkStamp(),
+        )
         runCatching { MelodyAliveProviderInjection(module, log, loader).install() }
             .onFailure { log.warn("melody.injection.failed", it) }
         // M3.4: the registry the detail page is actually built from, then the two transport backstops.
@@ -40,5 +48,12 @@ internal class MelodyInjectionInstaller(
         // respect to the official data - it only flips `setVisible`/`setEnabled` from the envelope policy.
         runCatching { MelodyPanelInjection(module, log, loader).install() }
             .onFailure { log.warn("melody.injection.panel_failed", it) }
+        // M4.3a: project the session lifecycle + battery into the `EarphoneDTO` the detail and OneSpace
+        // headers read, so both show the native "connected + battery" header while our session is up.
+        runCatching { MelodyEarphoneInjection(module, log, loader).install() }
+            .onFailure { log.warn("melody.injection.header_failed", it) }
     }
+
+    private fun moduleApkStamp(): Long? =
+        runCatching { File(module.moduleApplicationInfo.sourceDir).lastModified() }.getOrNull()
 }

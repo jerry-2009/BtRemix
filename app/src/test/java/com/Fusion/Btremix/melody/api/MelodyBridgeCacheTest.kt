@@ -49,6 +49,29 @@ class MelodyBridgeCacheTest {
     }
 
     @Test
+    fun recordSnapshot_keepsTheDecodedBatteryLevels() {
+        cache.recordSnapshot(
+            mac,
+            "Ready",
+            listOf("battery.left", "battery.case"),
+            MelodyEarphoneBattery(left = 80, box = 55),
+        )
+
+        val entry = cache.snapshot(mac)
+        assertEquals(80, entry?.battery?.left)
+        assertEquals(55, entry?.battery?.box)
+        assertNull(entry?.battery?.right)
+    }
+
+    @Test
+    fun aLaterSnapshotWithoutBattery_clearsTheLevels() {
+        cache.recordSnapshot(mac, "Ready", listOf("battery.left"), MelodyEarphoneBattery(left = 80))
+        cache.recordSnapshot(mac, "Disconnected", emptyList())
+
+        assertNull(cache.snapshot(mac)?.battery)
+    }
+
+    @Test
     fun isSnapshotStale_usesTheInjectedClock() {
         cache.recordSnapshot(mac, "Ready", emptyList())
         assertFalse(cache.isSnapshotStale(mac, maxAgeMs = 5_000L))
