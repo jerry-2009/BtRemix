@@ -1,5 +1,6 @@
 package com.Fusion.Btremix.melody.api
 
+import com.Fusion.Btremix.definition.api.MelodyPanelDefinition
 import com.Fusion.Btremix.definition.api.MelodyProductId
 import com.Fusion.Btremix.definition.json.JsonParser
 import com.Fusion.Btremix.definition.json.JsonValue
@@ -121,6 +122,66 @@ object MelodyProviderMerge {
         val suppress = (definition.values["suppressTransport"] as? JsonValue.BooleanValue)?.value
             ?: MelodyDevicePolicy.NEUTRAL.suppressTransport
         return MelodyDevicePolicy(productType = productType, suppressTransport = suppress)
+    }
+
+    /**
+     * Reads the per-device panel policy M4 applies on the detail page (HANDOFF_MELODY_M4_PLAN.md §3
+     * M4.0). Like [policyOf] this only reads *our* `panel` node, so an older or truncated envelope
+     * never throws - it degrades to an inert [MelodyPanelPolicy] carrying a `missingReason`.
+     *
+     * Degradation is deliberately all-or-nothing: a half-understood policy (some fields valid, one
+     * malformed) means "do not touch the host panel at all", which keeps the official UI exactly as
+     * it is (spec §4 item 5, fail-open).
+     *
+     * @param fallbackTitle used when `sectionTitle` is missing or blank - normally the Definition's
+     *   `displayName`; the same value the projection builder writes, so a present-but-empty title is
+     *   cosmetic rather than a policy failure.
+     */
+    fun panelOf(envelopeJson: String?, fallbackTitle: String): MelodyPanelPolicy {
+        val envelope = envelopeJson
+            ?.let { runCatching { JsonParser.parse(it) as? JsonValue.Object }.getOrNull() }
+            ?: return MelodyPanelPolicy.missing(fallbackTitle, MelodyPanelPolicy.MISSING_ENVELOPE)
+        val panel = envelope.values["panel"] as? JsonValue.Object
+            ?: return MelodyPanelPolicy.missing(fallbackTitle, MelodyPanelPolicy.MISSING_NODE)
+        val titleNode = panel.values["sectionTitle"]
+        if (titleNode != null && titleNode !is JsonValue.StringValue) {
+            return MelodyPanelPolicy.missing(fallbackTitle, MelodyPanelPolicy.MISSING_NODE)
+        }
+        val sectionTitle = (titleNode as? JsonValue.StringValue)?.value
+            ?.takeIf(String::isNotBlank)
+            ?: fallbackTitle
+        // Field-level failures resolve in a fixed order so the reported reason is deterministic.
+        val hideSections = panelKeySet(panel, "hideSections")
+            ?: return MelodyPanelPolicy.missing(sectionTitle, MelodyPanelPolicy.FIELD_HIDE_SECTIONS)
+        val hideKeys = panelKeySet(panel, "hideKeys")
+            ?: return MelodyPanelPolicy.missing(sectionTitle, MelodyPanelPolicy.FIELD_HIDE_KEYS)
+        val greyKeys = panelKeySet(panel, "greyKeys")
+            ?: return MelodyPanelPolicy.missing(sectionTitle, MelodyPanelPolicy.FIELD_GREY_KEYS)
+        return MelodyPanelPolicy(
+            sectionTitle = sectionTitle,
+            hideSections = hideSections,
+            hideKeys = hideKeys,
+            greyKeys = greyKeys,
+        )
+    }
+
+    /**
+     * The keys of one `panel` list field, or `null` when it is present but not a valid list of
+     * official keys. An absent field is an empty list (nothing to hide/grey), not a failure; a
+     * blank entry or a `melody_bridge_*` entry is a failure even though the Definition validator
+     * already rejects them, so a hand-written envelope cannot slip past the runtime.
+     */
+    private fun panelKeySet(panel: JsonValue.Object, name: String): Set<String>? {
+        val value = panel.values[name] ?: return emptySet()
+        val array = value as? JsonValue.Array ?: return null
+        val keys = LinkedHashSet<String>(array.values.size)
+        for (item in array.values) {
+            val key = (item as? JsonValue.StringValue)?.value ?: return null
+            if (key.isBlank()) return null
+            if (key.startsWith(MelodyPanelDefinition.CUSTOM_KEY_PREFIX)) return null
+            keys += key
+        }
+        return keys
     }
 
     /**

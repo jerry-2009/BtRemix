@@ -110,12 +110,22 @@ class MelodySectionSchemaTest {
     }
 
     @Test
-    fun hideKeys_cannotTargetTheBridgeNamespace() {
+    fun panelKeyLists_cannotTargetTheBridgeNamespace() {
+        val section = validationErrors(melodyDefinition.replace("\"ai\", \"game\"", "\"melody_bridge_sound\""))
+        assertTrue(section.any { it.path == "melody.panel.hideSections[0]" })
+
         val hidden = validationErrors(melodyDefinition.replace("\"pref_game_mode\"", "\"melody_bridge_noise\""))
         assertTrue(hidden.any { it.path == "melody.panel.hideKeys[0]" })
 
         val greyed = validationErrors(melodyDefinition.replace("\"pref_more_setting\"", "\"melody_bridge_anc\""))
         assertTrue(greyed.any { it.path == "melody.panel.greyKeys[0]" })
+    }
+
+    @Test
+    fun hideSections_rejectsBlankEntries() {
+        val errors = validationErrors(melodyDefinition.replace("\"ai\", \"game\"", "\"ai\", \"\" "))
+
+        assertTrue(errors.any { it.path == "melody.panel.hideSections[1]" })
     }
 
     @Test
