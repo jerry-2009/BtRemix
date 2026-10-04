@@ -63,7 +63,8 @@ internal object PreferenceTree {
         }
     }
 
-    private fun childrenOf(container: Any): List<Any> {
+    /** Child Preferences of a screen/category: the public `getPreferenceCount`/`getPreference` pair first, then the children List field. */
+    fun childrenOf(container: Any): List<Any> {
         val count = Reflect.callInt(container, "getPreferenceCount")
         if (count != null && count > 0) {
             val out = ArrayList<Any>(count)
@@ -91,7 +92,8 @@ internal object PreferenceTree {
         return emptyList()
     }
 
-    private fun isGroup(pref: Any): Boolean =
+    /** `true` when the row is a `PreferenceGroup` (screen/category); only these may be hidden as a section. */
+    fun isGroup(pref: Any): Boolean =
         Reflect.findNoArgMethod(pref.javaClass, "getPreferenceCount") != null
 
     private fun describe(pref: Any, screenId: String, depth: Int): PanelKeyRow {

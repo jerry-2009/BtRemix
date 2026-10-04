@@ -36,5 +36,9 @@ internal class MelodyInjectionInstaller(
         // injection alone cannot reach it, see MelodyWhitelistRepositoryInjection).
         runCatching { MelodyWhitelistRepositoryInjection(module, log, loader).install() }
             .onFailure { log.warn("melody.injection.whitelist_repo_failed", it) }
+        // M4.2: hide/grey the official detail-page rows the Definition asked to remove. Read-only with
+        // respect to the official data - it only flips `setVisible`/`setEnabled` from the envelope policy.
+        runCatching { MelodyPanelInjection(module, log, loader).install() }
+            .onFailure { log.warn("melody.injection.panel_failed", it) }
     }
 }

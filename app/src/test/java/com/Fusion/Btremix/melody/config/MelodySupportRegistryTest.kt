@@ -91,6 +91,33 @@ class MelodySupportRegistryTest {
         assertNull(registry.support(MAC))
     }
 
+    /**
+     * M4.2 robustness: re-installing a device package keeps the same MAC, so the managed-MAC flow does
+     * not re-emit. The registry must still re-publish (and emit a definition change) so the bridge can
+     * invalidate the host's cached projection envelope and the new `melody.panel` policy takes effect.
+     */
+    @Test
+    fun definitionVersionChangeForTheSameMac_isRepublished() = runBlocking {
+        val packages = MutableStateFlow(listOf(DevicePackage.builtIn(Definitions.sony)))
+        var published = 0
+        val registry = MelodySupportRegistry(packages, rfcomm, scope) { published++ }
+
+        registry.refreshFrom(listOf(ClassicDevice(MAC, "WF-1000XM3")))
+        assertEquals(1, published)
+        assertEquals(listOf(MAC), registry.managedMacs())
+
+        // Same MAC and same Definition: nothing changed, so nothing is republished.
+        registry.refreshFrom(listOf(ClassicDevice(MAC, "WF-1000XM3")))
+        assertEquals(1, published)
+
+        // Same MAC, new Definition version: the published signature changed.
+        packages.value = listOf(DevicePackage.builtIn(Definitions.sonyV2))
+        registry.refreshFrom(listOf(ClassicDevice(MAC, "WF-1000XM3")))
+        assertEquals(2, published)
+        assertEquals(listOf(MAC), registry.managedMacs())
+        assertEquals("1.1.0", registry.support(MAC)?.definition?.manifest?.version)
+    }
+
     private fun registry(vararg definitions: LoadedDeviceDefinition): MelodySupportRegistry {
         val effective = if (definitions.isEmpty()) arrayOf(Definitions.sony) else definitions
         val packages = MutableStateFlow(
@@ -112,6 +139,14 @@ class MelodySupportRegistryTest {
             priority = 60,
             name = "Sony WF-1000XM3",
         )
+        val sonyV2 = decode(
+            id = "sony.wf1000xm3",
+            displayName = "Sony WF-1000XM3",
+            melody = true,
+            priority = 60,
+            name = "Sony WF-1000XM3",
+            version = "1.1.0",
+        )
         val plain = decode(id = "sony.plain", displayName = "Plain", melody = false, priority = 10, name = null)
         val lowPriority: LoadedDeviceDefinition =
             decode(id = "sony.low", displayName = "Low", melody = true, priority = 40, name = "Low")
@@ -124,6 +159,7 @@ class MelodySupportRegistryTest {
             melody: Boolean,
             priority: Int,
             name: String?,
+            version: String = "1.0.0",
         ): LoadedDeviceDefinition {
             val melodySection = if (!melody) "" else
                 """,
@@ -137,7 +173,7 @@ class MelodySupportRegistryTest {
                   "manifest": {
                     "id": "$id",
                     "displayName": "$displayName",
-                    "version": "1.0.0",
+                    "version": "$version",
                     "schemaVersion": 4,
                     "matchers": [{ "type": "namePrefix", "value": "WF-1000XM3", "priority": $priority }]
                   }$melodySection

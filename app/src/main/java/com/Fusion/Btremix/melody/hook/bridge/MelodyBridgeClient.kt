@@ -13,6 +13,7 @@ import com.Fusion.Btremix.melody.api.MelodyDeviceInfoProjection
 import com.Fusion.Btremix.melody.api.MelodyDevicePolicy
 import com.Fusion.Btremix.melody.api.MelodyDoorbellProtocol
 import com.Fusion.Btremix.melody.api.MelodyMac
+import com.Fusion.Btremix.melody.api.MelodyPanelPolicy
 import com.Fusion.Btremix.melody.api.MelodyProjectionStore
 import com.Fusion.Btremix.melody.api.MelodyProviderMerge
 import com.Fusion.Btremix.melody.api.MelodySnapshot
@@ -72,6 +73,12 @@ internal class MelodyBridgeClient(
 
     /** The envelope's own `definition` policy, parsed alongside the identity and invalidated with it. */
     private val policies = ConcurrentHashMap<String, MelodyDevicePolicy>()
+
+    /**
+     * The envelope's `panel` policy per MAC (M4.2). Parsed once per envelope - the panel rebuilds its
+     * list several times per page, so re-reading the JSON on every refresh would be wasted work.
+     */
+    private val panels = ConcurrentHashMap<String, MelodyPanelPolicy>()
 
     private val lock = Any()
 
@@ -142,6 +149,7 @@ internal class MelodyBridgeClient(
             // next DeviceInfo lookup rebuilds it from the refreshed envelope.
             identities.clear()
             policies.clear()
+            panels.clear()
             // Refresh on the link stage: this callback runs on a binder thread, and the refresh pulls
             // one `managedMacs` plus one `resolveProjection` per device.
             link.execute { runCatching { refreshFromBridge() }.onFailure { log.warn("melody.bridge.list_failed", it) } }
@@ -249,6 +257,7 @@ internal class MelodyBridgeClient(
         storePreferences.save()
         identities.remove(key)
         policies.remove(key)
+        panels.remove(key)
         return json
     }
 
@@ -336,6 +345,22 @@ internal class MelodyBridgeClient(
 
     private fun policyOf(mac: String): MelodyDevicePolicy =
         policies[MelodyMac.normalize(mac)] ?: MelodyDevicePolicy.NEUTRAL
+
+    /**
+     * The M4.2 panel policy for [mac] from the (cached) projection envelope, or `null` when there is
+     * neither a live nor a cached envelope. Cheap after the first call: the envelope is parsed once and
+     * a degraded policy is cached just like a usable one, so a broken envelope cannot turn into a
+     * re-parse per refresh.
+     */
+    fun panelFast(mac: String): MelodyPanelPolicy? {
+        val key = MelodyMac.normalize(mac)
+        panels[key]?.let { return it }
+        val envelope = projectionFast(key) ?: return null
+        val fallbackTitle = whitelistIdentityFast(key)?.name ?: DEFAULT_PANEL_TITLE
+        val policy = MelodyProviderMerge.panelOf(envelope, fallbackTitle)
+        panels[key] = policy
+        return policy
+    }
 
     fun execute(mac: String, actionId: String, args: Map<String, StateValue> = emptyMap()): Int {
         val key = MelodyMac.normalize(mac)
@@ -483,5 +508,8 @@ internal class MelodyBridgeClient(
 
         /** Session state keys a Definition may use for "both earbuds are in"; none exist for XM3 (M3). */
         val WEAR_KEYS = listOf("bothInEar", "inEar")
+
+        /** Only reachable when a (malformed) envelope omitted `sectionTitle`; M4.3 uses it as the group title. */
+        const val DEFAULT_PANEL_TITLE = "BtRemix"
     }
 }

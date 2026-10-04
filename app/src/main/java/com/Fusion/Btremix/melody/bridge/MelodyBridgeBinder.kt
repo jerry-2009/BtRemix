@@ -83,10 +83,12 @@ internal class MelodyBridgeBinder(
     /**
      * The managed set (paired device with a `melody` Definition) is independent of live sessions, and
      * the panel has to re-pull `resolveProjection` when it changes. `onSupportChanged` is the invalidation
-     * signal, so it is broadcast on registry changes as well (M3-D6).
+     * signal, so it is broadcast on registry changes as well (M3-D6). `definitionChanges` also fires when
+     * an already-managed MAC gets a new Definition version (M4.2), which is what makes re-installing a
+     * dcpkg with a new `melody.panel` policy reach the host without restarting either process.
      */
-    private val managedJob: Job = scope.launch {
-        registry.managedMacsFlow.collect { broadcastSupportChanged() }
+    private val definitionJob: Job = scope.launch {
+        registry.definitionChanges.collect { broadcastSupportChanged() }
     }
 
     @Volatile
@@ -242,7 +244,7 @@ internal class MelodyBridgeBinder(
         if (closed) return
         closed = true
         watchJob.cancel()
-        managedJob.cancel()
+        definitionJob.cancel()
         watchers.values.forEach(Job::cancel)
         watchers.clear()
         listeners.kill()

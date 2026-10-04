@@ -12,7 +12,10 @@ import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.MutableStateFlow
+import kotlinx.coroutines.flow.MutableSharedFlow
+import kotlinx.coroutines.flow.SharedFlow
 import kotlinx.coroutines.flow.StateFlow
+import kotlinx.coroutines.flow.asSharedFlow
 import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.isActive
 import kotlinx.coroutines.launch
@@ -63,7 +66,23 @@ class MelodySupportRegistry(
     private var byMac: Map<String, MelodyManagedDevice> = emptyMap()
 
     private val managedFlow = MutableStateFlow<List<String>>(emptyList())
+
+    /**
+     * Emits whenever the managed set **or the Definition behind a MAC** changes (M4.2 robustness).
+     *
+     * A `StateFlow` of MACs alone cannot carry the second case: re-installing a device package with a
+     * new `melody.panel` policy keeps the same MAC, so `managedMacsFlow` would not re-emit and the host
+     * would keep answering from its cached projection envelope (the panel would keep the old hide
+     * list). The bridge collects this flow to broadcast `onSupportChanged`, which invalidates that
+     * cache, so a new dcpkg takes effect without restarting either process.
+     */
+    private val definitionChangesFlow = MutableSharedFlow<Unit>(extraBufferCapacity = 1)
+
+    val definitionChanges: SharedFlow<Unit> = definitionChangesFlow.asSharedFlow()
     private val jobs = mutableListOf<Job>()
+
+    /** MAC + Definition identity of the last published mapping; a version bump counts as a change. */
+    private var lastSignature: List<String> = emptyList()
 
     /** Normalised MACs the host should consider supported, in a stable order. */
     val managedMacsFlow: StateFlow<List<String>> = managedFlow.asStateFlow()
@@ -146,10 +165,15 @@ class MelodySupportRegistry(
     private fun publish(next: Map<String, MelodyManagedDevice>) {
         val macs = next.keys.sorted()
         byMac = next
-        if (managedFlow.value != macs) {
-            managedFlow.value = macs
-            onManagedChanged(macs)
+        val signature = macs.map { mac ->
+            val device = next.getValue(mac)
+            mac + '@' + device.definition.manifest.id + '@' + device.definition.manifest.version
         }
+        if (signature == lastSignature) return
+        lastSignature = signature
+        managedFlow.value = macs
+        onManagedChanged(macs)
+        definitionChangesFlow.tryEmit(Unit)
     }
 
     companion object {
