@@ -32,7 +32,7 @@ object DefinitionValidator {
         }
         if (manifest.matchers.isEmpty()) errors += DefinitionValidationError("manifest.matchers", "must contain at least one rule")
         manifest.matchers.forEachIndexed { index, matcher -> validateMatcher(matcher, "manifest.matchers[$index]", errors) }
-        definition.melody?.let { melody -> validateMelody(melody, manifest, errors) }
+        definition.melody?.let { melody -> validateMelody(melody, manifest, definition.states, errors) }
 
         definition.states.forEach { (key, state) ->
             if (key.isBlank() || state.key != key) errors += DefinitionValidationError("states.$key.key", "must match the state map key")
@@ -201,6 +201,7 @@ object DefinitionValidator {
     private fun validateMelody(
         melody: MelodySectionDefinition,
         manifest: DefinitionManifest,
+        states: Map<String, StateDefinition>,
         errors: MutableList<DefinitionValidationError>,
     ) {
         if (manifest.schemaVersion < DefinitionSchema.VERSION_MELODY) {
@@ -244,6 +245,103 @@ object DefinitionValidator {
         validateMelodyKeys(melody.panel.hideSections, "melody.panel.hideSections", errors)
         validateMelodyKeys(melody.panel.hideKeys, "melody.panel.hideKeys", errors)
         validateMelodyKeys(melody.panel.greyKeys, "melody.panel.greyKeys", errors)
+        validateMelodyAnc(melody.anc, states, errors)
+    }
+
+    /**
+     * The `melody.anc` table (M4.3b D-11/D-12). An empty `modes` list is legal (the module derives
+     * the table from the ANC enum state), but whatever is declared must be usable: a host render
+     * version M4 knows, a positive `modeType`, a non-negative `protocolIndex`, a non-blank state and
+     * no two rows claiming the same host `modeType`. [MelodyAncDefinition.strength] (D-15) becomes the
+     * injected `childrenMode` list, so it must be non-empty, use host-renderable child `modeType`s,
+     * have unique `protocolIndex`es that do not collide with the parent table, and be ordered by
+     * increasing Definition `level`.
+     */
+    private fun validateMelodyAnc(
+        anc: MelodyAncDefinition,
+        states: Map<String, StateDefinition>,
+        errors: MutableList<DefinitionValidationError>,
+    ) {
+        if (anc.uiVersion !in MelodyAncDefinition.UI_VERSIONS) {
+            errors += DefinitionValidationError(
+                "melody.anc.uiVersion",
+                "must be one of ${MelodyAncDefinition.UI_VERSIONS.first}..${MelodyAncDefinition.UI_VERSIONS.last}",
+            )
+        }
+        val seen = HashSet<Int>()
+        anc.modes.forEachIndexed { index, mode ->
+            val path = "melody.anc.modes[$index]"
+            if (mode.modeType <= 0) errors += DefinitionValidationError("$path.modeType", "must be positive")
+            if (mode.protocolIndex < 0) errors += DefinitionValidationError("$path.protocolIndex", "must not be negative")
+            if (mode.state.isBlank()) errors += DefinitionValidationError("$path.state", "must not be blank")
+            if (mode.label?.isBlank() == true) errors += DefinitionValidationError("$path.label", "must not be blank")
+            if (!seen.add(mode.modeType)) {
+                errors += DefinitionValidationError("$path.modeType", "duplicates an earlier modeType ${mode.modeType}")
+            }
+        }
+        anc.strength?.let { strength -> validateMelodyAncStrength(strength, anc.modes, states, errors) }
+    }
+
+    private fun validateMelodyAncStrength(
+        strength: MelodyAncStrengthDefinition,
+        modes: List<MelodyAncMode>,
+        states: Map<String, StateDefinition>,
+        errors: MutableList<DefinitionValidationError>,
+    ) {
+        val path = "melody.anc.strength"
+        val parentProtocolIndexes = modes.map { it.protocolIndex }.toSet()
+        if (strength.state.isBlank()) errors += DefinitionValidationError("$path.state", "must not be blank")
+        if (strength.action.isBlank()) errors += DefinitionValidationError("$path.action", "must not be blank")
+        if (strength.levels.isEmpty()) {
+            errors += DefinitionValidationError("$path.levels", "must contain at least one position")
+        }
+        strength.levels.forEachIndexed { index, level ->
+            val levelPath = "$path.levels[$index]"
+            if (level.modeType !in MelodyAncStrengthLevel.HOST_MODE_TYPES) {
+                errors += DefinitionValidationError(
+                    "$levelPath.modeType",
+                    "must be one of ${MelodyAncStrengthLevel.HOST_MODE_TYPES.sorted()} (Low/High/Auto/Moderate)",
+                )
+            }
+            if (level.protocolIndex < 0) {
+                errors += DefinitionValidationError("$levelPath.protocolIndex", "must not be negative")
+            }
+            if (index > 0 && level.level <= strength.levels[index - 1].level) {
+                errors += DefinitionValidationError("$levelPath.level", "must be larger than the previous level")
+            }
+        }
+        // The host writes/reads the child `protocolIndex`, so the parent and child tables share one
+        // namespace; a collision would highlight or write the wrong row.
+        val seenChildModeTypes = HashSet<Int>()
+        val seenProtocolIndexes = HashSet<Int>()
+        strength.levels.forEachIndexed { index, level ->
+            val levelPath = "$path.levels[$index]"
+            if (!seenChildModeTypes.add(level.modeType)) {
+                errors += DefinitionValidationError("$levelPath.modeType", "duplicates an earlier position")
+            }
+            if (!seenProtocolIndexes.add(level.protocolIndex)) {
+                errors += DefinitionValidationError("$levelPath.protocolIndex", "duplicates an earlier position")
+            }
+            if (parentProtocolIndexes.contains(level.protocolIndex)) {
+                errors += DefinitionValidationError(
+                    "$levelPath.protocolIndex",
+                    "collides with a top-level mode protocolIndex",
+                )
+            }
+        }
+        // A level outside the referenced state's own range could never be matched by a live value, so
+        // the projection would be dead on the device without any visible error.
+        val state = states[strength.state]
+        state?.min?.let { min ->
+            if (strength.levels.any { it.level < min }) {
+                errors += DefinitionValidationError("$path.levels", "must not be smaller than ${strength.state}.min ($min)")
+            }
+        }
+        state?.max?.let { max ->
+            if (strength.levels.any { it.level > max }) {
+                errors += DefinitionValidationError("$path.levels", "must not be larger than ${strength.state}.max ($max)")
+            }
+        }
     }
 
     private fun validateMelodyKeys(

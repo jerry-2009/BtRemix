@@ -31,6 +31,11 @@ import java.util.concurrent.ConcurrentHashMap
  * degrades to "return the official value" (fail-open, §7). No write path is installed: the header is
  * display-only in M4.3a, and the native ANC click stays on the host's own path until M5 (D-9).
  *
+ * M4.3b D-15 puts the ANC **strength** on the host's own「降噪效果」row instead: the injected mode table
+ * carries a `childrenMode` list, and the index projected here is the selected child's `protocolIndex`,
+ * which is what the host writes and what it resolves back to the parent cell. The ANC *click* still
+ * stays on the host's own path until M5 (D-9): nothing here writes device state.
+ *
  * The getters are read far more often than the state changes (the header, the ANC VO builder and the
  * device card all poll the DTO), so the projection itself comes from [MelodyBridgeClient.earphoneFast]
  * - a pure cache read - and the diagnostic line is deduplicated per MAC and value.
@@ -77,15 +82,23 @@ internal class MelodyEarphoneInjection(
      * our device, no bridge, no envelope, or a field the projection has nothing to say about).
      */
     private fun override(target: Any?, getter: String): Any? {
+        val projection = projectionOf(target) ?: return null
+        return MelodyEarphoneAdapter.overrideFor(getter, projection)
+    }
+
+    /**
+     * The shared "is this our device and what does the bridge project" lookup. Returns `null` (and logs
+     * one reason) whenever the host's own answer must stand.
+     */
+    private fun projectionOf(target: Any?): MelodyEarphoneProjection? {
         val mac = macOf(target) ?: return noteSkip("?", "mac")
         val client = MelodyBridgeClients.existing() ?: return noteSkip(mac, "client")
         if (!isManaged(client, mac)) return noteSkip(mac, "not_managed")
         // The client logs its own reason (`no_snapshot` / `no_envelope`) when it cannot project.
         val projection = client.earphoneFast(mac) ?: return null
-        val value = MelodyEarphoneAdapter.overrideFor(getter, projection) ?: return null
         lastSkip.remove(mac)
         logProjectedOnce(mac, projection)
-        return value
+        return projection
     }
 
     /**
@@ -93,7 +106,7 @@ internal class MelodyEarphoneInjection(
      * which is exactly what a missing anchor, an unreadable envelope and a cold bridge cache all look
      * like from logcat.
      */
-    private fun noteSkip(mac: String, reason: String): Any? {
+    private fun noteSkip(mac: String, reason: String): MelodyEarphoneProjection? {
         if (lastSkip.put(mac, reason) != reason) {
             log.event("melody.panel.header.skip", "hook" to "inject.header", "mac" to mac, "reason" to reason)
         }
@@ -126,7 +139,8 @@ internal class MelodyEarphoneInjection(
      * battery levels are included so a "connected but 0%" report can tell "no state" from "level 0".
      */
     private fun logProjectedOnce(mac: String, projection: MelodyEarphoneProjection) {
-        val fingerprint = "${projection.connectionState}|${batteryLabel(projection.battery)}"
+        val fingerprint = "${projection.connectionState}|${batteryLabel(projection.battery)}|" +
+            "${projection.noiseModeIndex}|${projection.ancModeMatched}"
         if (lastProjected.put(mac, fingerprint) == fingerprint) return
         log.event(
             "melody.panel.header.projected",
@@ -135,6 +149,17 @@ internal class MelodyEarphoneInjection(
             "state" to projection.connectionState,
             "battery" to batteryLabel(projection.battery),
         )
+        // M4.3b Step 1 diagnostic: which native ANC slot the panel should highlight, and whether the
+        // Definition's live mode was actually found in the mode table (`matched=false` = the Off
+        // fallback, see docs/melody-capability-map.md §7.1.3).
+        if (projection.noiseModeIndex != null || projection.ancModeMatched) {
+            log.event(
+                "melody.panel.anc.index",
+                "mac" to mac,
+                "index" to (projection.noiseModeIndex ?: -1),
+                "matched" to projection.ancModeMatched,
+            )
+        }
     }
 
     private fun batteryLabel(battery: MelodyEarphoneBattery?): String = battery?.let {

@@ -1,6 +1,8 @@
 package com.Fusion.Btremix.melody.projection
 
 import com.Fusion.Btremix.definition.api.MelodyProductId
+import com.Fusion.Btremix.definition.api.MelodyAncStrengthDefinition
+import com.Fusion.Btremix.definition.api.MelodyAncMode
 import com.Fusion.Btremix.definition.api.MelodySupportDefinition
 import com.Fusion.Btremix.definition.json.JsonParser
 import com.Fusion.Btremix.definition.json.JsonValue
@@ -113,6 +115,9 @@ class MelodyProjectionBuilder(
                 ),
                 "whitelist" to whitelist,
                 "panel" to panel(device),
+                // M4.3b D-12: the single source of truth for the native ANC table, the UI version and
+                // the `getNoiseReductionModeIndex` projection (sibling of `definition` / `panel`).
+                "anc" to anc(device),
             ),
         )
         return MelodyProjection(json = JsonWriter.write(envelope), templateUse = templateUse)
@@ -246,6 +251,50 @@ class MelodyProjectionBuilder(
                 "greyKeys" to strings(panel.greyKeys),
             ),
         )
+    }
+
+    /** The `melody.anc` node, resolved to the concrete table the host will render (M4.3b D-12). */
+    private fun anc(device: MelodyManagedDevice): JsonValue.Object {
+        val plan = MelodyCapabilityMap.ancPlan(device.definition)
+        val fields = linkedMapOf<String, JsonValue>(
+            "uiVersion" to JsonValue.NumberValue(plan.uiVersion.toString()),
+            "modes" to JsonValue.Array(plan.modes.map(::ancMode)),
+        )
+        // M4.3b D-15: the「降噪效果」level mapping travels with the table so the host process can
+        // project the selected child position without having the Definition.
+        plan.strength?.let { fields["strength"] = ancStrength(it) }
+        return JsonValue.Object(fields)
+    }
+
+    private fun ancMode(mode: MelodyAncMode): JsonValue.Object {
+        val fields = linkedMapOf<String, JsonValue>(
+            "modeType" to JsonValue.NumberValue(mode.modeType.toString()),
+            "protocolIndex" to JsonValue.NumberValue(mode.protocolIndex.toString()),
+            "state" to JsonValue.StringValue(mode.state),
+        )
+        // A missing label means "the client hook has no text to write"; omit the field rather than
+        // travelling a null, so the node stays exactly the D-12 shape.
+        mode.label?.let { fields["label"] = JsonValue.StringValue(it) }
+        return JsonValue.Object(fields)
+    }
+
+    private fun ancStrength(strength: MelodyAncStrengthDefinition): JsonValue.Object {
+        val fields = linkedMapOf<String, JsonValue>(
+            "state" to JsonValue.StringValue(strength.state),
+            "action" to JsonValue.StringValue(strength.action),
+            "levels" to JsonValue.Array(
+                strength.levels.map { level ->
+                    JsonValue.Object(
+                        linkedMapOf(
+                            "modeType" to JsonValue.NumberValue(level.modeType.toString()),
+                            "protocolIndex" to JsonValue.NumberValue(level.protocolIndex.toString()),
+                            "level" to JsonValue.NumberValue(level.level.toString()),
+                        ),
+                    )
+                },
+            ),
+        )
+        return JsonValue.Object(fields)
     }
 
     private fun strings(values: List<String>): JsonValue =

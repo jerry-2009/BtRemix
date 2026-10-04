@@ -13,6 +13,10 @@ import com.Fusion.Btremix.definition.api.ActionDefinition
 import com.Fusion.Btremix.definition.api.ActionParameterDefinition
 import com.Fusion.Btremix.definition.api.DefinitionSchema
 import com.Fusion.Btremix.definition.api.MelodyPanelDefinition
+import com.Fusion.Btremix.definition.api.MelodyAncDefinition
+import com.Fusion.Btremix.definition.api.MelodyAncStrengthDefinition
+import com.Fusion.Btremix.definition.api.MelodyAncStrengthLevel
+import com.Fusion.Btremix.definition.api.MelodyAncMode
 import com.Fusion.Btremix.definition.api.MelodyProductId
 import com.Fusion.Btremix.definition.api.MelodySectionDefinition
 import com.Fusion.Btremix.definition.api.MelodySupportDefinition
@@ -268,6 +272,7 @@ object DefinitionJsonCodec {
                 templateWhitelist = support.optionalString("templateWhitelist"),
             ),
             panel = obj.optionalObj("panel")?.let(::parseMelodyPanel) ?: MelodyPanelDefinition(),
+            anc = obj.optionalObj("anc")?.let(::parseMelodyAnc) ?: MelodyAncDefinition(),
         )
     }
 
@@ -277,6 +282,60 @@ object DefinitionJsonCodec {
         hideKeys = parseStringList(obj.values["hideKeys"], "melody.panel.hideKeys"),
         greyKeys = parseStringList(obj.values["greyKeys"], "melody.panel.greyKeys"),
     )
+
+    /**
+     * Parses the optional `melody.anc` node (M4.3b). An empty `modes` array is legal and means
+     * "derive from the Definition's ANC enum state"; [DefinitionValidator] checks the semantic rules
+     * (ui version range, per-mode ranges, duplicate `modeType`) so the UI can list them with every
+     * other definition error.
+     */
+    private fun parseMelodyAnc(obj: JsonValue.Object): MelodyAncDefinition = MelodyAncDefinition(
+        uiVersion = obj.optionalInt("uiVersion") ?: MelodyAncDefinition.DEFAULT_UI_VERSION,
+        modes = when (val modes = obj.values["modes"]) {
+            null -> emptyList()
+            is JsonValue.Array -> modes.values.mapIndexed { index, value ->
+                parseMelodyAncMode(value.obj("melody.anc.modes[$index]"), "melody.anc.modes[$index]")
+            }
+            else -> throw DefinitionJsonException("melody.anc.modes", "must be an array")
+        },
+        strength = obj.optionalObj("strength")?.let(::parseMelodyAncStrength),
+    )
+
+    private fun parseMelodyAncMode(obj: JsonValue.Object, path: String): MelodyAncMode = MelodyAncMode(
+        modeType = obj.optionalInt("modeType")
+            ?: throw DefinitionJsonException("$path.modeType", "is required"),
+        protocolIndex = obj.optionalInt("protocolIndex")
+            ?: throw DefinitionJsonException("$path.protocolIndex", "is required"),
+        state = obj.optionalString("state")?.takeIf(String::isNotBlank)
+            ?: throw DefinitionJsonException("$path.state", "is required"),
+        label = obj.optionalString("label"),
+    )
+
+    private fun parseMelodyAncStrength(obj: JsonValue.Object): MelodyAncStrengthDefinition {
+        return MelodyAncStrengthDefinition(
+            state = obj.optionalString("state")?.takeIf(String::isNotBlank)
+                ?: throw DefinitionJsonException("melody.anc.strength.state", "is required"),
+            action = obj.optionalString("action")?.takeIf(String::isNotBlank)
+                ?: throw DefinitionJsonException("melody.anc.strength.action", "is required"),
+            levels = when (val node = obj.values["levels"]) {
+                is JsonValue.Array -> node.values.mapIndexed { index, item ->
+                    val path = "melody.anc.strength.levels[$index]"
+                    parseMelodyAncStrengthLevel(item.obj(path), path)
+                }
+                else -> throw DefinitionJsonException("melody.anc.strength.levels", "is required")
+            },
+        )
+    }
+
+    private fun parseMelodyAncStrengthLevel(obj: JsonValue.Object, path: String): MelodyAncStrengthLevel =
+        MelodyAncStrengthLevel(
+            modeType = obj.optionalInt("modeType")
+                ?: throw DefinitionJsonException("$path.modeType", "is required"),
+            protocolIndex = obj.optionalInt("protocolIndex")
+                ?: throw DefinitionJsonException("$path.protocolIndex", "is required"),
+            level = obj.optionalInt("level")
+                ?: throw DefinitionJsonException("$path.level", "is required"),
+        )
 
     private fun parseStringList(value: JsonValue?, path: String): List<String> = when (value) {
         null -> emptyList()

@@ -72,7 +72,9 @@ class SamplePackageTest {
      */
     @Test
     fun sonyWf1000Xm3Sample_isClassicSppFramingAsConfiguration() {
-        val file = samplePackageFiles().firstOrNull { it.name.startsWith("sony.wf1000xm3-") }
+        // The package version is part of the file name; the newest sample is the one that carries the
+        // current M4.3b `melody.anc` contract.
+        val file = samplePackageFiles().filter { it.name.startsWith("sony.wf1000xm3-") }.maxByOrNull { it.name }
         assumeTrue("no Sony WF-1000XM3 sample device package found", file != null)
         val definition = DevicePackageValidator().validate(DevicePackageReader().read(requireNotNull(file))).definition
 
@@ -138,6 +140,21 @@ class SamplePackageTest {
         }
         listOf("battery.left", "battery.right", "battery.case", "ancMode", "ancLevel", "eqPreset", "upscaling")
             .forEach { assertTrue("missing state $it", it in definition.states) }
+
+        // M4.3b: the shipped package carries the native ANC contract - the host mode table, the
+        // three-position strength mapping and a `noise` group that must stay visible.
+        assertEquals(1, melody.anc.uiVersion)
+        assertEquals(listOf(5, 1, 2, 10), melody.anc.modes.map { it.modeType })
+        assertEquals(listOf(0, 1, 2, 3), melody.anc.modes.map { it.protocolIndex })
+        assertEquals("Wind noise reduction", melody.anc.modes.last().label)
+        val strength = requireNotNull(melody.anc.strength)
+        assertEquals("ancLevel", strength.state)
+        assertEquals("anc.setLevel", strength.action)
+        assertEquals(listOf(1, 10, 20), strength.levels.map { it.level })
+        // Native「降噪效果」positions: Low / Moderate / High.
+        assertEquals(listOf(3, 8, 4), strength.levels.map { it.modeType })
+        assertEquals(listOf(10, 11, 12), strength.levels.map { it.protocolIndex })
+        assertTrue("the native noise group must stay visible", "noise" !in melody.panel.hideSections)
     }
 
     private fun flatten(node: UiNode): List<UiNode> = listOf(node) +

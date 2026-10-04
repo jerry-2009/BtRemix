@@ -88,6 +88,23 @@ internal object Reflect {
 
     fun callString(target: Any?, name: String): String? = call(target, name)?.toString()
 
+    /** Invokes a single-argument method by name and returns its value (e.g. `PreferenceGroup.findPreference`). */
+    fun callSingleArg(target: Any?, name: String, value: Any?): Any? {
+        if (target == null) return null
+        for (owner in hierarchyOf(target.javaClass)) {
+            for (method in runCatching { owner.declaredMethods }.getOrNull().orEmpty()) {
+                if (method.name != name || method.parameterTypes.size != 1) continue
+                if (value != null && !method.parameterTypes[0].isInstance(value)) continue
+                val result = runCatching {
+                    method.isAccessible = true
+                    method.invoke(target, value)
+                }.getOrNull()
+                if (result != null) return result
+            }
+        }
+        return null
+    }
+
     fun callCharSequence(target: Any?, name: String): CharSequence? = call(target, name) as? CharSequence
 
     /** Reads the first readable instance field matching one of [names] on the hierarchy. */
@@ -245,6 +262,25 @@ internal object Reflect {
             if (instance != null) return instance
         }
         return null
+    }
+
+    /**
+     * Builds a fresh instance from an exact constructor shape, allowing `null` arguments.
+     *
+     * Host rows such as `androidx.preference.SeekBarPreference` only expose `(Context, AttributeSet)`
+     * constructors, and the `AttributeSet` must be `null`; [newInstance] deliberately refuses null
+     * candidates, so this is the shape for that case.
+     */
+    fun newInstanceArgs(cls: Class<*>?, vararg args: Pair<Class<*>, Any?>): Any? {
+        if (cls == null) return null
+        runCatching { cls.getDeclaredConstructor().also { it.isAccessible = true }.newInstance() }
+            .getOrNull()
+            ?.let { return it }
+        val types = args.map { it.first }.toTypedArray()
+        val constructor = runCatching {
+            cls.getDeclaredConstructor(*types).also { it.isAccessible = true }
+        }.getOrNull() ?: return null
+        return runCatching { constructor.newInstance(*args.map { it.second }.toTypedArray()) }.getOrNull()
     }
 
     private fun coerce(value: Any?, type: Class<*>): Any? = when {

@@ -26,6 +26,9 @@ internal object MelodyEarphoneAdapter {
         "getHeadsetConnectionState",
         "getAclConnectionState",
         "getA2dpConnectionState",
+        // M4.3b Step 1 (D-13): the native ANC row highlights the mode whose protocolIndex this
+        // answers. Kept next to the connection states so the ANC-related getters stay readable.
+        "getNoiseReductionModeIndex",
         "getLeftBattery",
         "getRightBattery",
         "getBoxBattery",
@@ -49,6 +52,7 @@ internal object MelodyEarphoneAdapter {
         "getHeadsetConnectionState" -> projection.headsetState
         "getAclConnectionState" -> projection.aclState
         "getA2dpConnectionState" -> projection.a2dpState
+        "getNoiseReductionModeIndex" -> projection.noiseModeIndex
         "getLeftBattery", "getHeadsetLeftBattery" -> projection.battery?.left
         "getRightBattery", "getHeadsetRightBattery" -> projection.battery?.right
         "getBoxBattery", "getHeadsetBoxBattery" -> projection.battery?.box

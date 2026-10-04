@@ -1,6 +1,9 @@
 package com.Fusion.Btremix.melody.api
 
 import com.Fusion.Btremix.definition.api.MelodyPanelDefinition
+import com.Fusion.Btremix.definition.api.MelodyAncStrengthDefinition
+import com.Fusion.Btremix.definition.api.MelodyAncStrengthLevel
+import com.Fusion.Btremix.definition.api.MelodyAncMode
 import com.Fusion.Btremix.definition.api.MelodyProductId
 import com.Fusion.Btremix.definition.json.JsonParser
 import com.Fusion.Btremix.definition.json.JsonValue
@@ -43,6 +46,58 @@ data class MelodyWhitelistIdentity(
     /** The `whitelist` node re-serialised; this is what the host parses for a `content` column. */
     val whitelistJson: String,
 )
+
+/**
+ * The `melody.anc` node of an envelope (M4.3b, decision D-12): the host render version and the mode
+ * table the client projects into `EarphoneDTO.getNoiseReductionModeIndex()` and into the
+ * `ModeItem.name` label hook.
+ *
+ * It is deliberately all-or-nothing: a node that is absent or malformed reads as `null`, and the
+ * caller then leaves the host's own ANC state and texts untouched (fail-open, as everywhere else).
+ */
+data class MelodyAncPolicy(
+    val uiVersion: Int,
+    val modes: List<MelodyAncMode>,
+    /**
+     * The Definition's `ancLevel`-style strength mapped onto the host's own three-position slider
+     * (M4.3b D-14), or `null` when the Definition has none.
+     */
+    val strength: MelodyAncStrengthDefinition? = null,
+) {
+    val isEmpty: Boolean get() = modes.isEmpty()
+
+    /** The D-12 label for a host `ModeItem.id` (`String.valueOf(modeType)`), or `null` to leave it. */
+    fun labelOf(modeType: Int): String? =
+        modes.firstOrNull { it.modeType == modeType }?.label?.takeIf { it.isNotBlank() }
+
+    companion object {
+        /** Cached answer for "this envelope has no usable `anc` node". */
+        val NONE: MelodyAncPolicy = MelodyAncPolicy(uiVersion = 0, modes = emptyList())
+    }
+}
+
+/**
+ * The host's fixed ANC cell order (`e9.r.a(uiVersion)`, `NoiseReductionItem.updateActionView`).
+ *
+ * `ModeItem.id` is the cell *position* the host assigned while building the row
+ * (`NoiseReductionItem.createModeItem` writes `String.valueOf(counter)` into it), **not** the
+ * modeType - so the D-12 label hook has to rewrite the titles positionally in this order instead of
+ * looking a modeType up by id. The host only adds a cell when its injected mode table carries that
+ * `modeType`, so the caller filters this order by [modes].
+ *
+ * `ui=1 -> [4,3,5,10,1,2,6]`, `ui=2 -> [4,3,5,10,2,6,1]` (17.6.3, `Le9.r.a`).
+ */
+object MelodyAncRenderOrder {
+
+    private val UI_1: List<Int> = listOf(4, 3, 5, 10, 1, 2, 6)
+    private val UI_2: List<Int> = listOf(4, 3, 5, 10, 2, 6, 1)
+
+    /** The `modeType`s the host renders, in display order, for an injected table of [modes]. */
+    fun of(uiVersion: Int, modes: List<MelodyAncMode>): List<Int> {
+        val order = if (uiVersion == 2) UI_2 else UI_1
+        return order.filter { modeType -> modes.any { it.modeType == modeType } }
+    }
+}
 
 /**
  * Synthesises our row into the host's own whitelist answers (M3-D4: the official results stay, we only
@@ -122,6 +177,66 @@ object MelodyProviderMerge {
         val suppress = (definition.values["suppressTransport"] as? JsonValue.BooleanValue)?.value
             ?: MelodyDevicePolicy.NEUTRAL.suppressTransport
         return MelodyDevicePolicy(productType = productType, suppressTransport = suppress)
+    }
+
+    /**
+     * Reads the optional `anc` node of an envelope (M4.3b D-12/D-14). `null` when the node is missing,
+     * not an object, has no usable `modes` table or any mode is malformed - the client then projects
+     * nothing (the host keeps its own ANC index and its own mode texts). A malformed `strength` node
+     * only drops the strength half; the mode table still survives.
+     */
+    fun ancOf(envelopeJson: String?): MelodyAncPolicy? {
+        val envelope = envelopeJson
+            ?.let { runCatching { JsonParser.parse(it) as? JsonValue.Object }.getOrNull() }
+            ?: return null
+        val anc = envelope.values["anc"] as? JsonValue.Object ?: return null
+        val uiVersion = (anc.values["uiVersion"] as? JsonValue.NumberValue)?.raw?.toIntOrNull()
+            ?: return null
+        val modesNode = anc.values["modes"] as? JsonValue.Array ?: return null
+        val modes = modesNode.values.mapNotNull { item -> modeOf(item) }
+        if (modes.isEmpty()) return null
+        return MelodyAncPolicy(uiVersion = uiVersion, modes = modes, strength = strengthOf(anc.values["strength"]))
+    }
+
+    /**
+     * The D-15「降噪效果」descriptor. All-or-nothing: the state, the action and at least one level are
+     * required before anything is projected, so a half-written node leaves the host's own ANC state
+     * alone.
+     */
+    private fun strengthOf(value: JsonValue?): MelodyAncStrengthDefinition? {
+        val obj = value as? JsonValue.Object ?: return null
+        val state = (obj.values["state"] as? JsonValue.StringValue)?.value?.takeIf { it.isNotBlank() }
+            ?: return null
+        val action = (obj.values["action"] as? JsonValue.StringValue)?.value?.takeIf { it.isNotBlank() }
+            ?: return null
+        val levelsNode = obj.values["levels"] as? JsonValue.Array ?: return null
+        if (levelsNode.values.isEmpty()) return null
+        val levels = levelsNode.values.map { item -> levelOf(item) ?: return null }
+        return MelodyAncStrengthDefinition(
+            state = state,
+            action = action,
+            levels = levels,
+        )
+    }
+
+    private fun levelOf(value: JsonValue): MelodyAncStrengthLevel? {
+        val obj = value as? JsonValue.Object ?: return null
+        val modeType = (obj.values["modeType"] as? JsonValue.NumberValue)?.raw?.toIntOrNull() ?: return null
+        val protocolIndex = (obj.values["protocolIndex"] as? JsonValue.NumberValue)?.raw?.toIntOrNull()
+            ?: return null
+        val level = (obj.values["level"] as? JsonValue.NumberValue)?.raw?.toIntOrNull() ?: return null
+        return MelodyAncStrengthLevel(modeType = modeType, protocolIndex = protocolIndex, level = level)
+    }
+
+    private fun modeOf(value: JsonValue): MelodyAncMode? {
+        val obj = value as? JsonValue.Object ?: return null
+        val modeType = (obj.values["modeType"] as? JsonValue.NumberValue)?.raw?.toIntOrNull() ?: return null
+        val protocolIndex = (obj.values["protocolIndex"] as? JsonValue.NumberValue)?.raw?.toIntOrNull()
+            ?: return null
+        val state = (obj.values["state"] as? JsonValue.StringValue)?.value?.takeIf { it.isNotBlank() }
+            ?: return null
+        val label = (obj.values["label"] as? JsonValue.StringValue)?.value
+        return MelodyAncMode(modeType = modeType, protocolIndex = protocolIndex, state = state, label = label)
     }
 
     /**

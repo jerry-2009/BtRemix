@@ -52,6 +52,10 @@ internal class MelodyInjectionInstaller(
         // headers read, so both show the native "connected + battery" header while our session is up.
         runCatching { MelodyEarphoneInjection(module, log, loader).install() }
             .onFailure { log.warn("melody.injection.header_failed", it) }
+        // M4.3b D-12: rewrite the ANC mode texts at the host's `DeviceControlWidget` collection point,
+        // so a mode the host's vocabulary renders as "Adaptive" shows the Definition's own wording.
+        runCatching { MelodyAncLabelInjection(module, log, loader).install() }
+            .onFailure { log.warn("melody.injection.anc_label_failed", it) }
     }
 
     private fun moduleApkStamp(): Long? =

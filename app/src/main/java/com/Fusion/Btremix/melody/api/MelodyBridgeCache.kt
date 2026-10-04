@@ -22,6 +22,16 @@ class MelodyBridgeCache(private val clock: () -> Long = { System.currentTimeMill
          * `EarphoneDTO` getter call, so it must be a plain read - never a Bundle decode per call.
          */
         val battery: MelodyEarphoneBattery?,
+        /**
+         * Live ANC mode value (`ancMode` state), or `null` when the Definition does not publish one
+         * (M4.3b). Decoded at record time for the same reason as [battery].
+         */
+        val ancMode: String? = null,
+        /**
+         * Live ANC strength value (`ancLevel` state), or `null` when absent (M4.3b D-14). It feeds the
+         * native「降噪效果」index projection; it is decoded here so the DTO getter is a plain read.
+         */
+        val ancLevel: Int? = null,
         val updatedAtMs: Long,
     )
 
@@ -55,6 +65,8 @@ class MelodyBridgeCache(private val clock: () -> Long = { System.currentTimeMill
         lifecycle: String,
         stateKeys: Collection<String>,
         battery: MelodyEarphoneBattery? = null,
+        ancMode: String? = null,
+        ancLevel: Int? = null,
     ): CachedSnapshot {
         val key = MelodyMac.normalize(mac)
         val entry = CachedSnapshot(
@@ -62,6 +74,8 @@ class MelodyBridgeCache(private val clock: () -> Long = { System.currentTimeMill
             lifecycle = lifecycle,
             stateKeys = stateKeys.sorted(),
             battery = battery,
+            ancMode = ancMode,
+            ancLevel = ancLevel,
             updatedAtMs = clock(),
         )
         snapshots[key] = entry

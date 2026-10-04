@@ -1,5 +1,6 @@
 package com.Fusion.Btremix.melody.api
 
+import com.Fusion.Btremix.definition.api.MelodyAncMode
 import com.Fusion.Btremix.definition.json.JsonParser
 import com.Fusion.Btremix.definition.json.JsonValue
 import com.Fusion.Btremix.definition.json.JsonWriter
@@ -44,6 +45,84 @@ class MelodyProviderMergeTest {
         assertNull(MelodyProviderMerge.identityOf(null))
         assertNull(MelodyProviderMerge.identityOf("{ not json"))
         assertNull(MelodyProviderMerge.identityOf("""{"version":1,"mac":"AA"}"""))
+    }
+
+    // --- M4.3b: the `anc` node (mode table +「降噪效果」strength) ------------------------------------
+
+    @Test
+    fun ancOf_readsTheModeTableAndTheStrengthDescriptor() {
+        val policy = requireNotNull(MelodyProviderMerge.ancOf(ancEnvelopeJson))
+
+        assertEquals(2, policy.uiVersion)
+        assertEquals(listOf(5, 1), policy.modes.map { it.modeType })
+        assertEquals("Noise canceling", policy.labelOf(5))
+        assertEquals("Off", policy.labelOf(1))
+        assertNull("an undeclared modeType must stay unlabelled", policy.labelOf(10))
+        val strength = requireNotNull(policy.strength)
+        assertEquals("ancLevel", strength.state)
+        assertEquals("anc.setLevel", strength.action)
+        assertEquals(listOf(1, 10, 20), strength.levels.map { it.level })
+        assertEquals(listOf(3, 8, 4), strength.levels.map { it.modeType })
+        assertEquals(listOf(10, 11, 12), strength.levels.map { it.protocolIndex })
+    }
+
+    @Test
+    fun ancOf_keepsEveryStrengthLevel() {
+        val policy = requireNotNull(
+            MelodyProviderMerge.ancOf(
+                """{ "anc": { "uiVersion": 1, "modes": [ { "modeType": 5, "protocolIndex": 0, "state": "anc" } ],
+                    "strength": { "state": "ancLevel", "action": "anc.setLevel", "levels": [
+                        { "modeType": 3, "protocolIndex": 10, "level": 1 },
+                        { "modeType": 4, "protocolIndex": 11, "level": 20 } ] } } }""",
+            ),
+        )
+
+        assertEquals(listOf(3, 4), policy.strength?.levels?.map { it.modeType })
+        assertEquals(listOf(1, 20), policy.strength?.levels?.map { it.level })
+    }
+
+    // --- M4.3b D-12: host cell order (`ModeItem.id` is a position, not a modeType) -----------------
+
+    @Test
+    fun renderOrder_matchesTheHostsUIVersionOrderFilteredByTheInjectedTable() {
+        val modes = listOf(
+            MelodyAncMode(modeType = 5, protocolIndex = 0, state = "anc"),
+            MelodyAncMode(modeType = 1, protocolIndex = 1, state = "off"),
+            MelodyAncMode(modeType = 2, protocolIndex = 2, state = "ambient"),
+            MelodyAncMode(modeType = 10, protocolIndex = 3, state = "wind"),
+        )
+
+        // 17.6.3 `Le9.r.a`: ui=1 [4,3,5,10,1,2,6], ui=2 [4,3,5,10,2,6,1], filtered to the table.
+        assertEquals(listOf(5, 10, 1, 2), MelodyAncRenderOrder.of(1, modes))
+        assertEquals(listOf(5, 10, 2, 1), MelodyAncRenderOrder.of(2, modes))
+    }
+
+    @Test
+    fun renderOrder_filtersToTheDeclaredModeTypes() {
+        val modes = listOf(
+            MelodyAncMode(modeType = 5, protocolIndex = 0, state = "anc"),
+            MelodyAncMode(modeType = 1, protocolIndex = 1, state = "off"),
+        )
+
+        assertEquals(listOf(5, 1), MelodyAncRenderOrder.of(1, modes))
+        assertEquals(listOf(5, 1), MelodyAncRenderOrder.of(2, modes))
+    }
+
+    @Test
+    fun ancOf_isNullWhenTheNodeIsMissingTruncatedOrHasNoUsableTable() {
+        assertNull(MelodyProviderMerge.ancOf(null))
+        assertNull(MelodyProviderMerge.ancOf(envelope))
+        assertNull(MelodyProviderMerge.ancOf("""{ "anc": { "uiVersion": 1, "modes": [] } }"""))
+        assertNull(MelodyProviderMerge.ancOf("""{ "anc": { "uiVersion": 1, "modes": [ { "modeType": 5 } ] } }"""))
+        // The table is fine but the strength descriptor is malformed: the table survives, strength is
+        // dropped rather than poisoning the whole node.
+        val policy = requireNotNull(
+            MelodyProviderMerge.ancOf(
+                """{ "anc": { "uiVersion": 1, "modes": [ { "modeType": 5, "protocolIndex": 0, "state": "anc" } ],
+                    "strength": { "state": "ancLevel", "levels": [ { "modeType": 3, "protocolIndex": 10 } ] } } }""",
+            ),
+        )
+        assertNull(policy.strength)
     }
 
     @Test
@@ -296,4 +375,23 @@ class MelodyProviderMergeTest {
     private val doJson =
         """{"whiteList":[{"id":"0000079A","name":"OPPO Enco X"}],"leAllFilterFunctions":[],""" +
             """"versionCode":7,"txMusicCollectUrl":"https://example.invalid/collect"}"""
+
+    private val ancEnvelopeJson =
+        """
+        {
+          "version": 1,
+          "mac": "14:3F:A6:02:5F:B0",
+          "anc": {
+            "uiVersion": 2,
+            "modes": [
+              { "modeType": 5, "protocolIndex": 0, "state": "anc", "label": "Noise canceling" },
+              { "modeType": 1, "protocolIndex": 1, "state": "off", "label": "Off" }
+            ],
+            "strength": { "state": "ancLevel", "action": "anc.setLevel", "levels": [
+              { "modeType": 3, "protocolIndex": 10, "level": 1 },
+              { "modeType": 8, "protocolIndex": 11, "level": 10 },
+              { "modeType": 4, "protocolIndex": 12, "level": 20 } ] }
+          }
+        }
+        """.trimIndent()
 }

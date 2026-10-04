@@ -4,6 +4,7 @@ import com.Fusion.Btremix.melody.api.MelodyDeviceInfoProjection
 import com.Fusion.Btremix.melody.api.MelodyEarphoneBattery
 import com.Fusion.Btremix.melody.api.MelodyEarphoneProjection
 import com.Fusion.Btremix.melody.api.MelodyLifecycleWire
+import com.Fusion.Btremix.definition.api.MelodyAncMode
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertNull
 import org.junit.Assert.assertTrue
@@ -99,6 +100,28 @@ class MelodyEarphoneAdapterTest {
         assertNull(MelodyEarphoneAdapter.overrideFor("getSomethingElse", ready))
     }
 
+    @Test
+    fun ancMode_projectsTheMatchingProtocolIndexAndLeavesItAbsentOtherwise() {
+        val modes = listOf(
+            MelodyAncMode(modeType = 5, protocolIndex = 0, state = "anc"),
+            MelodyAncMode(modeType = 1, protocolIndex = 1, state = "off"),
+        )
+
+        assertEquals(
+            1,
+            MelodyEarphoneAdapter.overrideFor(
+                "getNoiseReductionModeIndex",
+                MelodyEarphoneProjection.from(MelodyLifecycleWire.READY, null, "off", modes),
+            ),
+        )
+        assertNull(
+            MelodyEarphoneAdapter.overrideFor(
+                "getNoiseReductionModeIndex",
+                MelodyEarphoneProjection.from(MelodyLifecycleWire.READY, null),
+            ),
+        )
+    }
+
     /**
      * Host shape: the real `EarphoneDTO` getter names, each answering its native (disconnected) value.
      * Nothing here is called - the test only proves the names the adapter resolves are the names the host
@@ -111,6 +134,7 @@ class MelodyEarphoneAdapterTest {
         fun getHeadsetConnectionState(): Int = 0
         fun getAclConnectionState(): Int = 0
         fun getA2dpConnectionState(): Int = 0
+        fun getNoiseReductionModeIndex(): Int = 0
         fun getLeftBattery(): Int = 0
         fun getRightBattery(): Int = 0
         fun getBoxBattery(): Int = 0

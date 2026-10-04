@@ -8,6 +8,8 @@ import com.Fusion.Btremix.device.runtime.StateValue
 import com.Fusion.Btremix.melody.api.MelodyBridgeCache
 import com.Fusion.Btremix.melody.api.MelodyBridgeResult
 import com.Fusion.Btremix.melody.api.MelodyBundleCodec
+import com.Fusion.Btremix.melody.api.MelodyAncStates
+import com.Fusion.Btremix.melody.api.MelodyAncPolicy
 import com.Fusion.Btremix.melody.api.MelodyDeviceInfoIdentity
 import com.Fusion.Btremix.melody.api.MelodyDeviceInfoProjection
 import com.Fusion.Btremix.melody.api.MelodyDevicePolicy
@@ -83,6 +85,12 @@ internal class MelodyBridgeClient(
     private val panels = ConcurrentHashMap<String, MelodyPanelPolicy>()
 
     /**
+     * The envelope's `anc` node per MAC (M4.3b). Parsed once per envelope like [panels]; a missing
+     * node is cached as [MelodyAncPolicy.NONE] so an ANC-less device does not re-parse per getter.
+     */
+    private val ancs = ConcurrentHashMap<String, MelodyAncPolicy>()
+
+    /**
      * The header projection per MAC (M4.3a), keyed to the exact snapshot it was built from. The
      * `EarphoneDTO` getters are polled continuously by the header, so this has to be an identity read
      * in steady state: a fresh value is computed only when a push actually replaced the snapshot.
@@ -151,7 +159,14 @@ internal class MelodyBridgeClient(
         override fun onSnapshot(mac: String?, snapshot: MelodySnapshot?) {
             if (snapshot == null) return
             val key = MelodyMac.normalize(mac ?: snapshot.mac)
-            cache.recordSnapshot(key, snapshot.lifecycle, snapshot.stateKeys, MelodyEarphoneBattery.ofSnapshot(snapshot))
+            cache.recordSnapshot(
+                key,
+                snapshot.lifecycle,
+                snapshot.stateKeys,
+                MelodyEarphoneBattery.ofSnapshot(snapshot),
+                MelodyAncStates.ofSnapshot(snapshot),
+                MelodyAncStates.levelOfSnapshot(snapshot),
+            )
             log.event(
                 "melody.bridge.push",
                 "side" to SIDE,
@@ -168,6 +183,7 @@ internal class MelodyBridgeClient(
             identities.clear()
             policies.clear()
             panels.clear()
+            ancs.clear()
             earphones.clear()
             headerSkips.clear()
             firstSnapshotPulled.clear()
@@ -253,7 +269,14 @@ internal class MelodyBridgeClient(
             )
             return null
         }
-        cache.recordSnapshot(key, snapshot.lifecycle, snapshot.stateKeys, MelodyEarphoneBattery.ofSnapshot(snapshot))
+        cache.recordSnapshot(
+            key,
+            snapshot.lifecycle,
+            snapshot.stateKeys,
+            MelodyEarphoneBattery.ofSnapshot(snapshot),
+            MelodyAncStates.ofSnapshot(snapshot),
+            MelodyAncStates.levelOfSnapshot(snapshot),
+        )
         log.event(
             "melody.bridge.snapshot",
             "side" to SIDE,
@@ -279,6 +302,7 @@ internal class MelodyBridgeClient(
         identities.remove(key)
         policies.remove(key)
         panels.remove(key)
+        ancs.remove(key)
         earphones.remove(key)
         headerSkips.remove(key)
         return json
@@ -352,10 +376,33 @@ internal class MelodyBridgeClient(
             earphones.remove(key)
             return noteHeaderSkip(key, "no_envelope")
         }
-        val projection = MelodyEarphoneProjection.from(cached.lifecycle, cached.battery)
+        val anc = ancFast(key)
+        val projection = MelodyEarphoneProjection.from(
+            cached.lifecycle,
+            cached.battery,
+            cached.ancMode,
+            anc.modes,
+            cached.ancLevel,
+            anc.strength,
+        )
         earphones[key] = cached to projection
         headerSkips.remove(key)
         return projection
+    }
+
+    /**
+     * The envelope's ANC mode table for [mac] (M4.3b), or [MelodyAncPolicy.NONE] when the device has
+     * no `anc` node. Cheap after the first call: the envelope is parsed once and the resolution is
+     * cached. `null` envelope (a cache miss that is still being filled) is not cached, so a later
+     * push can still light the table up.
+     */
+    fun ancFast(mac: String): MelodyAncPolicy {
+        val key = MelodyMac.normalize(mac)
+        ancs[key]?.let { return it }
+        val envelope = projectionFast(key) ?: return MelodyAncPolicy.NONE
+        val policy = MelodyProviderMerge.ancOf(envelope) ?: MelodyAncPolicy.NONE
+        ancs[key] = policy
+        return policy
     }
 
     /**
@@ -376,7 +423,14 @@ internal class MelodyBridgeClient(
         val payload = runCatching {
             calls.submit(Callable { bridge.snapshot(mac) }).get(PROVIDER_CALL_TIMEOUT_MS, TimeUnit.MILLISECONDS)
         }.getOrNull() ?: return null
-        return cache.recordSnapshot(mac, payload.lifecycle, payload.stateKeys, MelodyEarphoneBattery.ofSnapshot(payload))
+        return cache.recordSnapshot(
+            mac,
+            payload.lifecycle,
+            payload.stateKeys,
+            MelodyEarphoneBattery.ofSnapshot(payload),
+            MelodyAncStates.ofSnapshot(payload),
+            MelodyAncStates.levelOfSnapshot(payload),
+        )
     }
 
     /**
@@ -616,5 +670,6 @@ internal class MelodyBridgeClient(
 
         /** Only reachable when a (malformed) envelope omitted `sectionTitle`; M4.3 uses it as the group title. */
         const val DEFAULT_PANEL_TITLE = "BtRemix"
+
     }
 }

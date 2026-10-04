@@ -2,6 +2,9 @@ package com.Fusion.Btremix.definition
 
 import com.Fusion.Btremix.definition.api.DefinitionSchema
 import com.Fusion.Btremix.definition.api.MelodyPanelDefinition
+import com.Fusion.Btremix.definition.api.MelodyAncStrengthDefinition
+import com.Fusion.Btremix.definition.api.MelodyAncStrengthLevel
+import com.Fusion.Btremix.definition.api.MelodyAncMode
 import com.Fusion.Btremix.definition.api.MelodyProductId
 import com.Fusion.Btremix.definition.api.MelodySupportDefinition
 import com.Fusion.Btremix.definition.json.DefinitionJsonCodec
@@ -153,6 +156,85 @@ class MelodySectionSchemaTest {
         assertEquals("melody_bridge_", MelodyPanelDefinition.CUSTOM_KEY_PREFIX)
     }
 
+    // --- M4.3b: the `melody.anc` node -------------------------------------------------------------
+
+    @Test
+    fun ancNode_isParsedWithItsTableAndStrength() {
+        val anc = requireNotNull(DefinitionJsonCodec.decode(ancMelodyDefinition).melody).anc
+
+        assertEquals(2, anc.uiVersion)
+        assertEquals(
+            listOf(
+                MelodyAncMode(modeType = 5, protocolIndex = 1, state = "anc", label = "Noise canceling"),
+                MelodyAncMode(modeType = 1, protocolIndex = 0, state = "off"),
+            ),
+            anc.modes,
+        )
+        assertEquals(
+            MelodyAncStrengthDefinition(
+                state = "ancLevel",
+                action = "anc.setLevel",
+                levels = listOf(
+                    MelodyAncStrengthLevel(modeType = 3, protocolIndex = 10, level = 1),
+                    MelodyAncStrengthLevel(modeType = 4, protocolIndex = 11, level = 20),
+                ),
+            ),
+            anc.strength,
+        )
+    }
+
+    @Test
+    fun ancNode_isOptionalAndDefaultsToVersionOne() {
+        val anc = requireNotNull(DefinitionJsonCodec.decode(melodyDefinition).melody).anc
+
+        assertEquals(1, anc.uiVersion)
+        assertTrue(anc.modes.isEmpty())
+        assertNull(anc.strength)
+    }
+
+    @Test
+    fun invalidAncUIVersion_isRejected() {
+        val errors = validationErrors(ancMelodyDefinition.replace("\"uiVersion\": 2", "\"uiVersion\": 9"))
+
+        assertTrue(errors.any { it.path == "melody.anc.uiVersion" })
+    }
+
+    @Test
+    fun duplicateAncModeType_isRejected() {
+        val errors = validationErrors(ancMelodyDefinition.replace("\"modeType\": 1", "\"modeType\": 5"))
+
+        assertTrue(errors.any { it.path == "melody.anc.modes[1].modeType" })
+    }
+
+    @Test
+    fun invalidAncStrengthLevels_areRejected() {
+        val unordered = validationErrors(
+            ancMelodyDefinition.replace("\"level\": 1 }", "\"level\": 20 }"),
+        )
+        assertTrue(unordered.any { it.path == "melody.anc.strength.levels[1].level" })
+
+        val empty = validationErrors(
+            ancMelodyDefinition.replace(LEVELS_JSON, "[]"),
+        )
+        assertTrue(empty.any { it.path == "melody.anc.strength.levels" })
+
+        // The host only renders child modeTypes 3/4/7/8 (Ba.r.b), so anything else would be invisible.
+        val invisible = validationErrors(ancMelodyDefinition.replace("\"modeType\": 3,", "\"modeType\": 9,"))
+        assertTrue(invisible.any { it.path == "melody.anc.strength.levels[0].modeType" })
+
+        // A child protocolIndex shares the parent table's namespace; `0` is already the Off entry.
+        val collision = validationErrors(
+            ancMelodyDefinition.replace("\"protocolIndex\": 10,", "\"protocolIndex\": 0,"),
+        )
+        assertTrue(collision.any { it.path == "melody.anc.strength.levels[0].protocolIndex" })
+
+        // `states.ancLevel` is 1..20, so a level above the range can never be matched on the device.
+        val outOfRange = validationErrors(
+            ancMelodyDefinition.replace("\"level\": 20 }", "\"level\": 25 }"),
+        )
+        assertTrue(outOfRange.any { it.path == "melody.anc.strength.levels" })
+    }
+
     private fun validationErrors(json: String): List<DefinitionValidationError> =
         DefinitionValidator.validate(DefinitionJsonCodec.decode(json, validate = false))
 
@@ -164,6 +246,10 @@ class MelodySectionSchemaTest {
     }
 
     private companion object {
+        const val LEVELS_JSON =
+            "[ { \"modeType\": 3, \"protocolIndex\": 10, \"level\": 1 }, " +
+                "{ \"modeType\": 4, \"protocolIndex\": 11, \"level\": 20 } ]"
+
         val streamDefinitionWithoutMelody = """
             {
               "manifest": {
@@ -203,6 +289,32 @@ class MelodySectionSchemaTest {
                   "hideKeys": ["pref_game_mode"],
                   "greyKeys": ["pref_more_setting"]
                 }
+              }
+            }
+        """.trimIndent()
+
+        val ancMelodyDefinition = """
+            {
+              "manifest": {
+                "id": "demo.melody",
+                "displayName": "Melody",
+                "version": "4.0.0",
+                "schemaVersion": 4,
+                "matchers": [{ "type": "namePrefix", "value": "Melody" }]
+              },
+              "melody": {
+                "support": { "mode": "bridge", "name": "Sony WF-1000XM3" },
+                "anc": {
+                  "uiVersion": 2,
+                  "modes": [
+                    { "modeType": 5, "protocolIndex": 1, "state": "anc", "label": "Noise canceling" },
+                    { "modeType": 1, "protocolIndex": 0, "state": "off" }
+                  ],
+                  "strength": { "state": "ancLevel", "action": "anc.setLevel", "levels": [ { "modeType": 3, "protocolIndex": 10, "level": 1 }, { "modeType": 4, "protocolIndex": 11, "level": 20 } ] }
+                }
+              },
+              "states": {
+                "ancLevel": { "type": "integer", "displayName": "Ambient level", "min": 1, "max": 20, "step": 1 }
               }
             }
         """.trimIndent()

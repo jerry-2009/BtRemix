@@ -1,6 +1,10 @@
 package com.Fusion.Btremix.melody.projection
 
 import com.Fusion.Btremix.definition.api.LoadedDeviceDefinition
+import com.Fusion.Btremix.definition.api.ActionDefinition
+import com.Fusion.Btremix.definition.api.DefinitionManifest
+import com.Fusion.Btremix.definition.api.StateDefinition
+import com.Fusion.Btremix.definition.api.StateDefinitionType
 import com.Fusion.Btremix.definition.json.DefinitionJsonCodec
 import com.Fusion.Btremix.definition.json.JsonValue
 import org.junit.Assert.assertEquals
@@ -22,8 +26,11 @@ class MelodyCapabilityMapTest {
     }
 
     @Test
-    fun m4_enablesExactlyTheSpatialTypesSwitch() {
-        assertEquals(setOf("spatialTypes"), MelodyCapabilityMap.ENABLED_IN_M4)
+    fun m4_enablesTheSpatialAndNativeAncSwitches() {
+        assertEquals(
+            setOf("spatialTypes", "noiseReductionMode", "noiseReductionUIVersion"),
+            MelodyCapabilityMap.ENABLED_IN_M4,
+        )
     }
 
     @Test
@@ -79,8 +86,11 @@ class MelodyCapabilityMapTest {
     fun structuredCloudSwitchesAreNotSynthesized() {
         val keys = MelodyCapabilityMap.rules.map { it.functionKey }
 
-        assertEquals(listOf("batteryInfo", "spatialTypes"), keys)
-        listOf("noiseReductionMode", "equalizerMode", "control", "callControl", "multiConnectFunctions")
+        assertEquals(
+            listOf("batteryInfo", "spatialTypes", "noiseReductionMode", "noiseReductionUIVersion"),
+            keys,
+        )
+        listOf("equalizerMode", "control", "callControl", "multiConnectFunctions")
             .forEach { assertTrue("$it needs host cloud tables and must have no rule", it !in keys) }
     }
 
@@ -117,6 +127,187 @@ class MelodyCapabilityMapTest {
             states = listOf("\"eqPreset\": { \"type\": \"integer\" }"),
         ),
     )
+
+    // --- M4.3b: native ANC mode table (D-11/D-12) -----------------------------------------------
+
+    @Test
+    fun ancEnumState_derivesTheHostModeTableByConvention() {
+        val plan = MelodyCapabilityMap.ancPlan(ancDevice())
+
+        assertEquals(1, plan.uiVersion)
+        assertEquals(listOf(1, 5, 2, 10), plan.modes.map { it.modeType })
+        assertEquals(listOf(0, 1, 2, 3), plan.modes.map { it.protocolIndex })
+        assertEquals(listOf("off", "anc", "ambient", "wind"), plan.modes.map { it.state })
+        assertEquals("Noise canceling", plan.modes[1].label)
+        assertEquals("Wind noise reduction", plan.modes.last().label)
+    }
+
+    @Test
+    fun declaredAncTable_overridesTheDerivation() {
+        val definition = DefinitionJsonCodec.decode(ancDefinitionJson())
+        val plan = MelodyCapabilityMap.ancPlan(definition)
+
+        assertEquals(2, plan.uiVersion)
+        assertEquals(listOf(5, 1), plan.modes.map { it.modeType })
+        assertEquals(listOf(1, 0), plan.modes.map { it.protocolIndex })
+    }
+
+    @Test
+    fun declaredAncModeWithoutLabel_fallsBackToTheEnumDisplayName() {
+        val definition = DefinitionJsonCodec.decode(ancDefinitionJson(withLabels = false))
+
+        val plan = MelodyCapabilityMap.ancPlan(definition)
+
+        assertEquals("Noise canceling", plan.modes[0].label)
+        assertEquals("Off", plan.modes[1].label)
+    }
+
+    @Test
+    fun ancSwitches_carryTheDerivedTableAndUIVersion() {
+        val overrides = MelodyCapabilityMap.overrides(
+            ancDevice(),
+            enabledKeys = setOf("noiseReductionMode", "noiseReductionUIVersion"),
+        )
+
+        val modes = (overrides["noiseReductionMode"] as JsonValue.Array).values
+            .map { it as JsonValue.Object }
+        assertEquals(4, modes.size)
+        assertEquals(
+            listOf(JsonValue.NumberValue("1"), JsonValue.NumberValue("5"), JsonValue.NumberValue("2"), JsonValue.NumberValue("10")),
+            modes.map { it.values["modeType"] },
+        )
+        modes.forEach {
+            assertEquals(JsonValue.BooleanValue(false), it.values["decideByEarDevice"])
+        }
+        assertEquals(JsonValue.NumberValue("1"), overrides["noiseReductionUIVersion"])
+    }
+
+    @Test
+    fun definitionWithoutAnAncState_neverOpensTheAncSwitches() {
+        val definition = DefinitionJsonCodec.decode(
+            definitionJson(
+                capabilities = listOf("\"battery\""),
+                states = listOf("\"battery.left\": { \"type\": \"integer\" }"),
+            ),
+        )
+
+        assertTrue(MelodyCapabilityMap.ancPlan(definition).isEmpty)
+        assertTrue(
+            MelodyCapabilityMap.overrides(
+                definition,
+                enabledKeys = setOf("noiseReductionMode", "noiseReductionUIVersion"),
+            ).isEmpty(),
+        )
+    }
+
+    @Test
+    fun ancStrength_isDerivedFromTheBoundedIntegerStateAndItsResultAction() {
+        val strength = requireNotNull(MelodyCapabilityMap.ancPlan(ancDeviceWithLevel()).strength)
+
+        assertEquals("ancLevel", strength.state)
+        assertEquals("anc.setLevel", strength.action)
+        // Sony's 1..20 collapses to the native「降噪效果」Low / Moderate / High anchors.
+        assertEquals(listOf(1, 10, 20), strength.levels.map { it.level })
+        assertEquals(listOf(3, 8, 4), strength.levels.map { it.modeType })
+    }
+
+    @Test
+    fun noiseReductionMode_carriesTheNativeStrengthChildrenOnTheAncEntry() {
+        val overrides = MelodyCapabilityMap.overrides(
+            ancDeviceWithLevel(),
+            enabledKeys = setOf("noiseReductionMode"),
+        )
+
+        val modes = (overrides["noiseReductionMode"] as JsonValue.Array).values.map { it as JsonValue.Object }
+        val anc = modes.first { it.values["modeType"] == JsonValue.NumberValue("5") }
+        val children = (anc.values["childrenMode"] as JsonValue.Array).values.map { it as JsonValue.Object }
+        assertEquals(
+            listOf(JsonValue.NumberValue("3"), JsonValue.NumberValue("8"), JsonValue.NumberValue("4")),
+            children.map { it.values["modeType"] },
+        )
+        assertEquals(
+            listOf(JsonValue.NumberValue("100"), JsonValue.NumberValue("101"), JsonValue.NumberValue("102")),
+            children.map { it.values["protocolIndex"] },
+        )
+        modes.filter { it.values["modeType"] != JsonValue.NumberValue("5") }
+            .forEach { assertNull("only the ANC entry owns the strength children", it.values["childrenMode"]) }
+    }
+
+    @Test
+    fun ancEntryWithoutStrength_carriesNoChildrenMode() {
+        val overrides = MelodyCapabilityMap.overrides(ancDevice(), enabledKeys = setOf("noiseReductionMode"))
+
+        val modes = (overrides["noiseReductionMode"] as JsonValue.Array).values.map { it as JsonValue.Object }
+        modes.forEach { assertNull(it.values["childrenMode"]) }
+    }
+
+    private fun ancDeviceWithLevel(): LoadedDeviceDefinition = LoadedDeviceDefinition(
+            manifest = DefinitionManifest(
+                id = "test.anc",
+                displayName = "Test ANC",
+                version = "1.0.0",
+                schemaVersion = 4,
+                capabilities = setOf("anc"),
+            ),
+            states = mapOf(
+                "ancMode" to StateDefinition(
+                    key = "ancMode",
+                    type = StateDefinitionType.ENUM,
+                    enumValues = mapOf("off" to "Off", "anc" to "Noise canceling"),
+                ),
+                "ancLevel" to StateDefinition(
+                    key = "ancLevel",
+                    type = StateDefinitionType.INTEGER,
+                    displayName = "Ambient level",
+                    min = 1.0,
+                    max = 20.0,
+                    step = 1.0,
+                ),
+            ),
+            actions = mapOf(
+                "anc.setLevel" to ActionDefinition(id = "anc.setLevel", displayName = "Set level", resultState = "ancLevel"),
+            ),
+        )
+
+    private fun ancDevice(): LoadedDeviceDefinition = DefinitionJsonCodec.decode(
+        definitionJson(
+            capabilities = listOf("\"anc\""),
+            states = listOf(
+                "\"ancMode\": { \"type\": \"enum\", \"enumValues\": { " +
+                    "\"off\": \"Off\", \"anc\": \"Noise canceling\", " +
+                    "\"ambient\": \"Ambient sound\", \"wind\": \"Wind noise reduction\" } }",
+            ),
+        ),
+    )
+
+    private fun ancDefinitionJson(withLabels: Boolean = true): String {
+        val label = if (withLabels) { """ "label": "Custom", """ } else { "" }
+        return """
+            {
+              "manifest": {
+                "id": "test.device",
+                "displayName": "Test Device",
+                "version": "1.0.0",
+                "schemaVersion": 4,
+                "capabilities": ["anc"],
+                "matchers": [{ "type": "namePrefix", "value": "Test" }]
+              },
+              "melody": {
+                "support": { "name": "Test Device" },
+                "anc": {
+                  "uiVersion": 2,
+                  "modes": [
+                    { $label "modeType": 5, "protocolIndex": 1, "state": "anc" },
+                    { "modeType": 1, "protocolIndex": 0, "state": "off" }
+                  ]
+                }
+              },
+              "states": {
+                "ancMode": { "type": "enum", "enumValues": { "off": "Off", "anc": "Noise canceling" } }
+              }
+            }
+        """.trimIndent()
+    }
 
     private fun definitionJson(capabilities: List<String>, states: List<String>): String = """
         {

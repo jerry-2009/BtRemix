@@ -223,6 +223,50 @@ class MelodyProjectionBuilderTest {
         assertTrue(panel.getValue("greyKeys").asStrings().isEmpty())
     }
 
+    // --- M4.3b: the `anc` node and the native ANC switches ---------------------------------------
+
+    @Test
+    fun projection_carriesTheResolvedAncNode() {
+        val builder = MelodyProjectionBuilder(MelodyTemplateSource { templateFile().readText() })
+
+        val anc = parse(builder.build(managedAncDevice())).getValue("anc").asObject()
+
+        assertEquals(1.0, anc.getValue("uiVersion").asNumber()!!, 0.0)
+        val modes = (anc.getValue("modes") as JsonValue.Array).values.map { it.asObject() }
+        assertEquals(listOf(5.0, 1.0, 2.0, 10.0), modes.map { it.getValue("modeType").asNumber() })
+        assertEquals(listOf(0.0, 1.0, 2.0, 3.0), modes.map { it.getValue("protocolIndex").asNumber() })
+        assertEquals("Noise canceling", modes[0].getValue("label").asString())
+        val strength = anc.getValue("strength").asObject()
+        assertEquals("ancLevel", strength.getValue("state").asString())
+        assertEquals("anc.setLevel", strength.getValue("action").asString())
+        val levels = (strength.getValue("levels") as JsonValue.Array).values.map { it.asObject() }
+        assertEquals(listOf(1.0, 10.0, 20.0), levels.map { it.getValue("level").asNumber() })
+        assertEquals(listOf(3.0, 8.0, 4.0), levels.map { it.getValue("modeType").asNumber() })
+        assertEquals(listOf(10.0, 11.0, 12.0), levels.map { it.getValue("protocolIndex").asNumber() })
+    }
+
+    @Test
+    fun projection_opensTheNativeAncSwitchesOnlyForADefinitionWithATable() {
+        val builder = MelodyProjectionBuilder(MelodyTemplateSource { templateFile().readText() })
+
+        val function = parse(builder.build(managedAncDevice()))
+            .getValue("whitelist").asObject().getValue("function").asObject()
+
+        assertTrue(function.getValue("noiseReductionMode") is JsonValue.Array)
+        assertEquals(1.0, function.getValue("noiseReductionUIVersion").asNumber()!!, 0.0)
+        // The「降噪效果」route rides on the ANC entry's `childrenMode`, not the `opsReduction` variant.
+        assertEquals(0.0, function.getValue("opsReduction").asNumber()!!, 0.0)
+        val ancEntry = (function.getValue("noiseReductionMode") as JsonValue.Array).values
+            .map { it.asObject() }
+            .first { it.getValue("modeType").asNumber() == 5.0 }
+        val children = (ancEntry.getValue("childrenMode") as JsonValue.Array).values.map { it.asObject() }
+        assertEquals(3, children.size)
+
+        val withoutAnc = parse(builder.build(device))
+            .getValue("whitelist").asObject().getValue("function").asObject()
+        assertNull(withoutAnc.getValue("noiseReductionMode").asNumber())
+    }
+
     @Test
     fun projection_withoutAnyTemplate_degradesToTheMinimalFieldSet() {
         val builder = MelodyProjectionBuilder(MelodyTemplateSource { null })
@@ -286,6 +330,50 @@ class MelodyProjectionBuilderTest {
             melody = requireNotNull(definition.melody),
         )
     }
+
+    private fun managedAncDevice(): MelodyManagedDevice {
+        val definition = DefinitionJsonCodec.decode(ancDefinitionJson())
+        return MelodyManagedDevice(
+            mac = "14:3F:A6:02:5F:B0",
+            name = "Test ANC",
+            definition = definition,
+            melody = requireNotNull(definition.melody),
+        )
+    }
+
+    private fun ancDefinitionJson(): String = """
+        {
+          "manifest": {
+            "id": "test.anc",
+            "displayName": "Test ANC",
+            "version": "1.0.0",
+            "schemaVersion": 4,
+            "capabilities": ["anc"],
+            "matchers": [{ "type": "namePrefix", "value": "Test" }]
+          },
+          "melody": {
+            "support": { "name": "Test ANC", "brand": "Test" },
+            "anc": {
+              "uiVersion": 1,
+              "modes": [
+                { "modeType": 5, "protocolIndex": 0, "state": "anc", "label": "Noise canceling" },
+                { "modeType": 1, "protocolIndex": 1, "state": "off", "label": "Off" },
+                { "modeType": 2, "protocolIndex": 2, "state": "ambient", "label": "Ambient sound" },
+                { "modeType": 10, "protocolIndex": 3, "state": "wind", "label": "Wind noise reduction" }
+              ],
+              "strength": { "state": "ancLevel", "action": "anc.setLevel", "levels": [
+                { "modeType": 3, "protocolIndex": 10, "level": 1 },
+                { "modeType": 8, "protocolIndex": 11, "level": 10 },
+                { "modeType": 4, "protocolIndex": 12, "level": 20 }
+              ] }
+            }
+          },
+          "states": {
+            "ancMode": { "type": "enum", "enumValues": { "off": "Off", "anc": "Noise canceling", "ambient": "Ambient sound", "wind": "Wind noise reduction" } },
+            "ancLevel": { "type": "integer", "min": 1, "max": 20, "step": 1 }
+          }
+        }
+    """.trimIndent()
 
     private fun definition(
         productType: Int = 1,
