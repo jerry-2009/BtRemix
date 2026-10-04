@@ -18,11 +18,15 @@ import com.Fusion.Btremix.device.session.SessionRegistry
 import com.Fusion.Btremix.melody.api.MelodyCallPolicy
 import com.Fusion.Btremix.melody.bridge.MelodyBridgeLog
 import com.Fusion.Btremix.melody.bridge.MelodySessionService
+import com.Fusion.Btremix.melody.config.MelodySupportRegistry
+import com.Fusion.Btremix.melody.projection.AndroidMelodyTemplateSource
+import com.Fusion.Btremix.melody.projection.MelodyProjectionBuilder
 import java.io.File
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.flow.collect
+import kotlinx.coroutines.flow.combine
 import kotlinx.coroutines.launch
 
 /**
@@ -78,35 +82,61 @@ class BtRemixApplication : Application() {
 
     private val bridgeLog = MelodyBridgeLog()
 
+    /**
+     * "Which paired devices does Melody have to see as supported?" (HANDOFF_MELODY_M3_PLAN.md §4 M3.1).
+     * Device packages provide the Definitions with a `melody` section; the RFCOMM backend provides the
+     * bonded classic devices. Keeping this process-scoped lets the service start for a paired-but-idle
+     * headset, before any session exists (M3-D6).
+     */
+    val melodySupport: MelodySupportRegistry by lazy {
+        MelodySupportRegistry(
+            packages = packages.packages,
+            rfcomm = rfcomm,
+            scope = scope,
+            onManagedChanged = { macs ->
+                bridgeLog.event("melody.managed.refresh", "count" to macs.size, "macs" to macs.joinToString(","))
+            },
+        )
+    }
+
+    /** Synthetic whitelist envelope builder; reads the M3.-1 template from the APK assets. */
+    val melodyProjection: MelodyProjectionBuilder by lazy {
+        MelodyProjectionBuilder(AndroidMelodyTemplateSource(assets))
+    }
+
     override fun onCreate() {
         super.onCreate()
         scope.launch { packageBootstrap.load() }
+        melodySupport.start()
         watchSessionsForMelodyBridge()
     }
 
     /**
-     * Starts the Melody bridge service while a session exists (MELODY_BRIDGE_TRANSPORT_PLAN.md §7 strategy b).
+     * Starts the Melody bridge service while there is a session *or* a managed device
+     * (MELODY_BRIDGE_TRANSPORT_PLAN.md §7 strategy b, M3-D6).
      *
      * The host cannot bind to the service (package visibility, §8.1), so BtRemix has to announce itself.
-     * Tying the service to the session lifetime is what keeps the bridge from being a permanent background
-     * service: a connected headset is exactly when the Melody panel can show anything, and the service stops
-     * itself again once the last session is released and no client is bound.
+     * Tying the service to the session/managed-device lifetime is what keeps the bridge from being a
+     * permanent background service: a connected *or* paired headset is exactly when the Melody panel can
+     * show anything, and the service stops itself again once neither remains and no client is bound.
      */
     private fun watchSessionsForMelodyBridge() {
         scope.launch {
-            sessions.managedMacsFlow.collect { macs ->
+            combine(sessions.managedMacsFlow, melodySupport.managedMacsFlow) { live, managed ->
+                (live + managed).distinct()
+            }.collect { macs ->
                 if (macs.isNotEmpty()) startMelodyBridgeService(macs.size)
             }
         }
     }
 
-    private fun startMelodyBridgeService(sessionCount: Int) {
+    private fun startMelodyBridgeService(deviceCount: Int) {
         if (!hasMelodyHost()) return
         val result = runCatching {
             startForegroundService(Intent(this, MelodySessionService::class.java))
         }
         if (result.isSuccess) {
-            bridgeLog.event("melody.bridge.service_start_requested", "sessions" to sessionCount)
+            bridgeLog.event("melody.bridge.service_start_requested", "devices" to deviceCount)
         } else {
             bridgeLog.warn("melody.bridge.service_start_failed", result.exceptionOrNull())
         }

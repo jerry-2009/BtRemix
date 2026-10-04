@@ -15,6 +15,8 @@ import com.Fusion.Btremix.melody.api.MelodyCallPolicy
 import com.Fusion.Btremix.melody.api.MelodyMac
 import com.Fusion.Btremix.melody.api.MelodySnapshot
 import com.Fusion.Btremix.melody.api.MelodySupportInfo
+import com.Fusion.Btremix.melody.config.MelodySupportRegistry
+import com.Fusion.Btremix.melody.projection.MelodyProjectionBuilder
 import java.util.concurrent.ConcurrentHashMap
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Job
@@ -44,6 +46,8 @@ import kotlinx.coroutines.runBlocking
 internal class MelodyBridgeBinder(
     private val context: Context,
     private val sessions: SessionRegistry,
+    private val registry: MelodySupportRegistry,
+    private val projection: MelodyProjectionBuilder,
     private val log: MelodyBridgeLog = MelodyBridgeLog(),
     private val scope: CoroutineScope,
     private val selfUid: Int = Process.myUid(),
@@ -76,22 +80,78 @@ internal class MelodyBridgeBinder(
         sessions.managedMacsFlow.collect { macs -> syncWatchers(macs) }
     }
 
+    /**
+     * The managed set (paired device with a `melody` Definition) is independent of live sessions, and
+     * the panel has to re-pull `resolveProjection` when it changes. `onSupportChanged` is the invalidation
+     * signal, so it is broadcast on registry changes as well (M3-D6).
+     */
+    private val managedJob: Job = scope.launch {
+        registry.managedMacsFlow.collect { broadcastSupportChanged() }
+    }
+
     @Volatile
     private var closed = false
 
     override fun listManagedMacs(): MutableList<String> {
         if (!authorize("listManagedMacs")) return ArrayList()
-        val macs = sessions.managedMacs()
-        log.event("melody.bridge.list", "caller_uid" to Binder.getCallingUid(), "count" to macs.size)
+        val macs = managedMacs()
+        log.event(
+            "melody.bridge.list",
+            "caller_uid" to Binder.getCallingUid(),
+            "sessions" to sessions.managedMacs().size,
+            "count" to macs.size,
+        )
         return ArrayList(macs)
     }
 
     override fun resolveSupport(mac: String?): MelodySupportInfo? {
         if (!authorize("resolveSupport")) return null
         val key = mac?.let(MelodyMac::normalize) ?: return null
-        val managed = sessions.find(key) != null
-        log.event("melody.bridge.support", "mac" to key, "managed" to managed, "stage" to "m2b")
-        return MelodySupportInfo.managedOnly(key, managed)
+        val device = registry.support(key)
+        val managed = device != null || sessions.find(key) != null
+        log.event(
+            "melody.bridge.support",
+            "mac" to key,
+            "managed" to managed,
+            "definition" to device?.packageId,
+            "stage" to "m3",
+        )
+        val support = device?.melody?.support ?: return MelodySupportInfo.managedOnly(key, managed)
+        return MelodySupportInfo(
+            mac = key,
+            managed = true,
+            name = support.name,
+            brand = support.brand ?: support.name,
+            productId = support.productId,
+            productType = support.productType,
+            uuid = support.uuid,
+            supportSpp = support.supportSpp,
+        )
+    }
+
+    override fun resolveProjection(mac: String?): String? {
+        if (!authorize("resolveProjection")) return null
+        val key = mac?.let(MelodyMac::normalize) ?: return null
+        val device = registry.support(key)
+        if (device == null) {
+            log.event("melody.projection.miss", "mac" to key, "stage" to "m3")
+            return null
+        }
+        val result = runCatching { projection.project(device) }.getOrElse {
+            log.warn("melody.projection.failed", it)
+            return null
+        }
+        if (!result.templateFound) {
+            log.event("melody.whitelist.template_missing", "mac" to key, "definition" to device.packageId)
+        }
+        log.event(
+            "melody.projection.built",
+            "mac" to key,
+            "definition" to device.packageId,
+            "version" to MelodyProjectionBuilder.ENVELOPE_VERSION,
+            "bytes" to result.json.toByteArray(Charsets.UTF_8).size,
+        )
+        return result.json
     }
 
     override fun snapshot(mac: String?): MelodySnapshot? {
@@ -174,6 +234,7 @@ internal class MelodyBridgeBinder(
         if (closed) return
         closed = true
         watchJob.cancel()
+        managedJob.cancel()
         watchers.values.forEach(Job::cancel)
         watchers.clear()
         listeners.kill()
@@ -207,6 +268,14 @@ internal class MelodyBridgeBinder(
         val snapshot = sessions.snapshot(mac)
         return snapshot?.let(MelodyBundleCodec::encodeSnapshot) ?: MelodySnapshot.disconnected(mac)
     }
+
+    /**
+     * The bridge's managed set: live sessions *and* paired devices claimed by a `melody` Definition.
+     * The union keeps M2b's "a session is always listed" behaviour while adding the support-injection
+     * case (paired, not connected).
+     */
+    private fun managedMacs(): List<String> =
+        (sessions.managedMacs() + registry.managedMacs()).distinct().sorted()
 
     private fun syncWatchers(macs: List<String>) {
         if (closed) return

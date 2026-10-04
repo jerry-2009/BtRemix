@@ -6,6 +6,7 @@ import com.Fusion.Btremix.definition.api.TransportType
 import java.io.File
 import org.junit.Assert.assertArrayEquals
 import org.junit.Assert.assertEquals
+import org.junit.Assert.assertFalse
 import org.junit.Assert.assertNotNull
 import org.junit.Assert.assertTrue
 import org.junit.Assume.assumeTrue
@@ -75,7 +76,15 @@ class SamplePackageTest {
         assumeTrue("no Sony WF-1000XM3 sample device package found", file != null)
         val definition = DevicePackageValidator().validate(DevicePackageReader().read(requireNotNull(file))).definition
 
-        assertEquals(DefinitionSchema.VERSION_STREAM, definition.manifest.schemaVersion)
+        // M3.1: the sample now advertises itself to ColorOS Melody, which is schema version 4.
+        assertEquals(DefinitionSchema.VERSION_MELODY, definition.manifest.schemaVersion)
+        val melody = requireNotNull(definition.melody)
+        assertEquals("Sony WF-1000XM3", melody.support.name)
+        assertEquals("Sony", melody.support.brand)
+        // 0x0CE0 is Sony's modalias product id for the unit (v054Cp0CE0), stored decimal.
+        assertEquals("3296", melody.support.productId)
+        assertEquals("96cc203e-5068-46ad-b32d-e316f5e069ba", melody.support.uuid)
+        assertFalse("Melody must not open its own SPP channel", melody.support.supportSpp)
         val transport = requireNotNull(definition.protocol.transport)
         assertEquals(TransportType.RFCOMM, transport.type)
         // The bonded WF-1000XM3 advertises this SPP service; 956c7b26 is not in its SDP record.

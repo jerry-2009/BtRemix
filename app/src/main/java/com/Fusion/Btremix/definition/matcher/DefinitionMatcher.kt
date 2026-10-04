@@ -2,6 +2,7 @@ package com.Fusion.Btremix.definition.matcher
 
 import com.Fusion.Btremix.core.bluetooth.api.BleScanResult
 import com.Fusion.Btremix.core.bluetooth.api.BleService
+import com.Fusion.Btremix.definition.api.DeviceMatchInput
 import com.Fusion.Btremix.definition.api.DeviceMatchRule
 import com.Fusion.Btremix.definition.api.LoadedDeviceDefinition
 import java.util.UUID
@@ -14,14 +15,21 @@ data class DefinitionMatch(
 
 /** Chooses the highest-priority matching rule and preserves declaration order on ties. */
 object DefinitionMatcher {
-    fun matches(definition: LoadedDeviceDefinition, scan: BleScanResult): Boolean =
-        definition.manifest.matchers.any { it.matches(scan) }
+    fun matches(definition: LoadedDeviceDefinition, input: DeviceMatchInput): Boolean =
+        definition.manifest.matchers.any { it.matches(input) }
 
-    fun rank(definition: LoadedDeviceDefinition, scan: BleScanResult): DefinitionMatch? =
+    fun matches(definition: LoadedDeviceDefinition, scan: BleScanResult): Boolean =
+        matches(definition, DeviceMatchInput.Advertisement(scan))
+
+    /** Highest-priority matching rule for a neutral input (BLE / classic / Melody). */
+    fun rank(definition: LoadedDeviceDefinition, input: DeviceMatchInput): DefinitionMatch? =
         definition.manifest.matchers.asSequence()
-            .filter { it.matches(scan) }
+            .filter { it.matches(input) }
             .map { DefinitionMatch(definition, it.priority, it) }
             .maxByOrNull { it.priority }
+
+    fun rank(definition: LoadedDeviceDefinition, scan: BleScanResult): DefinitionMatch? =
+        rank(definition, DeviceMatchInput.Advertisement(scan))
 
     /**
      * Connect-time match: a device whose advertised name did not match can still be recognised once
@@ -54,11 +62,16 @@ object DefinitionMatcher {
 
     fun find(
         definitions: Iterable<LoadedDeviceDefinition>,
-        scan: BleScanResult,
+        input: DeviceMatchInput,
     ): LoadedDeviceDefinition? = definitions.asSequence()
-        .mapNotNull { rank(it, scan) }
+        .mapNotNull { rank(it, input) }
         .maxByOrNull { it.priority }
         ?.definition
+
+    fun find(
+        definitions: Iterable<LoadedDeviceDefinition>,
+        scan: BleScanResult,
+    ): LoadedDeviceDefinition? = find(definitions, DeviceMatchInput.Advertisement(scan))
 
     /** Human-readable description of a rule, used by the explorer to explain a match. */
     fun label(rule: DeviceMatchRule): String = when (rule) {

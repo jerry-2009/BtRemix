@@ -16,6 +16,7 @@ import kotlinx.coroutines.Job
 import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.cancel
 import kotlinx.coroutines.flow.collect
+import kotlinx.coroutines.flow.combine
 import kotlinx.coroutines.launch
 
 /**
@@ -27,10 +28,11 @@ import kotlinx.coroutines.launch
  * front-ends share exactly one control channel" true by construction rather than by convention.
  *
  * Transport (§8.1): the host cannot bind to this service (package visibility), so the service no longer
- * waits to be bound. It is started by [BtRemixApplication] as soon as a session exists (plan §7 strategy b),
- * announces its binder through [MelodyDoorbellSender], and stops itself once no session and no bound client
- * remain. `onBind` is kept as the in-process/same-UID contract used by instrumentation tests and by any
- * future explicit component path.
+ * waits to be bound. It is started by [BtRemixApplication] as soon as a session exists **or** a paired
+ * device is claimed by a `melody` Definition (M3-D6 - support injection answers before any session), announces
+ * its binder through [MelodyDoorbellSender], and stops itself once neither remains and no bound client is
+ * left. `onBind` is kept as the in-process/same-UID contract used by instrumentation tests and by any future
+ * explicit component path.
  *
  * The notification keeps the session alive while the panel is attached. Declaring the `connectedDevice`
  * type and calling `startForeground` can fail on a device state we do not control (permission revoked,
@@ -114,11 +116,21 @@ class MelodySessionService : Service() {
 
     private fun sessions() = (application as BtRemixApplication).sessions
 
+    /**
+     * Paired devices claimed by a `melody` Definition. The service has to stay up for them even
+     * without a live session, because the host asks the whitelist before BtRemix ever connects
+     * (M3-D6).
+     */
+    private fun melodyRegistry() = (application as BtRemixApplication).melodySupport
+
     private fun ensureBridge(): MelodyBridgeBinder {
         bridge?.let { return it }
+        val app = application as BtRemixApplication
         val binder = MelodyBridgeBinder(
             context = this,
             sessions = sessions(),
+            registry = app.melodySupport,
+            projection = app.melodyProjection,
             log = log,
             scope = scope,
         )
@@ -146,9 +158,11 @@ class MelodySessionService : Service() {
      */
     private fun watchSessions() {
         sessionWatch = scope.launch {
-            sessions().managedMacsFlow.collect { macs ->
+            combine(sessions().managedMacsFlow, melodyRegistry().managedMacsFlow) { live, managed ->
+                live.size + managed.size
+            }.collect { work ->
                 handler.post {
-                    if (macs.isEmpty()) scheduleIdleStop() else cancelIdleStop()
+                    if (work == 0) scheduleIdleStop() else cancelIdleStop()
                 }
             }
         }
@@ -164,12 +178,14 @@ class MelodySessionService : Service() {
     }
 
     private fun stopIfIdle(reason: String) {
-        val managed = sessions().managedMacs().size
-        if (managed > 0 || boundClients > 0) {
+        val live = sessions().managedMacs().size
+        val managed = melodyRegistry().managedMacs().size
+        if (live > 0 || managed > 0 || boundClients > 0) {
             log.event(
                 "melody.bridge.service_idle_keep",
                 "reason" to reason,
-                "sessions" to managed,
+                "sessions" to live,
+                "managed" to managed,
                 "clients" to boundClients,
             )
             return
@@ -191,7 +207,7 @@ class MelodySessionService : Service() {
         // tears this process down (the connectedDevice type needs BLUETOOTH_CONNECT to be usable *now*, which
         // is not true when the start is not user-driven). With nothing to serve, stop instead of dying on
         // that timeout; a live session means the user connected a device, so the retry below is the real path.
-        if (boundClients == 0 && sessions().managedMacs().isEmpty()) {
+        if (boundClients == 0 && sessions().managedMacs().isEmpty() && melodyRegistry().managedMacs().isEmpty()) {
             log.event("melody.bridge.service_stop_no_foreground")
             handler.post { stopSelf() }
         }

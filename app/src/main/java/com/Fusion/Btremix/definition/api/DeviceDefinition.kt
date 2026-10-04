@@ -145,28 +145,39 @@ data class DefinitionManifest(
 
 sealed interface DeviceMatchRule {
     val priority: Int
-    fun matches(scan: BleScanResult): Boolean
+
+    /**
+     * Neutral match (MELODY_BRIDGE_SPEC §11.3): name and address rules apply to every input kind,
+     * while [ServiceUuid] / [ManufacturerData] only apply to [DeviceMatchInput.Advertisement].
+     */
+    fun matches(input: DeviceMatchInput): Boolean
+
+    /** Scan-time convenience used by the BLE Explorer and existing tests. */
+    fun matches(scan: BleScanResult): Boolean = matches(DeviceMatchInput.Advertisement(scan))
 
     data class NameExact(val value: String, override val priority: Int = 100) : DeviceMatchRule {
-        override fun matches(scan: BleScanResult): Boolean = scan.device.name == value
+        override fun matches(input: DeviceMatchInput): Boolean = input.name == value
     }
 
     data class NamePrefix(val value: String, override val priority: Int = 50) : DeviceMatchRule {
-        override fun matches(scan: BleScanResult): Boolean = scan.device.name?.startsWith(value) == true
+        override fun matches(input: DeviceMatchInput): Boolean = input.name?.startsWith(value) == true
     }
 
     data class NameRegex(val pattern: String, override val priority: Int = 25) : DeviceMatchRule {
         private val regex = Regex(pattern)
-        override fun matches(scan: BleScanResult): Boolean = scan.device.name?.let(regex::matches) == true
+        override fun matches(input: DeviceMatchInput): Boolean = input.name?.let(regex::matches) == true
     }
 
     data class ServiceUuid(val uuid: UUID, override val priority: Int = 200) : DeviceMatchRule {
-        override fun matches(scan: BleScanResult): Boolean = uuid in scan.serviceUuids
+        override fun matches(input: DeviceMatchInput): Boolean {
+            val scan = (input as? DeviceMatchInput.Advertisement)?.scan ?: return false
+            return uuid in scan.serviceUuids
+        }
     }
 
     data class AddressRegex(val pattern: String, override val priority: Int = 150) : DeviceMatchRule {
         private val regex = Regex(pattern)
-        override fun matches(scan: BleScanResult): Boolean = regex.matches(scan.device.address)
+        override fun matches(input: DeviceMatchInput): Boolean = regex.matches(input.address)
     }
 
     data class ManufacturerData(
@@ -178,7 +189,8 @@ sealed interface DeviceMatchRule {
             require(companyId in 0..0xffff) { "Manufacturer company id must fit UInt16" }
         }
 
-        override fun matches(scan: BleScanResult): Boolean {
+        override fun matches(input: DeviceMatchInput): Boolean {
+            val scan = (input as? DeviceMatchInput.Advertisement)?.scan ?: return false
             val data = scan.manufacturerData[companyId] ?: return false
             return data.size >= prefix.size && data.copyOf(prefix.size).contentEquals(prefix)
         }

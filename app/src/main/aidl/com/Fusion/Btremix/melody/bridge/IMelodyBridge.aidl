@@ -11,11 +11,21 @@ import com.Fusion.Btremix.melody.api.MelodySupportInfo;
 import com.Fusion.Btremix.melody.bridge.IMelodyBridgeListener;
 
 interface IMelodyBridge {
-    /** Normalised MACs that currently have a live session in the process registry. */
+    /**
+     * Normalised MACs the host should treat as supported: live sessions plus paired devices claimed
+     * by a Definition with a `melody` section (M3-D6).
+     */
     List<String> listManagedMacs();
 
-    /** Synthesised whitelist identity for [mac]; null when the MAC is unknown or unmanaged. */
+    /** Synthesised whitelist identity for [mac]; identity fields are empty when only a session exists. */
     MelodySupportInfo resolveSupport(in String mac);
+
+    /**
+     * M3: projection envelope (UTF-8 JSON) for one managed MAC, or null when the MAC has no
+     * Definition with a `melody` section. The envelope carries the synthesised WhitelistConfigDTO
+     * plus the M4 panel policy; it is built inside BtRemix so the host only has to cache and apply it.
+     */
+    String resolveProjection(in String mac);
 
     /** Current lifecycle + state for [mac]; a degraded snapshot when nothing is managed yet. */
     MelodySnapshot snapshot(in String mac);

@@ -172,6 +172,14 @@ internal class MelodyBridgeClient(
     fun resolveSupport(mac: String): MelodySupportInfo? =
         call("resolveSupport") { bridge -> bridge.resolveSupport(MelodyMac.normalize(mac)) }
 
+    /**
+     * Pulls the synthesised whitelist envelope for [mac] (M3). The Provider injection that consumes it
+     * lands in M3.3; exposing the call here completes the AIDL extension so the client half does not
+     * need another touch when the hook starts using it.
+     */
+    fun projection(mac: String): String? =
+        call("resolveProjection") { bridge -> bridge.resolveProjection(MelodyMac.normalize(mac)) }
+
     fun execute(mac: String, actionId: String, args: Map<String, StateValue> = emptyMap()): Int {
         val key = MelodyMac.normalize(mac)
         val code = call("execute") { bridge ->

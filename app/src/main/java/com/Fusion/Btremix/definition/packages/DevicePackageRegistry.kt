@@ -2,6 +2,7 @@ package com.Fusion.Btremix.definition.packages
 
 import com.Fusion.Btremix.core.bluetooth.api.BleScanResult
 import com.Fusion.Btremix.core.bluetooth.api.BleService
+import com.Fusion.Btremix.definition.api.DeviceMatchInput
 import com.Fusion.Btremix.definition.api.DeviceMatchRule
 import com.Fusion.Btremix.definition.api.LoadedDeviceDefinition
 import com.Fusion.Btremix.definition.matcher.DefinitionMatcher
@@ -92,18 +93,21 @@ class DevicePackageRegistry {
     fun definitions(): List<LoadedDeviceDefinition> = mutablePackages.value.map { it.definition }
 
     /**
-     * Finds the highest-priority matching package for a scan result and reports which rule matched,
-     * preserving registry order on ties. The extra detail lets the UI show why a device was
-     * recognised instead of silently applying a definition.
+     * Finds the highest-priority matching package for a neutral input (MELODY_BRIDGE_SPEC §11.3) and
+     * reports which rule matched, preserving registry order on ties. The extra detail lets the UI (and
+     * the Melody registry) show why a device was recognised instead of silently applying a definition.
      */
-    fun match(scan: BleScanResult): DevicePackageMatch? = mutablePackages.value
+    fun match(input: DeviceMatchInput): DevicePackageMatch? = mutablePackages.value
         .asSequence()
         .mapNotNull { packageToCheck ->
-            DefinitionMatcher.rank(packageToCheck.definition, scan)?.let { match ->
+            DefinitionMatcher.rank(packageToCheck.definition, input)?.let { match ->
                 DevicePackageMatch(packageToCheck, match.priority, match.rule)
             }
         }
         .maxByOrNull { it.priority }
+
+    /** Scan-time convenience; equivalent to matching [DeviceMatchInput.Advertisement]. */
+    fun match(scan: BleScanResult): DevicePackageMatch? = match(DeviceMatchInput.Advertisement(scan))
 
     /**
      * Connect-time match over discovered GATT services, used when the advertised scan data did not
@@ -120,6 +124,9 @@ class DevicePackageRegistry {
 
     /** Finds the highest-priority matching package for a scan result. */
     fun findMatch(scan: BleScanResult): DevicePackage? = match(scan)?.devicePackage
+
+    /** Finds the highest-priority matching package for a neutral input. */
+    fun findMatch(input: DeviceMatchInput): DevicePackage? = match(input)?.devicePackage
 
     private fun publish(packages: List<DevicePackage>): List<DevicePackage> {
         val sorted = packages.sortedWith(

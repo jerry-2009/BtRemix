@@ -7,14 +7,19 @@ import android.content.ServiceConnection
 import android.os.IBinder
 import androidx.test.ext.junit.runners.AndroidJUnit4
 import androidx.test.platform.app.InstrumentationRegistry
+import com.Fusion.Btremix.BtRemixApplication
+import com.Fusion.Btremix.definition.json.DefinitionJsonCodec
 import com.Fusion.Btremix.melody.api.MelodyBridgeResult
 import com.Fusion.Btremix.melody.api.MelodyLifecycleWire
+import com.Fusion.Btremix.melody.config.MelodyManagedDevice
 import java.util.concurrent.CountDownLatch
 import java.util.concurrent.TimeUnit
+import kotlinx.coroutines.runBlocking
 import org.junit.After
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
 import org.junit.Assert.assertNotNull
+import org.junit.Assert.assertNull
 import org.junit.Assert.assertTrue
 import org.junit.Before
 import org.junit.Test
@@ -60,12 +65,49 @@ class MelodySessionServiceTest {
     @After
     fun unbindService() {
         runCatching { context.unbindService(connection) }
+        // The projection test seeds a managed device; drop it so later cases see a clean registry.
+        if (this::context.isInitialized) {
+            runBlocking { (context.applicationContext as BtRemixApplication).melodySupport.clearManaged() }
+        }
     }
 
     @Test
-    fun binder_isReachableAndListsNothingWithoutSessions() {
+    fun binder_isReachableAndListsTheManagedSet() {
         val api = requireNotNull(bridge)
-        assertTrue(api.listManagedMacs().isEmpty())
+        val app = context.applicationContext as BtRemixApplication
+
+        // No session is registered, so the list is exactly the paired-device managed set.
+        assertEquals(app.melodySupport.managedMacs().sorted(), api.listManagedMacs().sorted())
+    }
+
+    @Test
+    fun resolveProjection_returnsNullForUnmanagedMac() {
+        assertNull(requireNotNull(bridge).resolveProjection(MAC))
+    }
+
+    @Test
+    fun resolveProjection_returnsEnvelopeForManagedMac() {
+        val app = context.applicationContext as BtRemixApplication
+        val definition = DefinitionJsonCodec.decode(MANAGED_DEFINITION)
+        runBlocking {
+            app.melodySupport.seedManaged(
+                listOf(
+                    MelodyManagedDevice(
+                        mac = MANAGED_MAC,
+                        name = "WF-1000XM3",
+                        definition = definition,
+                        melody = requireNotNull(definition.melody),
+                    ),
+                ),
+            )
+        }
+
+        val envelope = requireNotNull(requireNotNull(bridge).resolveProjection(MANAGED_MAC))
+
+        assertTrue("missing envelope version", envelope.contains("\"version\":1"))
+        assertTrue("missing mac", envelope.contains("\"mac\":\"$MANAGED_MAC\""))
+        assertTrue("missing synthesised identity", envelope.contains("Sony WF-1000XM3"))
+        assertTrue("managed MAC missing from listManagedMacs", requireNotNull(bridge).listManagedMacs().contains(MANAGED_MAC))
     }
 
     @Test
@@ -93,5 +135,21 @@ class MelodySessionServiceTest {
 
     private companion object {
         const val MAC = "AA:BB:CC:DD:EE:00"
+        const val MANAGED_MAC = "14:3F:A6:02:5F:B0"
+
+        val MANAGED_DEFINITION = """
+            {
+              "manifest": {
+                "id": "sony.wf1000xm3",
+                "displayName": "Sony WF-1000XM3",
+                "version": "1.0.0",
+                "schemaVersion": 4,
+                "matchers": [{ "type": "namePrefix", "value": "WF-1000XM3" }]
+              },
+              "melody": {
+                "support": { "name": "Sony WF-1000XM3", "brand": "Sony", "productId": "0x0CE0" }
+              }
+            }
+        """.trimIndent()
     }
 }

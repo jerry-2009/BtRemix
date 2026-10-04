@@ -6,10 +6,9 @@ import android.os.Parcelable
 /**
  * Synthesised "this headset is officially supported" identity (MELODY_BRIDGE_SPEC §5, §8).
  *
- * M2b only populates [managed] (whether BtRemix holds a session for [mac]); the identity fields are the
- * shape M3 fills from the definition's `melody` section when it answers the host's whitelist queries.
- * Shipping the full shape now means the AIDL contract - and therefore the client and the service - do
- * not have to change again when M3 lands.
+ * M2b only populated [managed] (whether BtRemix held a session for [mac]). M3.1 fills the identity
+ * fields from the Definition's `melody` section; when only a live session exists (no `melody`
+ * Definition) `resolveSupport` still answers `managed = true` with the identity left empty.
  */
 class MelodySupportInfo(
     @JvmField val mac: String,
@@ -54,7 +53,7 @@ class MelodySupportInfo(
             override fun newArray(size: Int): Array<MelodySupportInfo?> = arrayOfNulls(size)
         }
 
-        /** M2b placeholder: identity fields stay empty until M3 parses the `melody` definition section. */
+        /** Fallback for a MAC with a live session but no `melody` Definition: identity stays empty. */
         fun managedOnly(mac: String, managed: Boolean): MelodySupportInfo = MelodySupportInfo(
             mac = MelodyMac.normalize(mac),
             managed = managed,

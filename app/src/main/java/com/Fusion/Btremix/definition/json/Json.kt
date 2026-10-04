@@ -12,6 +12,63 @@ sealed interface JsonValue {
 
 class JsonParseException(message: String) : IllegalArgumentException(message)
 
+/**
+ * Serialises a [JsonValue] tree back to text.
+ *
+ * The Definition pipeline only ever parsed JSON until M3 needed to *produce* it: the Melody
+ * projection envelope is a whitelist row (identity fields) merged over the neutral template, and
+ * the host consumes it as JSON. Writing the tree here keeps that synthesis dependency-free and
+ * unit-testable instead of hand-rolling escaping at the call site.
+ *
+ * Output is compact (single line): the envelope crosses a Binder transaction, so whitespace only
+ * costs bytes. Object key order is the insertion order of the source tree.
+ */
+object JsonWriter {
+    fun write(value: JsonValue): String = buildString { appendValue(value) }
+
+    /** Quotes a raw string with the same escaping rules the parser accepts. */
+    fun quote(value: String): String = buildString(value.length + 2) {
+        append('"')
+        value.forEach { char ->
+            when (char) {
+                '"' -> append("\\\"")
+                '\\' -> append("\\\\")
+                '\n' -> append("\\n")
+                '\r' -> append("\\r")
+                '\t' -> append("\\t")
+                else -> if (char < ' ') append("\\u%04x".format(char.code)) else append(char)
+            }
+        }
+        append('"')
+    }
+
+    private fun StringBuilder.appendValue(value: JsonValue) {
+        when (value) {
+            is JsonValue.Object -> {
+                append('{')
+                value.values.entries.forEachIndexed { index, (key, child) ->
+                    if (index > 0) append(',')
+                    append(quote(key)).append(':')
+                    appendValue(child)
+                }
+                append('}')
+            }
+            is JsonValue.Array -> {
+                append('[')
+                value.values.forEachIndexed { index, child ->
+                    if (index > 0) append(',')
+                    appendValue(child)
+                }
+                append(']')
+            }
+            is JsonValue.StringValue -> append(quote(value.value))
+            is JsonValue.NumberValue -> append(value.raw)
+            is JsonValue.BooleanValue -> append(if (value.value) "true" else "false")
+            JsonValue.NullValue -> append("null")
+        }
+    }
+}
+
 object JsonParser {
     fun parse(text: String): JsonValue {
         val parser = Parser(text)
