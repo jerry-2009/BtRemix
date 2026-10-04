@@ -1,5 +1,6 @@
 package com.Fusion.Btremix.melody.hook
 
+import com.Fusion.Btremix.melody.hook.bridge.MelodyBridgeInstaller
 import com.Fusion.Btremix.melody.hook.observation.MelodyObservationInstaller
 import io.github.libxposed.api.XposedModule
 import io.github.libxposed.api.XposedModuleInterface
@@ -47,16 +48,23 @@ class MelodyBridgeEntry : XposedModule() {
         )
         if (!observationEnabled(log)) {
             log.event("melody.observation.disabled", "process" to processName)
+        } else {
+            runCatching {
+                MelodyObservationInstaller(
+                    module = this,
+                    log = log,
+                    loader = param.defaultClassLoader,
+                    processName = processName,
+                ).install()
+            }.onFailure { log.warn("melody.observation.install_failed", it) }
+        }
+        if (!bridgeEnabled(log)) {
+            log.event("melody.bridge.disabled", "process" to processName)
             return
         }
         runCatching {
-            MelodyObservationInstaller(
-                module = this,
-                log = log,
-                loader = param.defaultClassLoader,
-                processName = processName,
-            ).install()
-        }.onFailure { log.warn("melody.observation.install_failed", it) }
+            MelodyBridgeInstaller(module = this, log = log, processName = processName).install()
+        }.onFailure { log.warn("melody.bridge.install_failed", it) }
     }
 
     /**
@@ -70,6 +78,18 @@ class MelodyBridgeEntry : XposedModule() {
         true
     }
 
+    /**
+     * M2b link switch; defaults to enabled for the same reason observation does. Turning it off leaves the
+     * module installed but stops this process from registering the doorbell receiver, so it keeps using the
+     * cold-start cache instead of the live bridge (the service itself is started by BtRemix, not by us).
+     */
+    private fun bridgeEnabled(log: MelodyLog): Boolean = runCatching {
+        getRemotePreferences(MODULE_PREFS).getBoolean(KEY_BRIDGE_ENABLED, true)
+    }.getOrElse {
+        log.warn("melody.bridge.prefs_unavailable", it)
+        true
+    }
+
     companion object {
         /** logcat tag used by the module; `logcat -s BtRemixMelody` shows the load events. */
         const val TAG: String = MelodyLog.TAG
@@ -78,5 +98,6 @@ class MelodyBridgeEntry : XposedModule() {
 
         const val MODULE_PREFS: String = "melody_bridge"
         const val KEY_OBSERVATION_ENABLED: String = "observation_enabled"
+        const val KEY_BRIDGE_ENABLED: String = "bridge_enabled"
     }
 }

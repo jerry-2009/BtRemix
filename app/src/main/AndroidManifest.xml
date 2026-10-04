@@ -12,6 +12,8 @@
     <!-- Melody bridge (MELODY_BRIDGE_SPEC §6.4): the bridge session host is a foreground service. -->
     <uses-permission android:name="android.permission.FOREGROUND_SERVICE" />
     <uses-permission android:name="android.permission.FOREGROUND_SERVICE_CONNECTED_DEVICE" />
+    <!-- The bridge notification is informational; without this grant the service still runs silently. -->
+    <uses-permission android:name="android.permission.POST_NOTIFICATIONS" />
 
     <!-- The bridge talks to com.oplus.melody; package visibility is required on API 30+. -->
     <queries>

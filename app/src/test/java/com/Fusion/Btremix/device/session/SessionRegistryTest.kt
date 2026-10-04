@@ -193,6 +193,40 @@ class SessionRegistryTest {
         assertNull(SessionRegistry().snapshot(mac))
     }
 
+    /**
+     * M2b: the Melody bridge attaches one state watcher per managed MAC, so it needs the ownership
+     * transitions as an observable list instead of polling [SessionRegistry.managedMacs].
+     */
+    @Test
+    fun managedMacsFlow_tracksOwnershipTransitionsNormalised() = runBlocking {
+        val registry = SessionRegistry()
+        assertTrue(registry.managedMacsFlow.value.isEmpty())
+
+        val session = registry.acquire("  aa:bb:cc:dd:ee:ff  ") { openSession() }
+        assertEquals(listOf(mac), registry.managedMacsFlow.value)
+
+        registry.release(mac)
+        assertTrue(registry.managedMacsFlow.value.isEmpty())
+
+        registry.register("aa:bb:cc:dd:ee:ff", session)
+        assertEquals(listOf(mac), registry.managedMacsFlow.value)
+
+        registry.close(mac)
+        assertTrue(registry.managedMacsFlow.value.isEmpty())
+    }
+
+    @Test
+    fun managedMacsFlow_closeAllClearsEveryEntry() = runBlocking {
+        val registry = SessionRegistry()
+        registry.register("AA:BB:CC:DD:EE:01", openSession())
+        registry.register("AA:BB:CC:DD:EE:02", openSession())
+        assertEquals(2, registry.managedMacsFlow.value.size)
+
+        registry.closeAll()
+
+        assertTrue(registry.managedMacsFlow.value.isEmpty())
+    }
+
     private suspend fun openSession() =
         DefaultDeviceRuntime(clock).open(BleDevice(mac, "Fusion"), FakeBleConnection())
 }

@@ -1,6 +1,7 @@
 package com.Fusion.Btremix.melody.hook
 
 import android.util.Log
+import com.Fusion.Btremix.melody.api.MelodyEventFormat
 import io.github.libxposed.api.XposedInterface
 
 /**
@@ -17,16 +18,16 @@ import io.github.libxposed.api.XposedInterface
 internal class MelodyLog(private val module: XposedInterface?) {
 
     fun event(name: String, vararg pairs: Pair<String, Any?>) {
-        emit(Log.INFO, "evt=" + name + pairsLine(pairs))
+        emit(Log.INFO, MelodyEventFormat.line(name, pairs.toList()))
     }
 
     /** One-line annotation for a payload that is too long for key/value pairs. */
     fun detail(name: String, message: String) {
-        emit(Log.INFO, "evt=" + name + " " + sanitize(message, MAX_DETAIL_CHARS))
+        emit(Log.INFO, MelodyEventFormat.detailLine(name, message))
     }
 
     fun warn(name: String, throwable: Throwable? = null) {
-        emit(Log.WARN, "evt=" + name + if (throwable == null) "" else " error=" + describe(throwable))
+        emit(Log.WARN, MelodyEventFormat.warnLine(name, throwable))
     }
 
     private fun emit(level: Int, message: String) {
@@ -34,54 +35,15 @@ internal class MelodyLog(private val module: XposedInterface?) {
         runCatching { module?.log(level, TAG, message) }
     }
 
-    private fun pairsLine(pairs: Array<out Pair<String, Any?>>): String {
-        if (pairs.isEmpty()) return ""
-        return buildString {
-            for ((key, value) in pairs) {
-                append(' ').append(key).append('=').append(formatValue(value))
-            }
-        }
-    }
-
     companion object {
         const val TAG: String = "BtRemixMelody"
 
-        private const val MAX_VALUE_CHARS = 240
-        private const val MAX_DETAIL_CHARS = 900
-
         /** `k=v` when the value is token-shaped, `k="v"` when it contains whitespace or quotes. */
-        internal fun formatValue(value: Any?): String {
-            if (value == null) return "null"
-            val text = sanitize(value.toString(), MAX_VALUE_CHARS)
-            val needsQuotes = text.isEmpty() || text.any { it.isWhitespace() } || text.contains('=')
-            return if (needsQuotes) "\"" + text.replace('"', '\'') + "\"" else text
-        }
+        internal fun formatValue(value: Any?): String = MelodyEventFormat.formatValue(value)
 
         /** Collapses line breaks/tabs into spaces and bounds the length. */
-        internal fun sanitize(text: String, maxChars: Int): String {
-            val flattened = buildString(text.length) {
-                var lastWasSpace = false
-                for (ch in text) {
-                    val replacement = if (ch == '\n' || ch == '\r' || ch == '\t') ' ' else ch
-                    if (replacement == ' ') {
-                        if (!lastWasSpace) append(' ')
-                        lastWasSpace = true
-                    } else {
-                        append(replacement)
-                        lastWasSpace = false
-                    }
-                }
-            }.trim()
-            return if (flattened.length <= maxChars) flattened else flattened.take(maxChars - 1) + "…"
-        }
+        internal fun sanitize(text: String, maxChars: Int): String = MelodyEventFormat.sanitize(text, maxChars)
 
-        internal fun describe(throwable: Throwable): String {
-            val message = throwable.message
-            return if (message.isNullOrBlank()) {
-                throwable.javaClass.simpleName
-            } else {
-                throwable.javaClass.simpleName + ": " + sanitize(message, MAX_VALUE_CHARS)
-            }
-        }
+        internal fun describe(throwable: Throwable): String = MelodyEventFormat.describe(throwable)
     }
 }

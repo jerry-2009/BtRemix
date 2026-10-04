@@ -6,6 +6,9 @@ import java.util.concurrent.ConcurrentHashMap
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.SupervisorJob
+import kotlinx.coroutines.flow.MutableStateFlow
+import kotlinx.coroutines.flow.StateFlow
+import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.sync.Mutex
 import kotlinx.coroutines.sync.withLock
@@ -37,10 +40,27 @@ class SessionRegistry(
     /** One registry slot: the session plus how many front-ends currently hold it. */
     private class Entry(val session: ProtocolSession, var refCount: Int)
 
+    private val managedFlow = MutableStateFlow<List<String>>(emptyList())
+
+    /**
+     * The normalised MACs with a live session, as an observable list (MELODY_BRIDGE_SPEC §12 M2b).
+     *
+     * The Melody bridge has to start and stop one state watcher per managed device as sessions come and
+     * go, and polling [managedMacs] would either miss short-lived sessions or burn a timer. This flow is
+     * updated on every ownership change (acquire/release/register/remove/close/closeAll) so the bridge
+     * can react exactly once per transition.
+     */
+    val managedMacsFlow: StateFlow<List<String>> = managedFlow.asStateFlow()
+
     /** Per-MAC locks so an `open` for one device never serialises work for another device. */
     private val keyLocks = ConcurrentHashMap<String, Mutex>()
 
     private fun lockFor(key: String): Mutex = keyLocks.computeIfAbsent(key) { Mutex() }
+
+    /** Republication of the key set; call after any mutation of [entries]. */
+    private fun refreshManaged() {
+        managedFlow.value = entries.keys.sorted()
+    }
 
     /** The session currently owning [mac], or `null` when the MAC is not managed. */
     fun find(mac: String): ProtocolSession? = entries[normalize(mac)]?.session
@@ -67,6 +87,7 @@ class SessionRegistry(
             }
             val session = open()
             entries[key] = Entry(session, 1)
+            refreshManaged()
             session
         }
     }
@@ -86,6 +107,7 @@ class SessionRegistry(
             entry.refCount -= 1
             if (entry.refCount > 0) return@withLock
             entries.remove(key)
+            refreshManaged()
             entry.session.close()
         }
     }
@@ -114,10 +136,11 @@ class SessionRegistry(
      * seeds a slot with a single reference and returns the previous owner when one was replaced.
      */
     fun register(mac: String, session: ProtocolSession): ProtocolSession? =
-        entries.put(normalize(mac), Entry(session, 1))?.session
+        entries.put(normalize(mac), Entry(session, 1))?.session.also { refreshManaged() }
 
     /** Detaches the session for [mac] without closing it. */
-    fun remove(mac: String): ProtocolSession? = entries.remove(normalize(mac))?.session
+    fun remove(mac: String): ProtocolSession? =
+        entries.remove(normalize(mac))?.session.also { if (it != null) refreshManaged() }
 
     /** Detaches and closes the session for [mac]. Safe when the MAC is unknown. */
     suspend fun close(mac: String) {
@@ -127,9 +150,10 @@ class SessionRegistry(
     /** Detaches and closes every registered session; used when the owning service shuts down. */
     suspend fun closeAll() {
         while (true) {
-            val mac = entries.keys.firstOrNull() ?: return
+            val mac = entries.keys.firstOrNull() ?: break
             entries.remove(mac)?.session?.close()
         }
+        refreshManaged()
     }
 
     companion object {

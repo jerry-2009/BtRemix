@@ -1,6 +1,7 @@
 package com.Fusion.Btremix
 
 import android.app.Application
+import android.content.Intent
 import com.Fusion.Btremix.core.bluetooth.BleRepository
 import com.Fusion.Btremix.core.bluetooth.android.AndroidBleManager
 import com.Fusion.Btremix.core.classic.android.AndroidRfcommManager
@@ -14,10 +15,14 @@ import com.Fusion.Btremix.definition.session.DefinitionSessionFactory
 import com.Fusion.Btremix.device.runtime.DefaultDeviceRuntime
 import com.Fusion.Btremix.device.runtime.DeviceRuntime
 import com.Fusion.Btremix.device.session.SessionRegistry
+import com.Fusion.Btremix.melody.api.MelodyCallPolicy
+import com.Fusion.Btremix.melody.bridge.MelodyBridgeLog
+import com.Fusion.Btremix.melody.bridge.MelodySessionService
 import java.io.File
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.SupervisorJob
+import kotlinx.coroutines.flow.collect
 import kotlinx.coroutines.launch
 
 /**
@@ -71,8 +76,44 @@ class BtRemixApplication : Application() {
      */
     val sessions: SessionRegistry = SessionRegistry(scope)
 
+    private val bridgeLog = MelodyBridgeLog()
+
     override fun onCreate() {
         super.onCreate()
         scope.launch { packageBootstrap.load() }
+        watchSessionsForMelodyBridge()
     }
+
+    /**
+     * Starts the Melody bridge service while a session exists (MELODY_BRIDGE_TRANSPORT_PLAN.md §7 strategy b).
+     *
+     * The host cannot bind to the service (package visibility, §8.1), so BtRemix has to announce itself.
+     * Tying the service to the session lifetime is what keeps the bridge from being a permanent background
+     * service: a connected headset is exactly when the Melody panel can show anything, and the service stops
+     * itself again once the last session is released and no client is bound.
+     */
+    private fun watchSessionsForMelodyBridge() {
+        scope.launch {
+            sessions.managedMacsFlow.collect { macs ->
+                if (macs.isNotEmpty()) startMelodyBridgeService(macs.size)
+            }
+        }
+    }
+
+    private fun startMelodyBridgeService(sessionCount: Int) {
+        if (!hasMelodyHost()) return
+        val result = runCatching {
+            startForegroundService(Intent(this, MelodySessionService::class.java))
+        }
+        if (result.isSuccess) {
+            bridgeLog.event("melody.bridge.service_start_requested", "sessions" to sessionCount)
+        } else {
+            bridgeLog.warn("melody.bridge.service_start_failed", result.exceptionOrNull())
+        }
+    }
+
+    /** The bridge is only useful when ColorOS Melody is installed; the `<queries>` entry makes this lookup legal. */
+    private fun hasMelodyHost(): Boolean = runCatching {
+        packageManager.getPackageInfo(MelodyCallPolicy.HOST_PACKAGE, 0)
+    }.isSuccess
 }
