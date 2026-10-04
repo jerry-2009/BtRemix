@@ -12,6 +12,10 @@ import com.Fusion.Btremix.definition.api.TransactionDefinition
 import com.Fusion.Btremix.definition.api.ActionDefinition
 import com.Fusion.Btremix.definition.api.ActionParameterDefinition
 import com.Fusion.Btremix.definition.api.DefinitionSchema
+import com.Fusion.Btremix.definition.api.MelodyPanelDefinition
+import com.Fusion.Btremix.definition.api.MelodyProductId
+import com.Fusion.Btremix.definition.api.MelodySectionDefinition
+import com.Fusion.Btremix.definition.api.MelodySupportDefinition
 import com.Fusion.Btremix.definition.api.NotifyDefinition
 import com.Fusion.Btremix.definition.api.StateDefinition
 import com.Fusion.Btremix.definition.api.StateDefinitionType
@@ -38,6 +42,7 @@ object DefinitionJsonCodec {
             states = root.values["states"]?.let { parseStates(it) } ?: emptyMap(),
             actions = root.values["actions"]?.let { parseActions(it) } ?: emptyMap(),
             ui = root.optionalObj("ui")?.let(::parseUi) ?: UiSchema(),
+            melody = root.optionalObj("melody")?.let(::parseMelody),
         )
         return if (validate) DefinitionValidator.requireValid(definition) else definition
     }
@@ -238,6 +243,60 @@ object DefinitionJsonCodec {
             "progress" -> UiNode.Progress(state(), id)
             else -> throw DefinitionJsonException("$path.type", "unknown UI node type")
         }
+    }
+
+    /**
+     * Parses the optional `melody` section. Structural errors (a missing `support`, a non-string
+     * field) fail here; semantic rules such as the schema gate, `mode`, `uuid` and the
+     * `melody_bridge_*` namespace guard are reported by [DefinitionValidator] so the UI can list
+     * them together with every other definition error.
+     */
+    private fun parseMelody(obj: JsonValue.Object): MelodySectionDefinition {
+        val support = obj.optionalObj("support")
+            ?: throw DefinitionJsonException("melody.support", "is required when 'melody' is present")
+        return MelodySectionDefinition(
+            support = MelodySupportDefinition(
+                name = support.optionalString("name")
+                    ?: throw DefinitionJsonException("melody.support.name", "is required"),
+                mode = support.optionalString("mode")?.trim()?.lowercase() ?: MelodySupportDefinition.MODE_BRIDGE,
+                brand = support.optionalString("brand"),
+                productId = support.optionalMelodyProductId("productId"),
+                productType = support.optionalInt("productType") ?: MelodySupportDefinition.DEFAULT_PRODUCT_TYPE,
+                uuid = support.optionalString("uuid"),
+                supportSpp = support.optionalBoolean("supportSpp") ?: false,
+                suppressMelodyTransport = support.optionalBoolean("suppressMelodyTransport") ?: true,
+                templateWhitelist = support.optionalString("templateWhitelist"),
+            ),
+            panel = obj.optionalObj("panel")?.let(::parseMelodyPanel) ?: MelodyPanelDefinition(),
+        )
+    }
+
+    private fun parseMelodyPanel(obj: JsonValue.Object): MelodyPanelDefinition = MelodyPanelDefinition(
+        sectionTitle = obj.optionalString("sectionTitle"),
+        hideSections = parseStringList(obj.values["hideSections"], "melody.panel.hideSections"),
+        hideKeys = parseStringList(obj.values["hideKeys"], "melody.panel.hideKeys"),
+        greyKeys = parseStringList(obj.values["greyKeys"], "melody.panel.greyKeys"),
+    )
+
+    private fun parseStringList(value: JsonValue?, path: String): List<String> = when (value) {
+        null -> emptyList()
+        is JsonValue.Array -> value.values.mapIndexed { index, item -> item.string("$path[$index]") }
+        else -> throw DefinitionJsonException(path, "must be an array of strings")
+    }
+
+    /**
+     * Accepts a decimal string/integer or a `0x`-prefixed hexadecimal string and stores the decimal
+     * form. A token that cannot be normalized is kept verbatim so [DefinitionValidator] reports it
+     * as a structured definition error instead of an encoding error.
+     */
+    private fun JsonValue.Object.optionalMelodyProductId(name: String): String? {
+        val value = values[name] ?: return null
+        val raw = when (value) {
+            is JsonValue.StringValue -> value.value
+            is JsonValue.NumberValue -> value.raw
+            else -> throw DefinitionJsonException("melody.support.$name", "must be a string or an integer")
+        }
+        return MelodyProductId.normalizeOrNull(raw) ?: raw.trim()
     }
 
     private fun parseArgs(value: JsonValue?, path: String): Map<String, StateValue> {

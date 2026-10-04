@@ -5,8 +5,10 @@ import android.database.Cursor
 import android.net.Uri
 import android.os.Bundle
 import android.os.CancellationSignal
+import com.Fusion.Btremix.melody.api.WhitelistExport
 import com.Fusion.Btremix.melody.hook.MelodyLog
 import com.Fusion.Btremix.melody.hook.Reflect
+import com.Fusion.Btremix.melody.hook.WhitelistExportSink
 import io.github.libxposed.api.XposedInterface
 
 /**
@@ -20,12 +22,17 @@ import io.github.libxposed.api.XposedInterface
  *
  * `query`/`call` are overrides of `android.content.ContentProvider`, so R8 keeps their names; the
  * signatures are still probed (4-arg `query` with `Bundle` on API 26+) instead of assumed.
+ *
+ * Since M3.-1 the same hook also exports the whitelist bodies verbatim (see [WhitelistExportSink]),
+ * because the M3 template can only be derived from the host's real `Function` field set.
  */
 internal class SupportObservationHook(
     private val module: XposedInterface,
     private val log: MelodyLog,
     private val loader: ClassLoader,
 ) {
+
+    private val exportSink = WhitelistExportSink(log)
 
     fun install() {
         val providerClass = Reflect.loadClass(PROVIDER_CLASS, loader)
@@ -66,8 +73,10 @@ internal class SupportObservationHook(
             }
             val result = chain.proceed()
             runCatching {
+                val uri = chain.args.getOrNull(0) as? Uri
+                val selection = chain.args.getOrNull(2) as? String
+                val target = WhitelistExport.targetOf(uri?.path ?: uri?.lastPathSegment, selection)
                 if (result is Cursor) {
-                    val uri = chain.args.getOrNull(0) as? Uri
                     log.event(
                         "melody.provider.result",
                         "path" to (uri?.path ?: uri?.toString()),
@@ -75,6 +84,19 @@ internal class SupportObservationHook(
                         "extras" to describeBundle(runCatching { result.extras }.getOrNull()),
                     )
                     log.detail("melody.provider.cursor", describeCursor(result))
+                    if (target != null) {
+                        val provider = chain.thisObject as? ContentProvider
+                        exportSink.export(
+                            context = provider?.context,
+                            target = target,
+                            caller = runCatching { provider?.callingPackage }.getOrNull(),
+                            selection = selection,
+                            cursor = result,
+                        )
+                    }
+                } else if (target != null) {
+                    // `find_whitelist` answers "not a supported model" with null, not an empty cursor.
+                    log.event("melody.whitelist.export.skipped", "path" to target.path, "reason" to "no_cursor")
                 }
             }
             result

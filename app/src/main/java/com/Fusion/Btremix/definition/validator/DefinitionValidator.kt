@@ -32,6 +32,7 @@ object DefinitionValidator {
         }
         if (manifest.matchers.isEmpty()) errors += DefinitionValidationError("manifest.matchers", "must contain at least one rule")
         manifest.matchers.forEachIndexed { index, matcher -> validateMatcher(matcher, "manifest.matchers[$index]", errors) }
+        definition.melody?.let { melody -> validateMelody(melody, manifest, errors) }
 
         definition.states.forEach { (key, state) ->
             if (key.isBlank() || state.key != key) errors += DefinitionValidationError("states.$key.key", "must match the state map key")
@@ -195,6 +196,67 @@ object DefinitionValidator {
             if (transaction.timeout != null && !transaction.timeout.isPositive()) errors += DefinitionValidationError("protocol.transactions.$name.timeout", "must be positive")
         }
         return errors
+    }
+
+    private fun validateMelody(
+        melody: MelodySectionDefinition,
+        manifest: DefinitionManifest,
+        errors: MutableList<DefinitionValidationError>,
+    ) {
+        if (manifest.schemaVersion < DefinitionSchema.VERSION_MELODY) {
+            errors += DefinitionValidationError(
+                "melody",
+                "requires manifest.schemaVersion ${DefinitionSchema.VERSION_MELODY}",
+            )
+        }
+        val support = melody.support
+        if (support.name.isBlank()) errors += DefinitionValidationError("melody.support.name", "must not be blank")
+        if (support.brand?.isBlank() == true) errors += DefinitionValidationError("melody.support.brand", "must not be blank")
+        if (support.mode != MelodySupportDefinition.MODE_BRIDGE) {
+            errors += DefinitionValidationError(
+                "melody.support.mode",
+                "only '${MelodySupportDefinition.MODE_BRIDGE}' is supported, not '${support.mode}'",
+            )
+        }
+        support.productId?.let { raw ->
+            val normalized = MelodyProductId.normalizeOrNull(raw)
+            when {
+                normalized == null -> errors += DefinitionValidationError(
+                    "melody.support.productId",
+                    "must be a decimal integer or a 0x-prefixed hexadecimal string",
+                )
+                normalized != raw -> errors += DefinitionValidationError(
+                    "melody.support.productId",
+                    "must use the normalized decimal form '$normalized'",
+                )
+            }
+        }
+        if (support.productType < 0) errors += DefinitionValidationError("melody.support.productType", "must not be negative")
+        support.uuid?.let { value ->
+            runCatching { UUID.fromString(value) }
+                .onFailure { errors += DefinitionValidationError("melody.support.uuid", "must be a UUID") }
+        }
+        if (support.templateWhitelist?.isBlank() == true) {
+            errors += DefinitionValidationError("melody.support.templateWhitelist", "must not be blank")
+        }
+        validateMelodyKeys(melody.panel.hideKeys, "melody.panel.hideKeys", errors)
+        validateMelodyKeys(melody.panel.greyKeys, "melody.panel.greyKeys", errors)
+    }
+
+    private fun validateMelodyKeys(
+        keys: List<String>,
+        path: String,
+        errors: MutableList<DefinitionValidationError>,
+    ) {
+        keys.forEachIndexed { index, key ->
+            when {
+                key.isBlank() -> errors += DefinitionValidationError("$path[$index]", "must not be blank")
+                key.startsWith(MelodyPanelDefinition.CUSTOM_KEY_PREFIX) -> errors += DefinitionValidationError(
+                    "$path[$index]",
+                    "must not target the '${MelodyPanelDefinition.CUSTOM_KEY_PREFIX}' namespace used by BtRemix rows",
+                )
+            }
+        }
     }
 
     private fun validateArguments(

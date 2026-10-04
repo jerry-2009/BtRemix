@@ -25,6 +25,8 @@ enum class StateDefinitionType { BOOLEAN, INTEGER, NUMBER, STRING, ENUM, BYTES }
  * adds classic-Bluetooth byte-stream transports (`protocol.transport.type = rfcomm`,
  * `protocol.framing`, `protocol.initialize`, `states.*.notify.payloadType`,
  * `protocol.transactions.*.expectedPayloadType`).
+ * Version 4 adds the optional `melody` section ([MelodySectionDefinition]) that advertises a
+ * device to the ColorOS Melody panel; it is independent of the transport versions above.
  *
  * A definition that omits `manifest.schemaVersion` is treated as version 1 so every package written
  * before the declarative bindings keep working unchanged.
@@ -33,8 +35,9 @@ object DefinitionSchema {
     const val VERSION_SCRIPT_ONLY: Int = 1
     const val VERSION_DECLARATIVE: Int = 2
     const val VERSION_STREAM: Int = 3
-    const val CURRENT: Int = VERSION_STREAM
-    val SUPPORTED: IntRange = VERSION_SCRIPT_ONLY..VERSION_STREAM
+    const val VERSION_MELODY: Int = 4
+    const val CURRENT: Int = VERSION_MELODY
+    val SUPPORTED: IntRange = VERSION_SCRIPT_ONLY..VERSION_MELODY
 }
 
 /**
@@ -334,6 +337,8 @@ data class LoadedDeviceDefinition(
     val states: Map<String, StateDefinition> = emptyMap(),
     val actions: Map<String, ActionDefinition> = emptyMap(),
     val ui: UiSchema = UiSchema(),
+    /** Optional ColorOS Melody advertisement; `null` keeps the definition out of Melody entirely. */
+    val melody: MelodySectionDefinition? = null,
 ) : DeviceDefinition by manifest {
     fun protocolFactory(): DefinitionProtocolFactory = DefinitionProtocolFactory(this)
 }
