@@ -97,6 +97,11 @@ class MelodyProjectionBuilder(
                     linkedMapOf(
                         "id" to JsonValue.StringValue(device.definition.manifest.id),
                         "version" to JsonValue.StringValue(device.definition.manifest.version),
+                        // M3.4: the DeviceInfo side needs the integer form factor and the transport
+                        // switch; both belong to us, so they travel in our own node instead of being
+                        // smuggled into the official WhitelistConfigDTO shape.
+                        "productType" to JsonValue.NumberValue(device.melody.support.productType.toString()),
+                        "suppressTransport" to JsonValue.BooleanValue(device.melody.support.suppressMelodyTransport),
                     ),
                 ),
                 "whitelist" to whitelist,

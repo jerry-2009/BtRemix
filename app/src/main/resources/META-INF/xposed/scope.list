@@ -1,1 +1,3 @@
 com.oplus.melody
+# M3.4c: the Bluetooth device detail page (and its "耳机功能" row) is rendered by the settings app.
+com.oplus.wirelesssettings

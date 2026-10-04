@@ -11,5 +11,11 @@ import java.util.Locale
  * making the pure `melody.api` layer depend on the session package.
  */
 object MelodyMac {
+
+    /** `AA:BB:CC:DD:EE:FF` (case-insensitive); used to pick an address out of a host object's fields. */
+    private val MAC_PATTERN = Regex("^[0-9A-Fa-f]{2}(:[0-9A-Fa-f]{2}){5}$")
+
     fun normalize(mac: String): String = mac.trim().uppercase(Locale.ROOT)
+
+    fun isMacAddress(value: String): Boolean = MAC_PATTERN.matches(value.trim())
 }

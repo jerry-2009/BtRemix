@@ -107,6 +107,156 @@ internal object Reflect {
         return null
     }
 
+    /**
+     * Reads the first readable instance field whose declared type matches [type].
+     *
+     * M3.4 needs this to find the host's own Bluetooth handles without knowing the obfuscated field
+     * names (`BRClientDevice`/`BaseBRConnection` are re-obfuscated every release, but the field *types*
+     * - `BluetoothDevice`, `BluetoothSocket` - are framework classes the host cannot rename).
+     */
+    fun readFieldOfType(target: Any?, type: Class<*>): Any? {
+        if (target == null) return null
+        for (owner in hierarchyOf(target.javaClass)) {
+            for (field in runCatching { owner.declaredFields }.getOrNull().orEmpty()) {
+                if (field.isSynthetic || Modifier.isStatic(field.modifiers)) continue
+                if (!type.isAssignableFrom(field.type)) continue
+                val value = runCatching {
+                    field.isAccessible = true
+                    field.get(target)
+                }.getOrNull()
+                if (value != null) return value
+            }
+        }
+        return null
+    }
+
+    /** Reads the first non-null `String` field on the hierarchy that satisfies [predicate]. */
+    fun readStringFieldWhere(target: Any?, predicate: (String) -> Boolean): String? {
+        if (target == null) return null
+        for (owner in hierarchyOf(target.javaClass)) {
+            for (field in runCatching { owner.declaredFields }.getOrNull().orEmpty()) {
+                if (field.isSynthetic || Modifier.isStatic(field.modifiers)) continue
+                if (field.type != String::class.java) continue
+                val value = runCatching {
+                    field.isAccessible = true
+                    field.get(target) as? String
+                }.getOrNull() ?: continue
+                if (predicate(value)) return value
+            }
+        }
+        return null
+    }
+
+    /**
+     * Writes an instance field by any of [names], coercing [value] to the field's own type.
+     *
+     * Used as the fallback when the host's setter is missing or was renamed: the `DeviceInfo` fields
+     * (`mProductId`, `mIsSupportSpp`, ...) are the ones the analysis report lists as stable.
+     */
+    fun writeField(target: Any?, names: Array<String>, value: Any?): Boolean {
+        if (target == null) return false
+        for (owner in hierarchyOf(target.javaClass)) {
+            for (field in runCatching { owner.declaredFields }.getOrNull().orEmpty()) {
+                if (field.isSynthetic || Modifier.isStatic(field.modifiers)) continue
+                if (names.none { it == field.name }) continue
+                val coerced = coerce(value, field.type) ?: continue
+                val written = runCatching {
+                    field.isAccessible = true
+                    field.set(target, coerced)
+                }.isSuccess
+                if (written) return true
+            }
+        }
+        return false
+    }
+
+    /** Invokes a single-argument method by name; `false` when it does not exist or throws. */
+    fun invokeSingleArg(target: Any?, name: String, value: Any?): Boolean {
+        if (target == null) return false
+        for (owner in hierarchyOf(target.javaClass)) {
+            for (method in runCatching { owner.declaredMethods }.getOrNull().orEmpty()) {
+                if (method.name != name || method.parameterTypes.size != 1) continue
+                val coerced = coerce(value, method.parameterTypes[0]) ?: continue
+                val invoked = runCatching {
+                    method.isAccessible = true
+                    method.invoke(target, coerced)
+                }.isSuccess
+                if (invoked) return true
+            }
+        }
+        return false
+    }
+
+    /**
+     * Invokes a static two-argument method whose parameter types accept [first] and [second].
+     *
+     * Used to call the host's own JSON helper (`JsonUtils.c(String, Type)`) so a synthesised DTO is
+     * rebuilt by the very parser the host uses, instead of a second parser we would have to keep in
+     * sync with the host's type adapters.
+     */
+    fun invokeStatic2(cls: Class<*>?, name: String, first: Any?, second: Any?): Any? {
+        if (cls == null) return null
+        for (owner in hierarchyOf(cls)) {
+            for (method in runCatching { owner.declaredMethods }.getOrNull().orEmpty()) {
+                if (method.name != name || method.parameterTypes.size != 2) continue
+                if (!Modifier.isStatic(method.modifiers)) continue
+                if (!method.parameterTypes[0].isInstance(first)) continue
+                if (!method.parameterTypes[1].isInstance(second)) continue
+                return runCatching {
+                    method.isAccessible = true
+                    method.invoke(null, first, second)
+                }.getOrNull()
+            }
+        }
+        return null
+    }
+
+    /** Invokes a two-argument instance method whose parameter types accept [first] and [second]. */
+    fun invoke2(target: Any?, name: String, first: Any?, second: Any?): Any? {
+        if (target == null) return null
+        for (owner in hierarchyOf(target.javaClass)) {
+            for (method in runCatching { owner.declaredMethods }.getOrNull().orEmpty()) {
+                if (method.name != name || method.parameterTypes.size != 2) continue
+                if (!method.parameterTypes[0].isInstance(first)) continue
+                if (!method.parameterTypes[1].isInstance(second)) continue
+                return runCatching {
+                    method.isAccessible = true
+                    method.invoke(target, first, second)
+                }.getOrNull()
+            }
+        }
+        return null
+    }
+
+    /**
+     * Builds a fresh instance of [cls] the cheapest way that works: the no-argument constructor when the
+     * host kept one, otherwise a single-argument constructor fed from [candidates] (exact type match).
+     */
+    fun newInstance(cls: Class<*>?, vararg candidates: Pair<Class<*>, Any?>): Any? {
+        if (cls == null) return null
+        runCatching { cls.getDeclaredConstructor().also { it.isAccessible = true }.newInstance() }
+            .getOrNull()
+            ?.let { return it }
+        for ((type, value) in candidates) {
+            if (value == null || !type.isInstance(value)) continue
+            val instance = runCatching {
+                cls.getDeclaredConstructor(type).also { it.isAccessible = true }.newInstance(value)
+            }.getOrNull()
+            if (instance != null) return instance
+        }
+        return null
+    }
+
+    private fun coerce(value: Any?, type: Class<*>): Any? = when {
+        value == null -> null
+        type.isInstance(value) -> value
+        value is Number && (type == Int::class.javaPrimitiveType || type == Integer::class.java) -> value.toInt()
+        value is Number && (type == Long::class.javaPrimitiveType || type == java.lang.Long::class.java) -> value.toLong()
+        value is Boolean && (type == Boolean::class.javaPrimitiveType || type == java.lang.Boolean::class.java) -> value
+        type == String::class.java -> value.toString()
+        else -> null
+    }
+
     fun hierarchyOf(cls: Class<*>): Sequence<Class<*>> =
         generateSequence(cls) { it.superclass }.takeWhile { it != Any::class.java }
 

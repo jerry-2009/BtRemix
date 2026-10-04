@@ -8,14 +8,23 @@ import com.Fusion.Btremix.device.runtime.StateValue
 import com.Fusion.Btremix.melody.api.MelodyBridgeCache
 import com.Fusion.Btremix.melody.api.MelodyBridgeResult
 import com.Fusion.Btremix.melody.api.MelodyBundleCodec
+import com.Fusion.Btremix.melody.api.MelodyDeviceInfoIdentity
+import com.Fusion.Btremix.melody.api.MelodyDeviceInfoProjection
+import com.Fusion.Btremix.melody.api.MelodyDevicePolicy
 import com.Fusion.Btremix.melody.api.MelodyDoorbellProtocol
 import com.Fusion.Btremix.melody.api.MelodyMac
+import com.Fusion.Btremix.melody.api.MelodyProjectionStore
+import com.Fusion.Btremix.melody.api.MelodyProviderMerge
 import com.Fusion.Btremix.melody.api.MelodySnapshot
 import com.Fusion.Btremix.melody.api.MelodySupportInfo
+import com.Fusion.Btremix.melody.api.MelodyWhitelistIdentity
+import com.Fusion.Btremix.melody.api.WireValue
 import com.Fusion.Btremix.melody.bridge.IMelodyBridge
 import com.Fusion.Btremix.melody.bridge.IMelodyBridgeListener
 import com.Fusion.Btremix.melody.hook.MelodyLog
+import com.Fusion.Btremix.melody.projection.MelodyProjectionBuilder
 import java.util.concurrent.Callable
+import java.util.concurrent.ConcurrentHashMap
 import java.util.concurrent.CountDownLatch
 import java.util.concurrent.Executors
 import java.util.concurrent.TimeUnit
@@ -45,6 +54,25 @@ internal class MelodyBridgeClient(
 ) {
 
     private val cache = MelodyBridgeCache()
+
+    /**
+     * Cold-start cache (MELODY_BRIDGE_SPEC §5.5, M3.3): the managed set plus every projection envelope,
+     * persisted in the host's own `SharedPreferences` so the provider can answer while BtRemix is not
+     * running. The in-memory mirror inside [MelodyProjectionStore] is what the provider path reads.
+     */
+    private val store = MelodyProjectionStore()
+    private val storePreferences = MelodyProjectionPreferences(context, store)
+
+    /**
+     * Identity half of the M3.4 `DeviceInfo` projection, keyed by MAC. The host polls
+     * `DeviceInfoManager` for every bonded device, so the envelope must not be re-parsed per lookup;
+     * entries are dropped whenever a fresh envelope or a new managed set arrives.
+     */
+    private val identities = ConcurrentHashMap<String, MelodyWhitelistIdentity>()
+
+    /** The envelope's own `definition` policy, parsed alongside the identity and invalidated with it. */
+    private val policies = ConcurrentHashMap<String, MelodyDevicePolicy>()
+
     private val lock = Any()
 
     /** Single worker: one wedged call fails the queued ones fast instead of piling up binder transactions. */
@@ -69,6 +97,18 @@ internal class MelodyBridgeClient(
     }
 
     private val deathRecipient = IBinder.DeathRecipient { onLinkLost("binder_died") }
+
+    init {
+        // A persisted document from another envelope version is not "empty": report it once, then use
+        // whatever this process learns from the live bridge.
+        if (!storePreferences.load() && storePreferences.hasPersisted()) {
+            log.event(
+                "melody.projection.version_mismatch",
+                "side" to SIDE,
+                "expected" to MelodyProjectionBuilder.ENVELOPE_VERSION,
+            )
+        }
+    }
 
     @Volatile
     private var service: IMelodyBridge? = null
@@ -98,7 +138,13 @@ internal class MelodyBridgeClient(
 
         override fun onSupportChanged() {
             log.event("melody.bridge.support_changed", "side" to SIDE)
-            runCatching { managedMacs() }
+            // The Definition set (or the device pairing) changed: drop the M3.4 identity cache so the
+            // next DeviceInfo lookup rebuilds it from the refreshed envelope.
+            identities.clear()
+            policies.clear()
+            // Refresh on the link stage: this callback runs on a binder thread, and the refresh pulls
+            // one `managedMacs` plus one `resolveProjection` per device.
+            link.execute { runCatching { refreshFromBridge() }.onFailure { log.warn("melody.bridge.list_failed", it) } }
         }
     }
 
@@ -140,8 +186,28 @@ internal class MelodyBridgeClient(
 
     fun managedMacs(): List<String> {
         val macs = call("listManagedMacs") { bridge -> bridge.listManagedMacs().map(MelodyMac::normalize) }
-        if (macs == null) return cache.managedMacs()
+        // A live answer refreshes both the M2b in-memory cache and the M3.3 persisted cold-start store;
+        // without a link the persisted set is the better answer (it survives BtRemix being killed).
+        if (macs == null) return store.managedMacs().ifEmpty { cache.managedMacs() }
         cache.noteManagedMacs(macs)
+        store.noteManagedMacs(macs, MelodyProjectionBuilder.ENVELOPE_VERSION)
+        storePreferences.save()
+        return macs
+    }
+
+    /**
+     * Provider-path managed set: the persisted list answers immediately, and only a cold cache pays for
+     * the short IPC budget (the doorbell prefetch keeps it warm while BtRemix is up).
+     */
+    fun managedMacsFast(): List<String> {
+        store.managedMacs().takeIf { it.isNotEmpty() }?.let { return it }
+        val macs = call("listManagedMacs", PROVIDER_CALL_TIMEOUT_MS) { bridge ->
+            bridge.listManagedMacs().map(MelodyMac::normalize)
+        } ?: return emptyList()
+        if (macs.isEmpty()) return macs
+        cache.noteManagedMacs(macs)
+        store.noteManagedMacs(macs, MelodyProjectionBuilder.ENVELOPE_VERSION)
+        storePreferences.save()
         return macs
     }
 
@@ -173,12 +239,103 @@ internal class MelodyBridgeClient(
         call("resolveSupport") { bridge -> bridge.resolveSupport(MelodyMac.normalize(mac)) }
 
     /**
-     * Pulls the synthesised whitelist envelope for [mac] (M3). The Provider injection that consumes it
-     * lands in M3.3; exposing the call here completes the AIDL extension so the client half does not
-     * need another touch when the hook starts using it.
+     * Pulls the synthesised whitelist envelope for [mac] (M3) and persists it. `null` means "no live
+     * answer"; the caller decides whether that is a cached value (the provider) or an error (the panel).
      */
-    fun projection(mac: String): String? =
-        call("resolveProjection") { bridge -> bridge.resolveProjection(MelodyMac.normalize(mac)) }
+    fun projection(mac: String): String? {
+        val key = MelodyMac.normalize(mac)
+        val json = call("resolveProjection") { bridge -> bridge.resolveProjection(key) } ?: return null
+        store.put(key, json, MelodyProjectionBuilder.ENVELOPE_VERSION)
+        storePreferences.save()
+        identities.remove(key)
+        policies.remove(key)
+        return json
+    }
+
+    /**
+     * Provider-path projection (M3.3 plan "冷启动缓存"): the persisted envelope answers immediately;
+     * only a cache miss pays for a short IPC, and a miss after that returns `null` so the caller can
+     * hand the host's own answer back (recorded as a stale projection).
+     */
+    fun projectionFast(mac: String): String? {
+        val key = MelodyMac.normalize(mac)
+        store.envelope(key)?.let { cached ->
+            if (store.isStale(PROVIDER_STALE_AFTER_MS)) {
+                log.event(
+                    "melody.projection.stale",
+                    "side" to SIDE,
+                    "mac" to key,
+                    "reason" to "cache",
+                    "age_ms" to store.ageMs(),
+                )
+            }
+            return cached
+        }
+        val json = call("resolveProjection", PROVIDER_CALL_TIMEOUT_MS) { bridge -> bridge.resolveProjection(key) }
+        if (json == null) {
+            log.event("melody.projection.stale", "side" to SIDE, "mac" to key, "reason" to "miss")
+            return null
+        }
+        store.put(key, json, MelodyProjectionBuilder.ENVELOPE_VERSION)
+        storePreferences.save()
+        return json
+    }
+
+    /**
+     * Live "both in ear" flag for [mac], or `null` when there is no session or the definition declares
+     * no wear state. Wear is inherently live, so it is never cached: no link means no wear row.
+     */
+    fun wearState(mac: String): Boolean? {
+        val key = MelodyMac.normalize(mac)
+        val snapshot = call("snapshot", PROVIDER_CALL_TIMEOUT_MS) { bridge -> bridge.snapshot(key) } ?: return null
+        return wearOf(snapshot)
+    }
+
+    /**
+     * Cached session lifecycle for [mac]; no IPC. The panel pushes keep this warm while a session
+     * exists, and a paired-but-not-connected device correctly reads as `null` (=> disconnected).
+     */
+    fun lifecycleFast(mac: String): String? = cache.snapshot(MelodyMac.normalize(mac))?.lifecycle
+
+    /**
+     * The M3.4 `DeviceInfo` projection for [mac] (identity + connection state), or `null` when there is
+     * neither a live nor a cached envelope. Cheap after the first call: the envelope is parsed once and
+     * only the lifecycle is re-read.
+     */
+    fun deviceInfoFast(mac: String): MelodyDeviceInfoProjection? {
+        val key = MelodyMac.normalize(mac)
+        val identity = whitelistIdentityFast(key) ?: return null
+        val info = MelodyDeviceInfoIdentity.of(identity, policyOf(key)) ?: return null
+        return MelodyDeviceInfoProjection.from(info, lifecycleFast(key))
+    }
+
+    /**
+     * Whether the Definition asked for the transport backstops (`suppressMelodyTransport`).
+     *
+     * The caller only asks about MACs in the managed set, so an unreadable envelope still answers
+     * `true`: for a device we claim to support, keeping Melody off its RFCOMM channel is the safe
+     * default (M3-D7).
+     */
+    fun transportSuppressedFast(mac: String): Boolean =
+        whitelistIdentityFast(mac)?.let { policyOf(mac).suppressTransport } ?: true
+
+    /**
+     * The raw whitelist identity of [mac] from the (cached) projection envelope. M3.4's in-memory
+     * whitelist-repository hook needs both encodings of the product id and the whitelist JSON itself,
+     * so this exposes the parsed identity rather than the DeviceInfo-shaped one.
+     */
+    fun whitelistIdentityFast(mac: String): MelodyWhitelistIdentity? {
+        val key = MelodyMac.normalize(mac)
+        identities[key]?.let { return it }
+        val envelope = projectionFast(key) ?: return null
+        val identity = MelodyProviderMerge.identityOf(envelope) ?: return null
+        identities[key] = identity
+        policies[key] = MelodyProviderMerge.policyOf(envelope)
+        return identity
+    }
+
+    private fun policyOf(mac: String): MelodyDevicePolicy =
+        policies[MelodyMac.normalize(mac)] ?: MelodyDevicePolicy.NEUTRAL
 
     fun execute(mac: String, actionId: String, args: Map<String, StateValue> = emptyMap()): Int {
         val key = MelodyMac.normalize(mac)
@@ -236,8 +393,18 @@ internal class MelodyBridgeClient(
         link.execute {
             runCatching { iface.register(listener) }
                 .onFailure { log.warn("melody.bridge.register_failed", it) }
-            runCatching { managedMacs() }
+            runCatching { refreshFromBridge() }
                 .onFailure { log.warn("melody.bridge.list_failed", it) }
+        }
+    }
+
+    /**
+     * Pulls the managed set and then the projection envelope of every managed device, so the provider
+     * path (`projectionFast`) is a pure cache read in steady state (M3.3 plan "冷启动缓存").
+     */
+    private fun refreshFromBridge() {
+        managedMacs().forEach { mac ->
+            runCatching { projection(mac) }.onFailure { log.warn("melody.bridge.projection_failed", it) }
         }
     }
 
@@ -266,16 +433,16 @@ internal class MelodyBridgeClient(
      * Runs one binder call with a hard timeout. `null` means "no live answer" - the caller decides whether
      * that is a cached value (list/snapshot) or an error code (execute), and the panel never sees a throw.
      */
-    private fun <T> call(name: String, block: (IMelodyBridge) -> T): T? {
+    private fun <T> call(name: String, timeoutMs: Long = CALL_TIMEOUT_MS, block: (IMelodyBridge) -> T): T? {
         val bridge = service ?: return null
         return try {
-            calls.submit(Callable { block(bridge) }).get(CALL_TIMEOUT_MS, TimeUnit.MILLISECONDS)
+            calls.submit(Callable { block(bridge) }).get(timeoutMs, TimeUnit.MILLISECONDS)
         } catch (e: TimeoutException) {
             log.event(
                 "melody.bridge.call_timeout",
                 "side" to SIDE,
                 "call" to name,
-                "timeout_ms" to CALL_TIMEOUT_MS,
+                "timeout_ms" to timeoutMs,
             )
             null
         } catch (e: Exception) {
@@ -285,10 +452,36 @@ internal class MelodyBridgeClient(
         }
     }
 
+    /** `bothInEar` / `inEar` boolean from a session snapshot; `null` when the device has no such state. */
+    private fun wearOf(snapshot: MelodySnapshot): Boolean? {
+        val key = snapshot.state.keySet()
+            .firstOrNull { name -> WEAR_KEYS.any { it.equals(name, ignoreCase = true) } }
+            ?: return null
+        return when (val value = MelodyBundleCodec.decode(snapshot.state.getBundle(key))) {
+            is WireValue.Bool -> value.value
+            is WireValue.Int32 -> value.value != 0
+            is WireValue.Int64 -> value.value != 0L
+            is WireValue.Text -> value.value.equals("true", ignoreCase = true)
+            else -> null
+        }
+    }
+
     private companion object {
         const val SIDE = "melody"
 
         /** Plan §6: `execute`/`snapshot` answer within ~2s or degrade; the panel must never block on us. */
         const val CALL_TIMEOUT_MS = 2_000L
+
+        /**
+         * Provider path budget (Spec §5.5 "短超时 IPC（< 50 ms）"): the provider runs on a host thread the
+         * system UI may be waiting on, and a warm cache means this is only paid on the very first ask.
+         */
+        const val PROVIDER_CALL_TIMEOUT_MS = 50L
+
+        /** Serve the persisted envelope regardless of age, but tell the truth when it is older than this. */
+        const val PROVIDER_STALE_AFTER_MS = 10 * 60 * 1000L
+
+        /** Session state keys a Definition may use for "both earbuds are in"; none exist for XM3 (M3). */
+        val WEAR_KEYS = listOf("bothInEar", "inEar")
     }
 }

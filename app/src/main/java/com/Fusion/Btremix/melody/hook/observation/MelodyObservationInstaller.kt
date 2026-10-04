@@ -25,6 +25,9 @@ internal class MelodyObservationInstaller(
         installQuietly("deviceinfo") { DeviceInfoObservationHook(module, log, loader).install() }
         installQuietly("command") { CommandObservationHook(module, log, loader).install() }
         installQuietly("panel") { PanelObservationHook(module, log, loader).install() }
+        // M3.4b: the device-centre card protocol; added once the device run showed the card never
+        // goes through the whitelist provider (see DeviceCardObservationHook).
+        installQuietly("devicecard") { DeviceCardObservationHook(module, log, loader).install() }
     }
 
     private inline fun installQuietly(name: String, block: () -> Unit) {
