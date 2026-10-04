@@ -141,14 +141,22 @@ internal class MelodyBridgeBinder(
             log.warn("melody.projection.failed", it)
             return null
         }
-        if (!result.templateFound) {
-            log.event("melody.whitelist.template_missing", "mac" to key, "definition" to device.packageId)
+        // The declared template was unusable; `templateUse` says whether the built-in fallback saved
+        // the full field set or the projection had to degrade to the minimal one (M3.2, Spec §5.4.4).
+        if (result.templateMissing) {
+            log.event(
+                "melody.whitelist.template_missing",
+                "mac" to key,
+                "definition" to device.packageId,
+                "template" to result.templateUse.name.lowercase(),
+            )
         }
         log.event(
             "melody.projection.built",
             "mac" to key,
             "definition" to device.packageId,
             "version" to MelodyProjectionBuilder.ENVELOPE_VERSION,
+            "template" to result.templateUse.name.lowercase(),
             "bytes" to result.json.toByteArray(Charsets.UTF_8).size,
         )
         return result.json
