@@ -49,7 +49,11 @@ class MelodyProjectionBuilderTest {
     @Test
     fun projection_keepsEveryCapabilitySwitchAtTheTemplateValue() {
         val template = JsonParser.parse(templateFile().readText()).asObject()
-        val builder = MelodyProjectionBuilder(MelodyTemplateSource { templateFile().readText() })
+        // The M3-D7 neutral envelope is still reachable by asking for the M3 set explicitly.
+        val builder = MelodyProjectionBuilder(
+            MelodyTemplateSource { templateFile().readText() },
+            enabledCapabilities = MelodyCapabilityMap.ENABLED_IN_M3,
+        )
 
         val function = parse(builder.build(device))
             .getValue("whitelist")
@@ -58,6 +62,28 @@ class MelodyProjectionBuilderTest {
 
         // Deep equality is the M3-D7 contract: the builder may rearrange nothing in `function`.
         assertEquals(JsonValue.Object(template.getValue("function").asObject()), function)
+    }
+
+    @Test
+    fun projection_defaultsToTheM4CapabilitySet() {
+        val template = JsonParser.parse(templateFile().readText()).asObject()
+        val builder = MelodyProjectionBuilder(MelodyTemplateSource { templateFile().readText() })
+
+        val function = parse(builder.build(managedDevice(capabilities = listOf("battery", "spatial"))))
+            .getValue("whitelist")
+            .asObject()
+            .getValue("function")
+            .asObject()
+        val templateFunction = template.getValue("function").asObject()
+
+        // M4.1: exactly one switch differs from the neutral template, and it is the spatial list.
+        assertEquals(
+            JsonValue.Array(listOf(JsonValue.NumberValue("0"), JsonValue.NumberValue("1"))),
+            function.getValue("spatialTypes"),
+        )
+        assertEquals(templateFunction.size, function.size)
+        function.filterKeys { it != "spatialTypes" }
+            .forEach { (key, value) -> assertEquals("$key changed", templateFunction.getValue(key), value) }
     }
 
     @Test
@@ -79,6 +105,48 @@ class MelodyProjectionBuilderTest {
         assertEquals(templateFunction.size, function.size)
         function.filterKeys { it != "batteryInfo" }
             .forEach { (key, value) -> assertEquals("$key changed", templateFunction.getValue(key), value) }
+    }
+
+    @Test
+    fun projection_debugOverrideWritesTheRawFieldAndWinsOverTheRuleTable() {
+        val builder = MelodyProjectionBuilder(
+            templates = MelodyTemplateSource { templateFile().readText() },
+            enabledCapabilities = emptySet(),
+            capabilityOverrides = mapOf(
+                "spatialTypes" to JsonParser.parse("[0,1]"),
+                "equalizer" to JsonValue.NumberValue("1"),
+            ),
+        )
+
+        val function = parse(builder.build(device))
+            .getValue("whitelist")
+            .asObject()
+            .getValue("function")
+            .asObject()
+
+        assertEquals(
+            JsonValue.Array(listOf(JsonValue.NumberValue("0"), JsonValue.NumberValue("1"))),
+            function.getValue("spatialTypes"),
+        )
+        assertEquals(JsonValue.NumberValue("1"), function.getValue("equalizer"))
+        // The template field set survives: the override replaces values, it does not add fields.
+        assertEquals(135, function.size)
+    }
+
+    @Test
+    fun projection_withoutAnyTemplate_stillAppliesTheDebugOverride() {
+        val builder = MelodyProjectionBuilder(
+            templates = MelodyTemplateSource { null },
+            capabilityOverrides = mapOf("equalizer" to JsonValue.NumberValue("1")),
+        )
+
+        val function = parse(builder.build(device))
+            .getValue("whitelist")
+            .asObject()
+            .getValue("function")
+            .asObject()
+
+        assertEquals(setOf("batteryRadix", "equalizer"), function.keys)
     }
 
     @Test
@@ -159,7 +227,7 @@ class MelodyProjectionBuilderTest {
     fun projection_withoutAnyTemplate_degradesToTheMinimalFieldSet() {
         val builder = MelodyProjectionBuilder(MelodyTemplateSource { null })
 
-        val projection = builder.project(device)
+        val projection = builder.project(managedDevice(capabilities = listOf("battery")))
         val envelope = parse(projection.json)
         val whitelist = envelope.getValue("whitelist").asObject()
 
@@ -204,8 +272,13 @@ class MelodyProjectionBuilderTest {
     private fun managedDevice(
         productType: Int = 1,
         templateWhitelist: String? = null,
+        capabilities: List<String> = listOf("battery", "anc", "equalizer", "upscaling"),
     ): MelodyManagedDevice {
-        val definition = definition(productType = productType, templateWhitelist = templateWhitelist)
+        val definition = definition(
+            productType = productType,
+            templateWhitelist = templateWhitelist,
+            capabilities = capabilities,
+        )
         return MelodyManagedDevice(
             mac = "14:3F:A6:02:5F:B0",
             name = "WF-1000XM3",
@@ -214,8 +287,11 @@ class MelodyProjectionBuilderTest {
         )
     }
 
-    private fun definition(productType: Int = 1, templateWhitelist: String? = null) =
-        DefinitionJsonCodec.decode(definitionJson(productType, templateWhitelist))
+    private fun definition(
+        productType: Int = 1,
+        templateWhitelist: String? = null,
+        capabilities: List<String> = listOf("battery", "anc", "equalizer", "upscaling"),
+    ) = DefinitionJsonCodec.decode(definitionJson(productType, templateWhitelist, capabilities))
 
     private fun parse(text: String): Map<String, JsonValue> =
         JsonParser.parse(text).asObject()
@@ -251,10 +327,15 @@ class MelodyProjectionBuilderTest {
             "type", "uuid",
         )
 
-        fun definitionJson(productType: Int, templateWhitelist: String?): String {
+        fun definitionJson(
+            productType: Int,
+            templateWhitelist: String?,
+            capabilities: List<String> = listOf("battery", "anc", "equalizer", "upscaling"),
+        ): String {
             val templateLine = templateWhitelist
                 ?.let { ",\n          \"templateWhitelist\": \"$it\"" }
                 .orEmpty()
+            val capabilityLine = capabilities.joinToString(", ") { "\"$it\"" }
             return """
                 {
                   "manifest": {
@@ -262,7 +343,7 @@ class MelodyProjectionBuilderTest {
                     "displayName": "Sony WF-1000XM3",
                     "version": "1.0.0",
                     "schemaVersion": 4,
-                    "capabilities": ["battery", "anc", "equalizer", "upscaling"],
+                    "capabilities": [$capabilityLine],
                     "matchers": [{ "type": "namePrefix", "value": "WF-1000XM3" }]
                   },
                   "melody": {

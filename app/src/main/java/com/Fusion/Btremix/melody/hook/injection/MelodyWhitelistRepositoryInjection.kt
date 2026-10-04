@@ -32,6 +32,14 @@ import java.util.concurrent.ConcurrentHashMap
  * the official implementation has nothing, returning a real `WhitelistConfigDTO` rebuilt from the
  * envelope's `whitelist` JSON by the **host's own parser** (`JsonUtils.c(String, Type)`), so the
  * object is indistinguishable from one the host loaded itself.
+ *
+ * M4.1 追加（真机对照实验的必需前置）：详情页的能力表**不经过**上面两条同步查询。它观察的是
+ * `WhitelistRepository.h(productId, deviceName)` 返回的 `LiveData`，而该 LiveData 的实现是
+ * `k()`（官方白名单 `WhitelistContentDO` 流）经 `D0.d(0x12, productId, name).apply(content)`
+ * 映射而来 —— 一个纯本地查询，永远不会问 `c(...)`。因此只注入 `a`/`c` 的设备在详情页上
+ * 必然拿到 `function == null` 的空面板（真机日志 `refreshListView function is null!`），
+ * 任何能力位都不会渲染。这里补上那个映射器的 hook：官方映射结果为 `null` 且请求指向托管设备时，
+ * 用宿主自己的解析器重建的 DTO 顶上。
  */
 internal class MelodyWhitelistRepositoryInjection(
     private val module: XposedInterface,
@@ -56,9 +64,74 @@ internal class MelodyWhitelistRepositoryInjection(
             installed = hookByMac(cls) || installed
             installed = hookByIdOrName(cls) || installed
         }
+        installed = hookPanelLiveDataMapper() || installed
         if (!installed) {
             log.event("melody.anchor.missing", "hook" to "whitelist_repo", "classes" to IMPL_CLASSES.joinToString(","))
         }
+    }
+
+    /**
+     * `c9.a.h(productId, deviceName)` = `LiveData.map(k()) { D0.d(0x12, productId, name).apply(it) }`.
+     *
+     * The mapper's `apply` is what the detail page's capability table actually comes from, so hooking it
+     * is the difference between "the panel asks us and we answer" and "the panel never asks". The hook
+     * only fires for a mapper carrying a `WhitelistContentDO` argument and whose official answer is
+     * `null`; anything else is passed through untouched.
+     */
+    private fun hookPanelLiveDataMapper(): Boolean {
+        val cls = Reflect.loadClass(MAPPER_CLASS, loader) ?: run {
+            log.event("melody.anchor.missing", "hook" to "whitelist_repo.liveData", "class" to MAPPER_CLASS)
+            return false
+        }
+        val method = Reflect.findMethod(cls, "apply", arrayOf(Any::class.java)) ?: run {
+            log.event("melody.anchor.missing", "hook" to "whitelist_repo.liveData", "class" to MAPPER_CLASS)
+            return false
+        }
+        if (method.returnType != Any::class.java) {
+            log.event("melody.anchor.missing", "hook" to "whitelist_repo.liveData", "class" to MAPPER_CLASS)
+            return false
+        }
+        module.hook(method).intercept(XposedInterface.Hooker { chain ->
+            val official = chain.proceed()
+            val content = chain.args.getOrNull(0)
+            if (official != null || !isPanelMapper(chain.thisObject, content)) {
+                official
+            } else {
+                answer(
+                    via = "byLiveData",
+                    key = capturedString(chain.thisObject, CAPTURE_KEY_FIELD),
+                    selection = capturedString(chain.thisObject, CAPTURE_NAME_FIELD),
+                    owner = MAPPER_CLASS,
+                ) ?: official
+            }
+        })
+        log.event("melody.anchor.hooked", "hook" to "whitelist_repo.liveData", "class" to cls.name, "method" to method.name)
+        return true
+    }
+
+    /** True for the `h(...)` mapper: it consumes the whole official whitelist (`WhitelistContentDO`). */
+    private fun isPanelMapper(mapper: Any?, content: Any?): Boolean =
+        content != null && content.javaClass.name == CONTENT_CLASS && mapper != null
+
+    /**
+     * Reads one R8 lambda capture field.
+     *
+     * [Reflect.readField] deliberately skips synthetic fields (they are usually compiler noise), but an
+     * R8-merged synthetic class stores its captures exactly there, so the mapper needs its own read.
+     */
+    private fun capturedString(mapper: Any?, name: String): String? {
+        var type: Class<*>? = mapper?.javaClass
+        while (type != null && type != Any::class.java) {
+            val field = runCatching { type.getDeclaredField(name) }.getOrNull()
+            if (field != null) {
+                return runCatching {
+                    field.isAccessible = true
+                    field.get(mapper) as? String
+                }.getOrNull()
+            }
+            type = type.superclass
+        }
+        return null
     }
 
     /** `a(String macAddress) -> WhitelistConfigDTO` */
@@ -213,6 +286,16 @@ internal class MelodyWhitelistRepositoryInjection(
         const val DTO_CLASS = "com.oplus.melody.common.data.WhitelistConfigDTO"
         const val JSON_UTILS_CLASS = "com.oplus.melody.common.util.JsonUtils"
         const val GSON_CLASS = "com.google.gson.Gson"
+
+        /** The official whole-whitelist DO; the `h(...)` mapper is its only consumer here (M4.1). */
+        const val CONTENT_CLASS = "com.oplus.melody.common.data.WhitelistContentDO"
+
+        /** R8 name of the mapper class `c9.a.h(...)` captures its (productId, deviceName) in. */
+        const val MAPPER_CLASS = "D0.d"
+
+        /** Capture slot names of [MAPPER_CLASS] in the 17.6.3 build (both synthetic). */
+        const val CAPTURE_KEY_FIELD = "b"
+        const val CAPTURE_NAME_FIELD = "c"
 
         /**
          * `WhitelistRepositoryServerImpl` (main process, the one the card code uses) and

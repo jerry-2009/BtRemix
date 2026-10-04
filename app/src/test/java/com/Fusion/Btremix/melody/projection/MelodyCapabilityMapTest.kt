@@ -18,6 +18,29 @@ class MelodyCapabilityMapTest {
     @Test
     fun m3_shipsWithNoEnabledCapabilitySwitch() {
         assertTrue("M3-D7 keeps every switch neutral", MelodyCapabilityMap.ENABLED_IN_M3.isEmpty())
+        assertTrue(MelodyCapabilityMap.overrides(batteryDevice(), MelodyCapabilityMap.ENABLED_IN_M3).isEmpty())
+    }
+
+    @Test
+    fun m4_enablesExactlyTheSpatialTypesSwitch() {
+        assertEquals(setOf("spatialTypes"), MelodyCapabilityMap.ENABLED_IN_M4)
+    }
+
+    @Test
+    fun spatialCapability_turnsOnTheSpatialTypesListWithTheObservedShape() {
+        val overrides = MelodyCapabilityMap.overrides(spatialDevice())
+
+        assertEquals(
+            JsonValue.Array(listOf(JsonValue.NumberValue("0"), JsonValue.NumberValue("1"))),
+            overrides["spatialTypes"],
+        )
+        assertEquals(1, overrides.size)
+    }
+
+    @Test
+    fun definitionWithoutTheSpatialCapability_neverOpensTheSpatialTypesSwitch() {
+        // The official sound group is opt-in: a Definition that did not ask for it keeps the neutral
+        // `spatialTypes: null` the template left behind (M4.1 §3).
         assertTrue(MelodyCapabilityMap.overrides(batteryDevice()).isEmpty())
     }
 
@@ -56,7 +79,7 @@ class MelodyCapabilityMapTest {
     fun structuredCloudSwitchesAreNotSynthesized() {
         val keys = MelodyCapabilityMap.rules.map { it.functionKey }
 
-        assertEquals(listOf("batteryInfo"), keys)
+        assertEquals(listOf("batteryInfo", "spatialTypes"), keys)
         listOf("noiseReductionMode", "equalizerMode", "control", "callControl", "multiConnectFunctions")
             .forEach { assertTrue("$it needs host cloud tables and must have no rule", it !in keys) }
     }
@@ -85,6 +108,13 @@ class MelodyCapabilityMapTest {
         definitionJson(
             capabilities = listOf("\"battery\""),
             states = listOf("\"battery.left\": { \"type\": \"integer\" }"),
+        ),
+    )
+
+    private fun spatialDevice(): LoadedDeviceDefinition = DefinitionJsonCodec.decode(
+        definitionJson(
+            capabilities = listOf("\"spatial\""),
+            states = listOf("\"eqPreset\": { \"type\": \"integer\" }"),
         ),
     )
 

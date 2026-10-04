@@ -20,6 +20,7 @@ import com.Fusion.Btremix.melody.bridge.MelodyBridgeLog
 import com.Fusion.Btremix.melody.bridge.MelodySessionService
 import com.Fusion.Btremix.melody.config.MelodySupportRegistry
 import com.Fusion.Btremix.melody.projection.AndroidMelodyTemplateSource
+import com.Fusion.Btremix.melody.projection.MelodyCapabilityDebug
 import com.Fusion.Btremix.melody.projection.MelodyProjectionBuilder
 import java.io.File
 import kotlinx.coroutines.CoroutineScope
@@ -101,11 +102,36 @@ class BtRemixApplication : Application() {
 
     /** Synthetic whitelist envelope builder; reads the M3.-1 template from the APK assets. */
     val melodyProjection: MelodyProjectionBuilder by lazy {
-        MelodyProjectionBuilder(AndroidMelodyTemplateSource(assets))
+        MelodyProjectionBuilder(
+            templates = AndroidMelodyTemplateSource(assets),
+            capabilityOverrides = melodyCapabilityDebug,
+        )
+    }
+
+    /**
+     * M4.1 experiment only: raw capability bits forced from `files/melody-capability-debug.txt`.
+     * Always empty in a release build ([MelodyCapabilityDebug.read]), so shipping behaviour is the
+     * rule table alone.
+     *
+     * Lazily initialised on purpose: an `Application` property initialiser runs before
+     * `attachBaseContext`, where `filesDir` is not available yet.
+     */
+    private val melodyCapabilityDebug by lazy {
+        MelodyCapabilityDebug.read(
+            debugBuild = BuildConfig.DEBUG,
+            file = File(filesDir, MelodyCapabilityDebug.FILE_NAME),
+        )
     }
 
     override fun onCreate() {
         super.onCreate()
+        if (melodyCapabilityDebug.isNotEmpty()) {
+            bridgeLog.event(
+                "melody.capability.debug",
+                "count" to melodyCapabilityDebug.size,
+                "keys" to melodyCapabilityDebug.entries.joinToString(",") { "${it.key}=${it.value}" },
+            )
+        }
         scope.launch { packageBootstrap.load() }
         melodySupport.start()
         watchSessionsForMelodyBridge()

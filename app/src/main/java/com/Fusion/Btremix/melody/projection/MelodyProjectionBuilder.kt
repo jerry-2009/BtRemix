@@ -62,10 +62,17 @@ data class MelodyProjection(
 class MelodyProjectionBuilder(
     private val templates: MelodyTemplateSource,
     /**
-     * Capability switches this builder is allowed to turn on. Defaults to [MelodyCapabilityMap.ENABLED_IN_M3]
-     * (empty, M3-D7); the parameter exists so M4 and the JVM tests can drive the same code path.
+     * Capability switches this builder is allowed to turn on. Defaults to
+     * [MelodyCapabilityMap.ENABLED_IN_M4] (the M4.1 set); passing [MelodyCapabilityMap.ENABLED_IN_M3]
+     * reproduces the neutral M3-D7 envelope, which the JVM tests pin.
      */
-    private val enabledCapabilities: Set<String> = MelodyCapabilityMap.ENABLED_IN_M3,
+    private val enabledCapabilities: Set<String> = MelodyCapabilityMap.ENABLED_IN_M4,
+    /**
+     * Raw `WhitelistConfigDTO$Function` fields forced on top of the rule table, bypassing
+     * `providedBy` gating. **Debug builds only** (M4.1 capability-location experiment,
+     * [MelodyCapabilityDebug]); empty in release, where the rule table is the only writer.
+     */
+    private val capabilityOverrides: Map<String, JsonValue> = emptyMap(),
 ) {
 
     fun build(device: MelodyManagedDevice, instanceProductId: String? = null): String =
@@ -134,13 +141,26 @@ class MelodyProjectionBuilder(
         applyIdentity(fields, device, instanceProductId, templateId)
         (template.values["function"] as? JsonValue.Object)?.let { function ->
             val switchable = LinkedHashMap(function.values)
-            MelodyCapabilityMap.overrides(device.definition, enabledCapabilities).forEach { (key, value) ->
+            functionOverrides(device).forEach { (key, value) ->
                 switchable[key] = value
             }
             fields["function"] = JsonValue.Object(switchable)
         }
         return JsonValue.Object(fields)
     }
+
+    /**
+     * The capability writes for [device]: the rule table first, then the M4.1 debug override. The
+     * override intentionally wins, so one experiment round can contradict the shipped rules.
+     */
+    private fun functionOverrides(device: MelodyManagedDevice): Map<String, JsonValue> =
+        if (capabilityOverrides.isEmpty()) {
+            MelodyCapabilityMap.overrides(device.definition, enabledCapabilities)
+        } else {
+            LinkedHashMap<String, JsonValue>()
+                .apply { putAll(MelodyCapabilityMap.overrides(device.definition, enabledCapabilities)) }
+                .apply { putAll(capabilityOverrides) }
+        }
 
     /**
      * Spec §5.4 item 4 fallback: keep the top-level `WhitelistConfigDTO` shape the host expects, but
@@ -179,7 +199,7 @@ class MelodyProjectionBuilder(
     /** The structural parameters that stay valid even without the capability table (`batteryRadix`). */
     private fun minimalFunction(device: MelodyManagedDevice): Map<String, JsonValue> {
         val function = linkedMapOf<String, JsonValue>("batteryRadix" to JsonValue.NumberValue("10"))
-        MelodyCapabilityMap.overrides(device.definition, enabledCapabilities).forEach { (key, value) ->
+        functionOverrides(device).forEach { (key, value) ->
             function[key] = value
         }
         return function

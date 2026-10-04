@@ -22,15 +22,16 @@ class MelodyCapabilityRule(
  *
  * D4 minimizes the official UI by starting from the neutral template and turning on only switches the
  * Definition can really serve, so the host never renders an official row whose action BtRemix cannot
- * execute. The table below is deliberately restricted to switches whose value is a *plain scalar*:
- * structured switches (`noiseReductionMode` / `equalizerMode` / `control` / `callControl` / ...) are
- * cloud-side mode tables with protocol indices that a Definition cannot express, so they have no rule
- * and stay at the template's neutral value forever (M4 delivers their rows as `melody_bridge_*` custom
- * entries instead).
+ * execute. The table below is deliberately restricted to switches whose value a Definition can
+ * express: structured switches (`noiseReductionMode` / `equalizerMode` / `control` / `callControl` /
+ * ...) are cloud-side mode tables with protocol indices that a Definition cannot express, so they have
+ * no rule and stay at the template's neutral value forever (M4 delivers their rows as `melody_bridge_*`
+ * custom entries instead).
  *
- * M3 itself ships with [ENABLED_IN_M3] **empty**: every switch stays exactly as the template left it
- * (M3-D7). The table plus the [overrides] seam is the part M4 flips, one switch at a time, without
- * touching the projection builder.
+ * [ENABLED_IN_M3] is still **empty** (the M3-D7 contract, kept so the neutral envelope stays testable);
+ * M4 ships [ENABLED_IN_M4], which the projection builder now uses by default. Only the `spatialTypes`
+ * list of [SPATIAL_TYPES] is in it — the one switch the M4.1 real-device round found necessary and
+ * sufficient for「音质音效 + 空间音频」(docs/melody-capability-map.md).
  */
 object MelodyCapabilityMap {
 
@@ -40,20 +41,38 @@ object MelodyCapabilityMap {
     /** Scalar capability switches a Definition can back today. */
     val rules: List<MelodyCapabilityRule> = listOf(
         MelodyCapabilityRule("batteryInfo", SWITCH_ON, ::providesBattery),
+        // M4.1: the *only* switch that makes the host render the official 音质音效 group on a device
+        // that has no SDK session. The group's one usable row is「空间音频」, which is a phone-side
+        // Spatializer feature (M4-D2), so the honest Definition-side declaration is "I want the
+        // official sound group", not "my headset implements spatial audio". Everything else in the
+        // group stays off, so no row BtRemix cannot serve is rendered.
+        MelodyCapabilityRule(SPATIAL_TYPES, spatialTypesValue(), ::providesSpatialPanel),
     )
 
     /** Capability switches this milestone is allowed to turn on. Empty is the M3-D7 contract. */
     val ENABLED_IN_M3: Set<String> = emptySet()
 
     /**
+     * M4.1's frozen switch set (HANDOFF_MELODY_M4_PLAN.md §3 M4.1): exactly the one field the
+     * real-device round found necessary and sufficient for「音质音效 + 空间音频」.
+     */
+    val ENABLED_IN_M4: Set<String> = setOf(SPATIAL_TYPES)
+
+    /** `WhitelistConfigDTO$Function.spatialTypes`; a *list*, non-null is what the host checks. */
+    const val SPATIAL_TYPES: String = "spatialTypes"
+
+    /** Definition `manifest.capabilities` token that opts into the official sound group (M4.1). */
+    const val CAPABILITY_SPATIAL: String = "spatial"
+
+    /**
      * The `function` overrides for [definition], limited to [enabledKeys].
      *
-     * The default ([ENABLED_IN_M3]) is empty, so the envelope stays neutral in M3; passing a key set
-     * explicitly is how the M4 table (and the JVM tests) drive the same code path.
+     * The default ([ENABLED_IN_M4]) is the M4.1 set; passing a key set explicitly is how the JVM tests
+     * drive other points of the table (including the empty M3-D7 baseline).
      */
     fun overrides(
         definition: LoadedDeviceDefinition,
-        enabledKeys: Set<String> = ENABLED_IN_M3,
+        enabledKeys: Set<String> = ENABLED_IN_M4,
     ): Map<String, JsonValue> = buildMap {
         rules.forEach { rule ->
             if (rule.functionKey in enabledKeys && rule.providedBy(definition)) {
@@ -71,6 +90,18 @@ object MelodyCapabilityMap {
     private fun providesBattery(definition: LoadedDeviceDefinition): Boolean =
         definition.manifest.capabilities.any { it.equals("battery", ignoreCase = true) } ||
             definition.states.keys.any { it.startsWith("battery", ignoreCase = true) }
+
+    /**
+     * True when the Definition asks for the official sound group. The value is the shape observed on
+     * real whitelist entries (44 of 94 models carry `[0,1]`; `[0]` / `[1]` render identically, see
+     * `docs/melody-capability-map.md` §3 M4.1), and the host only tests it for `null`.
+     */
+    private fun providesSpatialPanel(definition: LoadedDeviceDefinition): Boolean =
+        definition.manifest.capabilities.any { it.equals(CAPABILITY_SPATIAL, ignoreCase = true) }
+
+    private fun spatialTypesValue(): JsonValue = JsonValue.Array(
+        listOf(JsonValue.NumberValue("0"), JsonValue.NumberValue("1")),
+    )
 }
 
 /**
