@@ -4,6 +4,7 @@ import com.Fusion.Btremix.melody.api.MelodyPanelGroup
 import com.Fusion.Btremix.melody.api.MelodyPanelPolicy
 import com.Fusion.Btremix.melody.api.MelodyPanelRow
 import com.Fusion.Btremix.melody.api.MelodyPanelRowKind
+import com.coui.appcompat.preference.COUIMenuPreference
 import com.coui.appcompat.preference.COUIPreference
 import com.coui.appcompat.preference.COUIPreferenceCategory
 import com.coui.appcompat.preference.COUISwitchPreference
@@ -89,6 +90,42 @@ class MelodyPanelGroupApplierTest {
         val rows = (requireNotNull(categoryOf(screen)) as COUIPreferenceCategory)
             .children().filterIsInstance<COUIPreference>()
         assertEquals("Bright", rows[0].getAssignment())
+    }
+
+    @Test
+    fun choiceRows_useTheHostPopupMenuRow() {
+        val screen = FakeScreen()
+        screen.addGroup("sound", order = 1)
+        screen.addRow("pref_spatial_audio", layout = LAYOUT_RES)
+
+        apply(screen, policy(equalizerRow()), stateText = { "bright" })
+
+        val row = (requireNotNull(categoryOf(screen)) as COUIPreferenceCategory)
+            .children().filterIsInstance<COUIPreference>().single()
+        assertTrue("the equalizer row must be the host's ColorOS popup row", row is COUIMenuPreference)
+        row as COUIMenuPreference
+        // Entries/values are what the popup lists; the live value marks the checked entry.
+        assertEquals(listOf<CharSequence>("Off", "Bright"), row.entriesForTest()?.toList())
+        assertEquals(listOf<CharSequence>("off", "bright"), row.entryValuesForTest()?.toList())
+        assertEquals("bright", row.currentValue())
+        assertEquals("Bright", row.getAssignment())
+        // The popup's own `persistString` must never write a `melody_bridge_*` key into the host.
+        assertFalse(row.isPersistentForTest())
+    }
+
+    @Test
+    fun choiceRows_fallBackToTheJumpRowWhenThePopupSettersAreMissing() {
+        val screen = FakeScreen()
+        screen.addGroup("sound", order = 1)
+        screen.addRow("pref_spatial_audio", layout = LAYOUT_RES)
+
+        apply(screen, policy(equalizerRow()), stateText = { "Off" }, loader = StubMenuLoader())
+
+        val row = (requireNotNull(categoryOf(screen)) as COUIPreferenceCategory)
+            .children().filterIsInstance<COUIPreference>().single()
+        assertFalse("an unprogrammable menu class must fall back", row is COUIMenuPreference)
+        assertEquals("melody_bridge_eqPreset", row.getKey())
+        assertEquals("Off", row.getAssignment())
     }
 
     @Test
@@ -369,6 +406,25 @@ class MelodyPanelGroupApplierTest {
     private class BlankLoader : ClassLoader(null) {
         override fun loadClass(name: String, resolve: Boolean): Class<*> =
             throw ClassNotFoundException(name)
+    }
+
+    /**
+     * Resolves the menu class to a stub without the R8 entry setters, so the applier has to fall back
+     * to the M4.4 jump row (the picker path) instead of pretending a popup row was built.
+     */
+    private class StubMenuLoader : ClassLoader(
+        requireNotNull(MelodyPanelGroupApplierTest::class.java.classLoader),
+    ) {
+        override fun loadClass(name: String, resolve: Boolean): Class<*> =
+            if (name == "com.coui.appcompat.preference.COUIMenuPreference") {
+                StubMenuRow::class.java
+            } else {
+                super.loadClass(name, resolve)
+            }
+
+        /** A constructible row with none of the shape the applier needs. */
+        @Suppress("unused")
+        class StubMenuRow
     }
 
     private companion object {

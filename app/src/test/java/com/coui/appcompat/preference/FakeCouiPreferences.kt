@@ -76,6 +76,71 @@ open class COUISwitchPreference : COUIPreference() {
     fun setChecked(value: Boolean) { checked = value }
 }
 
+/**
+ * Stand-in for the host's ColorOS popup-menu row (`COUIMenuPreference`, M6). It mirrors the R8-short
+ * setters the applier and the choice binder reach by name (`f` = setEntries, `g` = setEntryValues,
+ * `i` = setValue) plus the host's `callChangeListener` contract: [select] runs the registered change
+ * listener and only applies the value when it accepts - exactly like `COUIMenuPreference$a.onItemClick`.
+ *
+ * `i` also mirrors the real early-return (same value + already initialized = no `notifyChanged`), which
+ * the applier's "only re-notify on a real change" test depends on.
+ */
+@Suppress("unused")
+open class COUIMenuPreference : COUIPreference() {
+    /** The R8-renamed `androidx.preference.Preference$c` shape: `(Preference, Object) -> boolean`. */
+    fun interface OnChangeListener {
+        fun onPreferenceChange(preference: Any?, newValue: Any?): Boolean
+    }
+
+    private var entries: Array<CharSequence>? = null
+    private var entryValues: Array<CharSequence>? = null
+    private var value: String? = null
+    private var valueInitialized = false
+    private var persistent = true
+    private var changeListener: OnChangeListener? = null
+
+    /** Host R8 name of `setEntries(CharSequence[])`. */
+    fun f(values: Array<CharSequence>) {
+        entries = values
+    }
+
+    /** Host R8 name of `setEntryValues(CharSequence[])`. */
+    fun g(values: Array<CharSequence>) {
+        entryValues = values
+    }
+
+    /** Host R8 name of `setValue(String)`. */
+    fun i(newValue: String) {
+        if (valueInitialized && value == newValue) return
+        value = newValue
+        valueInitialized = true
+        notifyChanged()
+    }
+
+    fun setPersistent(value: Boolean) {
+        persistent = value
+    }
+
+    fun getOnPreferenceChangeListener(): OnChangeListener? = changeListener
+
+    fun setOnPreferenceChangeListener(listener: OnChangeListener?) {
+        changeListener = listener
+    }
+
+    fun isPersistentForTest(): Boolean = persistent
+    fun entriesForTest(): Array<CharSequence>? = entries
+    fun entryValuesForTest(): Array<CharSequence>? = entryValues
+    fun currentValue(): String? = value
+
+    /** Test driver: what the host popup row does when one of its entries is tapped. */
+    fun select(index: Int): Boolean {
+        val picked = entryValues?.getOrNull(index)?.toString() ?: return false
+        val accepted = changeListener?.onPreferenceChange(this, picked) ?: false
+        if (accepted) i(picked)
+        return accepted
+    }
+}
+
 @Suppress("unused")
 open class COUIPreferenceCategory : COUIPreference() {
     // The real category's `getPreferenceCount`/`getPreference` are R8-stripped; the tree walk finds

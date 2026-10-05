@@ -18,12 +18,25 @@ internal fun interface MelodyRowClickBinder {
     fun bind(preference: Any, row: MelodyPanelRow, context: Context?): Boolean
 }
 
+/**
+ * The host's ColorOS popup-menu row (M6). It is a `COUIPreference`, so nothing here can reference it
+ * by type; the name is the 17.6.3 anchor and [MelodyPanelGroupApplier] only builds rows it can match.
+ */
+internal const val COUI_MENU_PREFERENCE: String = "com.coui.appcompat.preference.COUIMenuPreference"
+
+/** `true` for the popup-menu rows [MelodyPanelGroupApplier] builds (their pick arrives by listener). */
+internal fun isMenuPreference(preference: Any?): Boolean =
+    preference?.javaClass?.name == COUI_MENU_PREFERENCE
+
 /** Sends one resolved action to the bridge; the `onResult` code is the `IMelodyBridge.execute` result. */
 internal fun interface MelodyPanelExecutor {
     fun execute(actionId: String, args: Map<String, StateValue>, onResult: (Int) -> Unit)
 }
 
-/** Host-native single-choice sheet (COUI bottom sheet), or `false` when it cannot be shown. */
+/**
+ * Fallback single-choice sheet (COUI bottom sheet), or `false` when it cannot be shown. M6 choice rows
+ * use the host's own `COUIMenuPreference` popup and never call this; it stays for the drift fallback.
+ */
 internal fun interface MelodyPanelChoicePresenter {
     fun present(
         context: Context?,
@@ -111,6 +124,12 @@ internal object MelodyPanelActionBinder {
         loader: ClassLoader,
         log: MelodyGroupLog,
     ): Boolean {
+        // M6: the popup-menu row (COUIMenuPreference) installs its own item-view click helper that
+        // opens the native ColorOS popup, so the `setOnPreferenceClickListener` proxy below would
+        // never fire. The pick travels through the host's `callChangeListener(value)` instead.
+        if (row.kind == MelodyPanelRowKind.SEGMENTED && isMenuPreference(preference)) {
+            return bindChoice(preference, row, mac, currentMac, executor, inFlight, loader, log)
+        }
         val iface = clickListenerInterface(preference) ?: return fail(mac, row, "no_listener", log)
         val sam = singleAbstractMethod(iface)
         val handler = InvocationHandler { proxy, method, args ->
@@ -144,6 +163,87 @@ internal object MelodyPanelActionBinder {
             Reflect.invokeSingleArg(preference, "setOnPreferenceClickListener", proxy)
         }.getOrDefault(false)
         if (!attached) return fail(mac, row, "set_refused", log)
+        return true
+    }
+
+    /**
+     * Attaches the choice link to a host [COUI_MENU_PREFERENCE] row (M6). `setOnPreferenceChangeListener`
+     * keeps its name in 17.6.3, but the listener interface is R8-renamed (`Preference$c`, single abstract
+     * `onPreferenceChange(Preference, Object)Z`) - the proxy is created against the interface the setter
+     * actually declares, exactly like the click proxy above.
+     */
+    private fun bindChoice(
+        preference: Any,
+        row: MelodyPanelRow,
+        mac: String,
+        currentMac: () -> String?,
+        executor: MelodyPanelExecutor,
+        inFlight: MutableMap<String, Long>,
+        loader: ClassLoader,
+        log: MelodyGroupLog,
+    ): Boolean {
+        val iface = changeListenerInterface(preference) ?: return fail(mac, row, "no_change_listener", log)
+        val sam = singleAbstractMethod(iface)
+        val handler = InvocationHandler { proxy, method, args ->
+            when {
+                method.declaringClass == Any::class.java -> objectMethod(proxy, method, args)
+                samMatches(sam, method) ->
+                    onChoice(preference, row, args?.getOrNull(1), mac, currentMac, inFlight, executor, log)
+
+                else -> null
+            }
+        }
+        val proxyLoader = iface.classLoader ?: loader
+        val proxy = runCatching {
+            Proxy.newProxyInstance(proxyLoader, arrayOf(iface), handler)
+        }.getOrNull() ?: return fail(mac, row, "proxy_failed", log)
+        val attached = runCatching {
+            Reflect.invokeSingleArg(preference, "setOnPreferenceChangeListener", proxy)
+        }.getOrDefault(false)
+        if (!attached) return fail(mac, row, "set_refused", log)
+        return true
+    }
+
+    /**
+     * One popup-menu pick: the host passes the row's *entry value* (the same string the Definition
+     * declares as an option), so it is matched against [MelodyPanelRow.options] before the write - a
+     * value the row does not carry never fires an action. Accepting also lets the host mark the picked
+     * entry; the assignment (value on the right) is refreshed here so the row reads correctly instantly.
+     */
+    private fun onChoice(
+        preference: Any,
+        row: MelodyPanelRow,
+        newValue: Any?,
+        mac: String,
+        currentMac: () -> String?,
+        inFlight: MutableMap<String, Long>,
+        executor: MelodyPanelExecutor,
+        log: MelodyGroupLog,
+    ): Boolean {
+        if (row.unavailable) return false
+        val action = row.action?.takeIf { it.isNotBlank() } ?: run {
+            fail(mac, row, "no_action", log)
+            return false
+        }
+        // Spec §7.4: re-check that the page is still about the device this row was bound to.
+        val liveMac = runCatching { currentMac() }.getOrNull()
+        if (liveMac != mac) {
+            log.event(
+                "melody.panel.click",
+                listOf("mac" to mac, "key" to row.key, "reason" to "mac_mismatch", "live" to liveMac),
+            )
+            return false
+        }
+        val now = System.currentTimeMillis()
+        inFlight[row.key]?.let { if (now - it < REPEAT_WINDOW_MS) return false }
+        val picked = newValue?.toString() ?: return false
+        val index = row.options.indexOf(picked)
+        if (index < 0) {
+            fail(mac, row, "option_unknown", log)
+            return false
+        }
+        row.optionLabels.getOrNull(index)?.let { Reflect.invokeSingleArg(preference, "setAssignment", it) }
+        dispatch(row, action, MelodyPanelActionArgs.choice(row, picked), mac, inFlight, executor, log)
         return true
     }
 
@@ -307,7 +407,29 @@ internal object MelodyPanelActionBinder {
             method.parameterTypes.size == 1 &&
                 method.name.startsWith("set") &&
                 method.parameterTypes[0].isInterface &&
-                singleAbstractMethod(method.parameterTypes[0])?.returnType == java.lang.Boolean.TYPE
+                singleAbstractMethod(method.parameterTypes[0])?.let { sam ->
+                    sam.returnType == java.lang.Boolean.TYPE && sam.parameterTypes.size == 1
+                } == true
+        }?.parameterTypes?.get(0)
+    }
+
+    /**
+     * The listener interface the host `setOnPreferenceChangeListener` accepts. Primary lookup is by the
+     * setter name (kept in 17.6.3); the fallback accepts any single-argument `setX(Interface)` whose SAM
+     * is `(Preference, Object) -> boolean`, so a rename does not silently disable the popup pick.
+     */
+    private fun changeListenerInterface(preference: Any): Class<*>? {
+        val declared = Reflect.hierarchyOf(preference.javaClass)
+            .flatMap { runCatching { it.declaredMethods }.getOrNull().orEmpty().asSequence() }
+        declared.firstOrNull { it.name == "setOnPreferenceChangeListener" && it.parameterTypes.size == 1 }
+            ?.let { return it.parameterTypes[0] }
+        return declared.firstOrNull { method ->
+            method.parameterTypes.size == 1 &&
+                method.name.startsWith("set") &&
+                method.parameterTypes[0].isInterface &&
+                singleAbstractMethod(method.parameterTypes[0])?.let { sam ->
+                    sam.returnType == java.lang.Boolean.TYPE && sam.parameterTypes.size == 2
+                } == true
         }?.parameterTypes?.get(0)
     }
 

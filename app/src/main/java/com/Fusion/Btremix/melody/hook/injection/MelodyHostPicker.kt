@@ -14,7 +14,12 @@ import com.Fusion.Btremix.melody.hook.Reflect
 import kotlin.math.roundToInt
 
 /**
- * Single-choice / slider sheet for the self-built「高级功能」rows (M4.4).
+ * Fallback single-choice / slider sheet for the self-built「高级功能」rows (M6).
+ *
+ * Choice rows normally never reach here: [MelodyPanelGroupApplier] builds them as the host's own
+ * `COUIMenuPreference`, so tapping one opens the native ColorOS popup menu (`COUIClickSelectMenu` ->
+ * `COUIPopupListWindow`). This sheet is the fail-open path for a host build where that class or its
+ * R8-short entry setters are unavailable (`COUIJumpPreference` + click binder).
  *
  * The native look comes from the host's own `com.coui.appcompat.panel.COUIListBottomSheetDialog$Builder`
  * (verified in Melody 17.6.3 via mt-apk-mcp): the builder class name and its

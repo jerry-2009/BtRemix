@@ -7,6 +7,7 @@ import com.Fusion.Btremix.melody.api.MelodyPanelArgType
 import com.Fusion.Btremix.melody.api.MelodyPanelRow
 import com.Fusion.Btremix.melody.api.MelodyPanelRowKind
 import com.Fusion.Btremix.melody.api.MelodyPanelValueType
+import com.coui.appcompat.preference.COUIMenuPreference
 import com.coui.appcompat.preference.COUIPreference
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
@@ -64,6 +65,57 @@ class MelodyPanelActionBinderTest {
         assertEquals("eq.set", calls.single().first)
         // The option *value* travels, not the label.
         assertEquals(mapOf("preset" to StateValue.StringValue("off")), calls.single().second)
+    }
+
+    @Test
+    fun menuChoiceRow_executesTheValuePickedInTheHostPopup() {
+        val preference = menuPreference()
+        val calls = mutableListOf<Pair<String, Map<String, StateValue>>>()
+
+        assertTrue(bind(preference, segmentedRow(), executor = executor(calls), stateText = { "off" }))
+        assertTrue(preference.select(1))
+
+        assertEquals("eq.set", calls.single().first)
+        // The option *value* travels (not the label), exactly like the picker path.
+        assertEquals(mapOf("preset" to StateValue.StringValue("bright")), calls.single().second)
+        // Accepting the pick marks the entry and refreshes the value on the right.
+        assertEquals("bright", preference.currentValue())
+        assertEquals("Bright", preference.getAssignment())
+    }
+
+    @Test
+    fun menuChoiceRow_dropsAnOptionTheRowDoesNotDeclare() {
+        val preference = COUIMenuPreference()
+        preference.f(arrayOf<CharSequence>("Off", "Turbo"))
+        preference.g(arrayOf<CharSequence>("off", "turbo"))
+        val calls = mutableListOf<Pair<String, Map<String, StateValue>>>()
+        val logs = mutableListOf<String>()
+
+        bind(preference, segmentedRow(), executor = executor(calls), stateText = { "off" }, log = capturing(logs))
+
+        assertFalse(preference.select(1))
+        assertTrue(calls.isEmpty())
+        assertTrue(logs.any { it.contains("option_unknown") })
+    }
+
+    @Test
+    fun menuChoiceRow_withAMacMismatch_dropsTheWrite() {
+        val preference = menuPreference()
+        val calls = mutableListOf<Pair<String, Map<String, StateValue>>>()
+        val logs = mutableListOf<String>()
+
+        bind(
+            preference,
+            segmentedRow(),
+            currentMac = { "AA:BB:CC:DD:EE:FF" },
+            executor = executor(calls),
+            stateText = { "off" },
+            log = capturing(logs),
+        )
+
+        assertFalse(preference.select(1))
+        assertTrue(calls.isEmpty())
+        assertTrue(logs.any { it.contains("mac_mismatch") })
     }
 
     @Test
@@ -294,5 +346,12 @@ class MelodyPanelActionBinderTest {
 
     private companion object {
         const val MAC = "14:3F:A6:02:5F:B0"
+    }
+
+    /** A host-shaped popup row carrying the equalizer entries the applier would program. */
+    private fun menuPreference(): COUIMenuPreference = COUIMenuPreference().apply {
+        setKey("melody_bridge_eqPreset")
+        f(arrayOf<CharSequence>("Off", "Bright"))
+        g(arrayOf<CharSequence>("off", "bright"))
     }
 }

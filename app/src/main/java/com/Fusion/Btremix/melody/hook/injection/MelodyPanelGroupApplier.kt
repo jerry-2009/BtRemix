@@ -245,6 +245,13 @@ internal object MelodyPanelGroupApplier {
         log: MelodyGroupLog,
     ): Any? {
         val themed = contextOf(category) ?: context
+        // M6: choice rows are the host's own `COUIMenuPreference`, so tapping one opens the native
+        // ColorOS popup menu (`COUIClickSelectMenu` -> `COUIPopupListWindow`) instead of a sheet. When
+        // the host class or its R8-short entry setters are unavailable this returns `null` and the
+        // M4.4 jump row + COUI bottom-sheet picker below stays in charge, so the row is never lost.
+        if (row.kind == MelodyPanelRowKind.SEGMENTED) {
+            buildMenuRow(screenId, category, themed, row, loader, log)?.let { return it }
+        }
         val cls = rowClass(row.kind, loader) ?: run {
             logRowFailure(screenId, row, "class_missing", null, log)
             return null
@@ -253,6 +260,39 @@ internal object MelodyPanelGroupApplier {
             logRowFailure(screenId, row, "construct_failed", cls.name, log)
             return null
         }
+        styleRow(preference, category, row)
+        return preference
+    }
+
+    /**
+     * The host's own ColorOS popup-menu row (`COUIMenuPreference`, M6): a jump-styled row whose tap
+     * opens `COUIClickSelectMenu`/`COUIPopupListWindow` (the stack the host itself produces for
+     * `COUIMenuPreference.onBindViewHolder`). Entries/values are programmed through the class's
+     * R8-short setters, so a host rename makes this return `null` and the caller keeps the jump row.
+     */
+    private fun buildMenuRow(
+        screenId: String,
+        category: Any,
+        context: Context?,
+        row: MelodyPanelRow,
+        loader: ClassLoader,
+        log: MelodyGroupLog,
+    ): Any? {
+        val cls = Reflect.loadClass(COUI_MENU_PREFERENCE, loader) ?: return null
+        val preference = construct(cls, context) ?: run {
+            logRowFailure(screenId, row, "construct_failed", cls.name, log)
+            return null
+        }
+        styleRow(preference, category, row)
+        if (!configureMenuRow(preference, row)) {
+            logRowFailure(screenId, row, "menu_setup_refused", cls.name, log)
+            return null
+        }
+        return preference
+    }
+
+    /** Shared key/title/layout/arrow styling for every self-built row (menu and fallback alike). */
+    private fun styleRow(preference: Any, category: Any, row: MelodyPanelRow) {
         setKey(preference, row.key)
         setTitle(preference, row.title)
         // Clone the layout only from a sibling of the *same* class: a plain row's layout has no switch
@@ -260,20 +300,42 @@ internal object MelodyPanelGroupApplier {
         val template = if (row.kind == MelodyPanelRowKind.SEGMENTED) {
             // Native「降噪效果」look (M4.4 follow-up): the current value sits on the right of a jump row,
             // so the layout/arrow are taken from a host row that already renders that style.
-            jumpTemplate(rootOf(category))
+            jumpTemplate(rootOf(category), preference.javaClass)
         } else {
-            rootTemplateOf(category, cls)
+            rootTemplateOf(category, preference.javaClass)
         }
         copyLayoutResources(template, preference)
         if (row.kind == MelodyPanelRowKind.SEGMENTED) copyJump(template, preference)
-        return preference
+    }
+
+    /**
+     * Programs one [COUI_MENU_PREFERENCE] row for the ColorOS popup (M6): entry values (`g`), entries (`f`) and
+     * `persistent=false` so the class's own `persistString` never writes a `melody_bridge_*` key into
+     * the host's preferences (the host's XML sets the same attribute on its menu rows). Returns `false`
+     * when the class does not carry the setters this build expects, which sends the row to the
+     * M4.4 jump-row fallback.
+     */
+    private fun configureMenuRow(preference: Any, row: MelodyPanelRow): Boolean {
+        if (row.options.isEmpty()) return false
+        val labels = row.optionLabels.takeIf { it.size == row.options.size } ?: row.options
+        val values: Array<CharSequence> = Array(row.options.size) { row.options[it] as CharSequence }
+        val entries: Array<CharSequence> = Array(labels.size) { labels[it] as CharSequence }
+        if (!Reflect.invokeSingleArg(preference, "setPersistent", false)) {
+            Reflect.writeField(preference, arrayOf("mPersistent", "persistent"), false)
+        }
+        // `f` (entries) rebuilds the popup list; `g` (entry values) is what lets the current value be
+        // mapped back to its label for the checked entry, so both have to land.
+        val entriesSet = Reflect.invokeSingleArg(preference, "f", entries)
+        val valuesSet = Reflect.invokeSingleArg(preference, "g", values)
+        return entriesSet && valuesSet
     }
 
     private fun rowClass(kind: MelodyPanelRowKind, loader: ClassLoader): Class<*>? = when (kind) {
         MelodyPanelRowKind.SWITCH ->
             Reflect.loadClass(SWITCH_CLASS, loader) ?: Reflect.loadClass(ROW_CLASS, loader)
-        // COUI's jump preference is the same row style as the host's「降噪效果」row and is a real
-        // `Preference`, so a self-built equalizer row can match it.
+        // M4.4 fallback for a choice row: the jump preference is the same row style as the host's
+        //「降噪效果」row and is a real `Preference`. M6 prefers `COUIMenuPreference` (see buildMenuRow)
+        // and only lands here when that class or its entry setters are unavailable.
         MelodyPanelRowKind.SEGMENTED ->
             Reflect.loadClass(JUMP_CLASS, loader) ?: Reflect.loadClass(ROW_CLASS, loader)
         else -> Reflect.loadClass(ROW_CLASS, loader)
@@ -295,18 +357,24 @@ internal object MelodyPanelGroupApplier {
      * whose `mJumpRes` drawable is set. The first such row in the tree donates its layout resources and
      * arrow, so the self-built row looks native without hardcoding any build-specific resource id.
      */
-    private fun jumpTemplate(root: Any): Any? {
+    private fun jumpTemplate(root: Any, preferred: Class<*>): Any? {
         val queue = ArrayDeque<Any>()
         queue += root
+        var fallback: Any? = null
         var visited = 0
         while (queue.isNotEmpty() && visited++ < MAX_TREE_SCAN) {
             val node = queue.removeFirst()
-            if (Reflect.readField(node, "mJumpRes") != null) return node
+            if (Reflect.readField(node, "mJumpRes") != null) {
+                // Prefer a donor of the same class (e.g. the host's own menu row for a menu row), but
+                // any jump-styled row donates a usable layout + arrow.
+                if (preferred.isInstance(node)) return node
+                if (fallback == null) fallback = node
+            }
             for (child in runCatching { PreferenceTree.childrenOf(node) }.getOrDefault(emptyList())) {
                 queue += child
             }
         }
-        return null
+        return fallback
     }
 
     private fun copyJump(template: Any?, preference: Any) {
@@ -375,6 +443,9 @@ internal object MelodyPanelGroupApplier {
                 setAssignment(preference, summary)
                 valueChanged = true
             }
+            // M6: keep the popup's checked entry in sync with the live value, so opening it marks the
+            // preset the device is actually on. No-op for the M4.4 jump-row fallback.
+            if (value != null) applyMenuValue(preference, value)
         } else if (summary != null && currentSummary(preference) != summary) {
             setSummary(preference, summary)
             valueChanged = true
@@ -565,6 +636,17 @@ internal object MelodyPanelGroupApplier {
         if (Reflect.invokeSingleArg(preference, "setChecked", checked)) return
         Reflect.writeField(preference, arrayOf("mChecked", "checked"), checked)
     }
+
+    /**
+     * Mirrors the live value into a popup-menu row (`COUIMenuPreference.i`, R8-short in 17.6.3) so the
+     * host marks the matching entry when the popup opens; the call is a no-op for every other row.
+     */
+    private fun applyMenuValue(preference: Any, value: String) {
+        if (!isMenuRow(preference)) return
+        Reflect.invokeSingleArg(preference, "i", value)
+    }
+
+    private fun isMenuRow(preference: Any): Boolean = preference.javaClass.name == COUI_MENU_PREFERENCE
 
     private fun copyLayoutResources(from: Any?, to: Any) {
         if (from == null) return
