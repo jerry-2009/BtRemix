@@ -270,6 +270,7 @@ object DefinitionJsonCodec {
                 supportSpp = support.optionalBoolean("supportSpp") ?: false,
                 suppressMelodyTransport = support.optionalBoolean("suppressMelodyTransport") ?: true,
                 templateWhitelist = support.optionalString("templateWhitelist"),
+                hostVersions = support.optionalString("hostVersions")?.trim()?.ifEmpty { null },
             ),
             panel = obj.optionalObj("panel")?.let(::parseMelodyPanel) ?: MelodyPanelDefinition(),
             anc = obj.optionalObj("anc")?.let(::parseMelodyAnc) ?: MelodyAncDefinition(),

@@ -110,7 +110,7 @@ internal class MelodyProviderCallRedirectInjection(
     }
 
     private companion object {
-        const val HOOK = "redirect"
+        const val HOOK = "redirect.provider"
         const val SOURCE = "provider"
         const val PACKAGE = "com.oplus.melody.provider"
         const val PROVIDER_CLASS = "$PACKAGE.EarphoneControlProvider"

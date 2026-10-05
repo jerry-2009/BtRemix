@@ -1,9 +1,8 @@
 package com.Fusion.Btremix.melody.hook.injection
 
 import android.os.SystemClock
-import com.Fusion.Btremix.melody.hook.MelodyDexLookup
+import com.Fusion.Btremix.melody.hook.MelodyAnchorResolver
 import com.Fusion.Btremix.melody.hook.MelodyLog
-import com.Fusion.Btremix.melody.hook.Reflect
 import com.Fusion.Btremix.melody.hook.bridge.MelodyBridgeClient
 import com.Fusion.Btremix.melody.hook.bridge.MelodyBridgeClients
 import io.github.libxposed.api.XposedInterface
@@ -37,7 +36,8 @@ internal class MelodyTransportInjection(
 ) {
 
     private data class Layer(
-        val label: String,
+        /** Stable `hook=` value of this layer, e.g. `transport.client` (M5.4 D-30). */
+        val hook: String,
         /** Short-name class recorded for the Melody 17.6.3 baseline (analysis report §J1/§J2). */
         val baselineClass: String,
         /** Packages the DexKit fallback searches when the baseline name no longer exists. */
@@ -51,7 +51,7 @@ internal class MelodyTransportInjection(
     fun install() {
         installLayer(
             Layer(
-                label = "client",
+                hook = "transport.client",
                 baselineClass = "c7.b",
                 packages = listOf("c7"),
                 params = arrayOf(UUID::class.java),
@@ -59,7 +59,7 @@ internal class MelodyTransportInjection(
         )
         installLayer(
             Layer(
-                label = "write",
+                hook = "transport.write",
                 baselineClass = "d7.a",
                 packages = listOf("d7"),
                 params = arrayOf(ByteArray::class.java, ByteArray::class.java, Long::class.javaPrimitiveType!!),
@@ -68,21 +68,20 @@ internal class MelodyTransportInjection(
     }
 
     private fun installLayer(layer: Layer) {
-        val (targetClass, method) = resolve(layer) ?: run {
-            log.event(
-                "melody.anchor.missing",
-                "hook" to "transport",
-                "layer" to layer.label,
-                "class" to layer.baselineClass,
-            )
-            return
-        }
+        val anchor = MelodyAnchorResolver(log, loader, hostApkPath).resolveVoid(
+            hook = layer.hook,
+            baselineClass = layer.baselineClass,
+            packages = layer.packages,
+            params = layer.params,
+        ) ?: return
+        val targetClass = anchor.clazz
+        val method = anchor.method
         module.hook(method).intercept(XposedInterface.Hooker { chain ->
             val mac = MelodyHostAddress.of(chain.thisObject)
             if (mac != null && suppress(mac)) {
                 log.event(
                     "melody.transport.suppressed",
-                    "layer" to layer.label,
+                    "hook" to layer.hook,
                     "mac" to mac,
                     "anchor" to targetClass.name,
                     "method" to method.name,
@@ -96,27 +95,10 @@ internal class MelodyTransportInjection(
         })
         log.event(
             "melody.anchor.hooked",
-            "hook" to "transport",
-            "layer" to layer.label,
+            "hook" to layer.hook,
             "class" to targetClass.name,
             "method" to method.name,
         )
-    }
-
-    /** Baseline short name first, DexKit second; the method is always matched by signature. */
-    private fun resolve(layer: Layer): Pair<Class<*>, java.lang.reflect.Method>? {
-        Reflect.loadClass(layer.baselineClass, loader)?.let { cls ->
-            Reflect.findUniqueMethodByParams(cls, layer.params)?.let { return cls to it }
-        }
-        val found = runCatching {
-            MelodyDexLookup.findClassWithVoidMethod(hostApkPath, layer.packages, layer.params)
-        }
-            .onFailure { log.warn("melody.anchor.dexkit_failed", it) }
-            .getOrNull() ?: return null
-        val cls = Reflect.loadClass(found, loader) ?: return null
-        val method = Reflect.findUniqueMethodByParams(cls, layer.params) ?: return null
-        log.event("melody.anchor.renamed", "layer" to layer.label, "expected" to layer.baselineClass, "resolved" to found)
-        return cls to method
     }
 
     private fun suppress(mac: String): Boolean {

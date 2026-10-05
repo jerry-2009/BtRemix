@@ -190,6 +190,18 @@ object MelodyProviderMerge {
     }
 
     /**
+     * Reads the optional host version range of an envelope (M5.4 D-21/D-26), or `null` when the
+     * envelope carries none - which is the shipped 1.4.0 case and means "no restriction".
+     */
+    fun hostVersionsOf(envelopeJson: String?): String? {
+        val envelope = envelopeJson
+            ?.let { runCatching { JsonParser.parse(it) as? JsonValue.Object }.getOrNull() }
+            ?: return null
+        val definition = envelope.values["definition"] as? JsonValue.Object ?: return null
+        return (definition.values["hostVersions"] as? JsonValue.StringValue)?.value?.trim()?.ifEmpty { null }
+    }
+
+    /**
      * Reads the optional `anc` node of an envelope (M4.3b D-12/D-14). `null` when the node is missing,
      * not an object, has no usable `modes` table or any mode is malformed - the client then projects
      * nothing (the host keeps its own ANC index and its own mode texts). A malformed `strength` node

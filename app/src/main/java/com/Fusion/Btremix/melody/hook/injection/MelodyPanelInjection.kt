@@ -172,6 +172,9 @@ internal class MelodyPanelInjection(
 
         override fun onActivityResumed(activity: Activity) {
             if (!isRelevantActivity(activity.javaClass.name)) return
+            // M5.4b: the page is up. If the bridge is not attached yet (cold process, or a dropped
+            // link), ask BtRemix for a doorbell now instead of waiting for the next keepalive tick.
+            MelodyBridgeClients.existing()?.requestLink("panel_screen")
             synchronized(resumedLock) { resumed[activity] = true }
             startPolling()
             // One fast pass right after the page is up; the poll then covers the asynchronous fill.

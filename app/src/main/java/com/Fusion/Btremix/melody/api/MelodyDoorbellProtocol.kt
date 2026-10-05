@@ -19,8 +19,27 @@ object MelodyDoorbellProtocol {
     /** Broadcast action. The host manifest has no entry for it; delivery relies on the dynamic receiver. */
     const val ACTION: String = "com.Fusion.Btremix.melody.BRIDGE_DOORBELL"
 
+    /**
+     * M5.4b (review follow-up 2026-10-05): the reverse nudge. The injected host process sends this to
+     * BtRemix when it starts or when a panel page comes up, and BtRemix answers with one immediate
+     * doorbell.
+     *
+     * It exists because the doorbell is the *only* way the binder reaches the host, so a host that
+     * cold-starts between two ticks waits for the next broadcast - up to 30 s once the sender left its
+     * burst (measured 6.9 s in the 21:02 capture). The hello carries no data and grants nothing: the
+     * worst a spoofed hello can do is make BtRemix ring one extra doorbell, because every binder call
+     * still checks `Binder.getCallingUid()` on the BtRemix side.
+     */
+    const val HELLO_ACTION: String = "com.Fusion.Btremix.melody.HOST_ALIVE"
+
+    /** Module package the hello is addressed to (`setPackage` = explicit, no discovery involved). */
+    const val MODULE_PACKAGE: String = "com.Fusion.Btremix"
+
     /** Version of the extras layout below; a receiver ignores a doorbell it does not understand. */
     const val VERSION: Int = 1
+
+    /** Minimum spacing between two hello-triggered doorbells, on both sides of the boundary. */
+    const val HELLO_MIN_INTERVAL_MS: Long = 1_000L
 
     const val EXTRA_BRIDGE: String = "bridge"
     const val EXTRA_GENERATION: String = "generation"
@@ -54,4 +73,19 @@ object MelodyDoorbellProtocol {
         val index = (attempt - 1).coerceAtLeast(0).coerceAtMost(BACKOFF_MS.lastIndex)
         return BACKOFF_MS[index]
     }
+
+    /**
+     * Host side: send a hello only when there is no link yet (a linked process already has the binder,
+     * and its [com.Fusion.Btremix.melody.bridge.IMelodyBridge.requestDoorbell] covers the sibling
+     * process), and never more often than [HELLO_MIN_INTERVAL_MS].
+     */
+    fun shouldGreet(hasLink: Boolean, elapsedSinceLastHelloMs: Long): Boolean =
+        !hasLink && elapsedSinceLastHelloMs >= HELLO_MIN_INTERVAL_MS
+
+    /**
+     * BtRemix side: honour a hello only while the bridge service is alive (nothing to offer otherwise,
+     * and ringing would only wake the app for nothing) and at the same rate limit.
+     */
+    fun acceptsHello(serviceAlive: Boolean, elapsedSinceLastRingMs: Long): Boolean =
+        serviceAlive && elapsedSinceLastRingMs >= HELLO_MIN_INTERVAL_MS
 }

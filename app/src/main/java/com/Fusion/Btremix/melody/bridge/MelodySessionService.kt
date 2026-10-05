@@ -4,12 +4,16 @@ import android.app.Notification
 import android.app.NotificationChannel
 import android.app.NotificationManager
 import android.app.Service
+import android.content.ComponentName
 import android.content.Intent
+import android.content.pm.PackageManager
 import android.os.Handler
 import android.os.IBinder
 import android.os.Looper
+import android.os.SystemClock
 import com.Fusion.Btremix.BtRemixApplication
 import com.Fusion.Btremix.R
+import com.Fusion.Btremix.melody.api.MelodyDoorbellProtocol
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
@@ -53,10 +57,15 @@ class MelodySessionService : Service() {
     /** Bound clients (onBind/onRebind minus onUnbind); the service may only stop once this reaches 0. */
     private var boundClients = 0
 
+    /** M5.4b: last hello-triggered ring, for [MelodyDoorbellProtocol.acceptsHello]. */
+    private var lastHelloRingMs = 0L
+
     private val stopRunnable = Runnable { stopIfIdle(reason = "idle") }
 
     override fun onCreate() {
         super.onCreate()
+        current = this
+        setHelloReceiverEnabled(true)
         ensureForeground()
         watchSessions()
         startDoorbell()
@@ -109,7 +118,40 @@ class MelodySessionService : Service() {
         }
         scope.cancel()
         log.event("melody.bridge.service_destroyed")
+        setHelloReceiverEnabled(false)
+        current = null
         super.onDestroy()
+    }
+
+    /**
+     * M5.4b: the injected host asked for a doorbell as soon as it came up. Answering immediately is the
+     * whole point - a cold host would otherwise wait for the next keepalive tick (measured 6.9 s).
+     * Returns whether a broadcast was actually queued.
+     */
+    fun ringDoorbellFromHost(): Boolean {
+        if (doorbell == null) return false
+        val now = SystemClock.elapsedRealtime()
+        if (!MelodyDoorbellProtocol.acceptsHello(serviceAlive = true, elapsedSinceLastRingMs = now - lastHelloRingMs)) {
+            return false
+        }
+        lastHelloRingMs = now
+        handler.post { doorbell?.ringNow("host_hello") }
+        return true
+    }
+
+    /**
+     * The hello receiver is only reachable while this service runs, so it can never cold-start the
+     * BtRemix process for nothing (M5.4b). Runs on the main thread from `onCreate`/`onDestroy`.
+     */
+    private fun setHelloReceiverEnabled(enabled: Boolean) {
+        runCatching {
+            packageManager.setComponentEnabledSetting(
+                ComponentName(this, MelodyHostHelloReceiver::class.java),
+                if (enabled) PackageManager.COMPONENT_ENABLED_STATE_ENABLED
+                else PackageManager.COMPONENT_ENABLED_STATE_DISABLED,
+                PackageManager.DONT_KILL_APP,
+            )
+        }.onFailure { log.warn("melody.bridge.hello_receiver_toggle_failed", it) }
     }
 
     // --- internals ------------------------------------------------------------------------------
@@ -133,6 +175,9 @@ class MelodySessionService : Service() {
             projection = app.melodyProjection,
             log = log,
             scope = scope,
+            // M5.4 D-31: a host process that just attached asks for one extra doorbell so the sibling
+            // `:fg` process does not wait for the 30 s keepalive.
+            onDoorbellRequested = { reason -> handler.post { doorbell?.ringNow(reason) } },
         )
         bridge = binder
         log.event("melody.bridge.service_binder_ready", "sessions" to sessions().managedMacs().size)
@@ -236,9 +281,20 @@ class MelodySessionService : Service() {
             .setOngoing(true)
             .build()
 
-    private companion object {
-        const val NOTIFICATION_ID = 0x4D45 // "ME"
-        const val CHANNEL_ID = "melody_bridge"
-        const val IDLE_STOP_DELAY_MS = 5_000L
+    companion object {
+        private const val NOTIFICATION_ID = 0x4D45 // "ME"
+        private const val CHANNEL_ID = "melody_bridge"
+        private const val IDLE_STOP_DELAY_MS = 5_000L
+
+        /** Live service instance (same process as the receiver); `null` while the bridge is stopped. */
+        @Volatile
+        private var current: MelodySessionService? = null
+
+        /**
+         * M5.4b entry point used by [MelodyHostHelloReceiver]. Returns false when the bridge is not
+         * running - the hello is then simply dropped, which is correct: there is no binder to hand out.
+         */
+        fun requestDoorbellFromHost(): Boolean =
+            current?.ringDoorbellFromHost() ?: false
     }
 }

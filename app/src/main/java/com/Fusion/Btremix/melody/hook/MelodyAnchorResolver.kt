@@ -38,6 +38,44 @@ internal class MelodyAnchorResolver(
     ): Anchor? = resolveAll(hook, listOf(baselineClass), packages, methodName, params, returnType).firstOrNull()
 
     /**
+     * Transport-style anchor (M5.4 D-30): the layer method has no recorded name, so it is matched by
+     * its parameter signature and a `void` return. The DexKit level keeps the original "exactly one
+     * candidate" requirement - an ambiguous scan must not hook an unrelated method.
+     */
+    fun resolveVoid(
+        hook: String,
+        baselineClass: String,
+        packages: List<String>,
+        params: Array<Class<*>>,
+    ): Anchor? {
+        val cls = Reflect.loadClass(baselineClass, loader)
+        val method = cls?.let { Reflect.findUniqueMethodByParams(it, params) }
+        if (cls != null && method != null) {
+            hit(hook, "baseline", cls.name, method.name)
+            return Anchor(cls, method)
+        }
+        val found = runCatching {
+            MelodyDexLookup.findClassNamesWithMethod(hostApkPath, packages, params, java.lang.Void.TYPE).singleOrNull()
+        }
+            .onFailure { log.warn("melody.anchor.dexkit_failed", it) }
+            .getOrNull()
+        val resolvedClass = found?.let { Reflect.loadClass(it, loader) }
+        val resolvedMethod = resolvedClass?.let { Reflect.findUniqueMethodByParams(it, params) }
+        if (resolvedClass != null && resolvedMethod != null) {
+            log.event(
+                "melody.anchor.renamed",
+                "hook" to hook,
+                "expected" to baselineClass,
+                "resolved" to resolvedClass.name,
+            )
+            hit(hook, "dexkit", resolvedClass.name, resolvedMethod.name)
+            return Anchor(resolvedClass, resolvedMethod)
+        }
+        log.event("melody.anchor.missing", "hook" to hook, "class" to baselineClass, "method" to "(params)")
+        return null
+    }
+
+    /**
      * All concrete declarations of one contract, across the recorded baseline classes.
      *
      * A single baseline is not enough for `earphone/b;->v0`: 17.6.3 ships **two** concrete
@@ -77,6 +115,7 @@ internal class MelodyAnchorResolver(
                     "resolved" to "${cls.name}.${method.name}",
                 )
             }
+            hit(hook, if (method.name == methodName) "baseline" else "rename", cls.name, method.name)
             anchors[cls.name] = Anchor(cls, method)
         }
 
@@ -98,6 +137,7 @@ internal class MelodyAnchorResolver(
                     "expected" to baselineClasses.firstOrNull(),
                     "resolved" to name,
                 )
+                hit(hook, "dexkit", name, method.name)
                 anchors[name] = Anchor(cls, method)
             }
         }
@@ -111,5 +151,16 @@ internal class MelodyAnchorResolver(
             )
         }
         return anchors.values.toList()
+    }
+
+    /** One line per resolved anchor; the export groups these into the "锚点命中表" (M5.4 D-30). */
+    private fun hit(hook: String, level: String, className: String, methodName: String) {
+        log.event(
+            "melody.anchor.hit",
+            "hook" to hook,
+            "level" to level,
+            "class" to className,
+            "method" to methodName,
+        )
     }
 }

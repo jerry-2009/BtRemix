@@ -5,6 +5,7 @@ import android.os.Binder
 import android.os.Bundle
 import android.os.Process
 import android.os.RemoteCallbackList
+import android.os.SystemClock
 import com.Fusion.Btremix.device.runtime.ActionResult
 import com.Fusion.Btremix.device.runtime.DeviceAction
 import com.Fusion.Btremix.device.runtime.ProtocolSession
@@ -12,6 +13,7 @@ import com.Fusion.Btremix.device.session.SessionRegistry
 import com.Fusion.Btremix.melody.api.MelodyBridgeResult
 import com.Fusion.Btremix.melody.api.MelodyBundleCodec
 import com.Fusion.Btremix.melody.api.MelodyCallPolicy
+import com.Fusion.Btremix.melody.api.MelodyDiagnosticPolicy
 import com.Fusion.Btremix.melody.api.MelodyMac
 import com.Fusion.Btremix.melody.api.MelodySnapshot
 import com.Fusion.Btremix.melody.api.MelodySupportInfo
@@ -51,6 +53,8 @@ internal class MelodyBridgeBinder(
     private val log: MelodyBridgeLog = MelodyBridgeLog(),
     private val scope: CoroutineScope,
     private val selfUid: Int = Process.myUid(),
+    /** M5.4 D-31: re-sends one doorbell broadcast for the other host process. */
+    private val onDoorbellRequested: (String) -> Unit = {},
 ) : IMelodyBridge.Stub() {
 
     private val listeners = RemoteCallbackList<IMelodyBridgeListener>()
@@ -93,6 +97,9 @@ internal class MelodyBridgeBinder(
 
     @Volatile
     private var closed = false
+
+    /** M5.4 D-31: last `requestDoorbell` accepted, so a looping caller cannot spam broadcasts. */
+    private var lastDoorbellRequestMs = 0L
 
     override fun listManagedMacs(): MutableList<String> {
         if (!authorize("listManagedMacs")) return ArrayList()
@@ -231,6 +238,34 @@ internal class MelodyBridgeBinder(
     }
 
     /**
+     * M5.4 D-28: one structured diagnostic line from the host process. `oneway`, so this only ever
+     * appends to the ring buffer; the whitelist keeps a mis-scoped client from filling it.
+     */
+    override fun reportDiagnostics(name: String?, fields: Bundle?) {
+        if (!authorize("reportDiagnostics")) return
+        val event = name ?: return
+        if (!MelodyDiagnosticPolicy.forwardsToBridge(event)) return
+        val pairs = ArrayList<Pair<String, Any?>>(fields?.size() ?: 0)
+        fields?.keySet()?.forEach { key -> pairs += key to fields.getString(key) }
+        MelodyDiagnosticStore.record(event, pairs)
+    }
+
+    /**
+     * M5.4 D-31: a host process that just attached asks for one extra doorbell, so the sibling `:fg`
+     * process does not wait up to 30 s for the keepalive. Rate-limited to once a second in case a
+     * mis-scoped client calls in a loop.
+     */
+    override fun requestDoorbell() {
+        if (!authorize("requestDoorbell")) return
+        val now = SystemClock.elapsedRealtime()
+        if (now - lastDoorbellRequestMs < DOORBELL_REQUEST_MIN_INTERVAL_MS) return
+        lastDoorbellRequestMs = now
+        log.event("melody.bridge.doorbell_request", "caller_uid" to Binder.getCallingUid())
+        runCatching { onDoorbellRequested("host_attached") }
+            .onFailure { log.warn("melody.bridge.doorbell_request_failed", it) }
+    }
+
+    /**
      * True while at least one host process holds a listener (MELODY_BRIDGE_TRANSPORT_PLAN.md §4.3).
      *
      * The doorbell sender reads this to choose its cadence: a burst while nobody is attached, then the
@@ -337,5 +372,9 @@ internal class MelodyBridgeBinder(
                 listeners.finishBroadcast()
             }
         }
+    }
+
+    private companion object {
+        const val DOORBELL_REQUEST_MIN_INTERVAL_MS = 1_000L
     }
 }

@@ -46,6 +46,7 @@ import com.Fusion.Btremix.ui.explorer.ConnectionDetails
 import com.Fusion.Btremix.ui.explorer.DeviceList
 import com.Fusion.Btremix.ui.explorer.ExplorerViewModel
 import com.Fusion.Btremix.ui.explorer.LogPanel
+import com.Fusion.Btremix.ui.melody.MelodyDiagnosticsScreen
 import com.Fusion.Btremix.ui.packages.DefinitionPackagesScreen
 import com.Fusion.Btremix.ui.packages.PackageToolsViewModel
 import com.Fusion.Btremix.ui.studio.DefinitionStudioScreen
@@ -63,7 +64,7 @@ class MainActivity : ComponentActivity() {
     }
 }
 
-private enum class AppPage { Explorer, Packages, Studio }
+private enum class AppPage { Explorer, Melody, Packages, Studio }
 
 @Composable
 private fun BtRemixApp(
@@ -81,11 +82,13 @@ private fun BtRemixApp(
                 horizontalArrangement = Arrangement.spacedBy(8.dp),
             ) {
                 PageTab("Explorer", page == AppPage.Explorer, Modifier.weight(1f)) { page = AppPage.Explorer }
+                PageTab("Melody", page == AppPage.Melody, Modifier.weight(1f)) { page = AppPage.Melody }
                 PageTab("Packages", page == AppPage.Packages, Modifier.weight(1f)) { page = AppPage.Packages }
                 PageTab("Studio", page == AppPage.Studio, Modifier.weight(1f)) { page = AppPage.Studio }
             }
             when (page) {
                 AppPage.Explorer -> BleExplorer(explorerViewModel, Modifier.weight(1f))
+                AppPage.Melody -> MelodyDiagnosticsScreen(Modifier.weight(1f))
                 AppPage.Packages -> DefinitionPackagesScreen(
                     state = packageState,
                     onPackagePicked = packagesViewModel::install,

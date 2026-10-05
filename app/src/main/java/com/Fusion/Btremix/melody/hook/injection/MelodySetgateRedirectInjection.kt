@@ -108,7 +108,7 @@ internal class MelodySetgateRedirectInjection(
     }
 
     private companion object {
-        const val HOOK = "redirect"
+        const val HOOK = "redirect.setgate"
         const val SOURCE = "setgate"
         const val PACKAGE = "com.oplus.melody.mydevices.devicecard.noisereduction"
         const val NOISE_COMMAND_CLASS = "$PACKAGE.NoiseReductionCommand"

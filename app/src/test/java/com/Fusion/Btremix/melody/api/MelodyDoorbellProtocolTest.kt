@@ -64,4 +64,31 @@ class MelodyDoorbellProtocolTest {
         assertEquals(MelodyDoorbellProtocol.KEEPALIVE_MS, MelodyDoorbellProtocol.nextDelayMs(1, clientAttached = true))
         assertEquals(MelodyDoorbellProtocol.KEEPALIVE_MS, MelodyDoorbellProtocol.nextDelayMs(4, clientAttached = true))
     }
+
+    // --- M5.4b: the reverse "we are here" nudge ---------------------------------------------------
+
+    @Test
+    fun helloConstants_areStableAcrossProcesses() {
+        assertEquals("com.Fusion.Btremix.melody.HOST_ALIVE", MelodyDoorbellProtocol.HELLO_ACTION)
+        assertEquals("com.Fusion.Btremix", MelodyDoorbellProtocol.MODULE_PACKAGE)
+        assertEquals(1_000L, MelodyDoorbellProtocol.HELLO_MIN_INTERVAL_MS)
+    }
+
+    @Test
+    fun shouldGreet_onlyWhenUnlinkedAndRateLimited() {
+        // Linked process: it already holds the binder, so it stays quiet.
+        assertFalse(MelodyDoorbellProtocol.shouldGreet(hasLink = true, elapsedSinceLastHelloMs = Long.MAX_VALUE))
+        // Never greeted before (elapsed counts from 0) and no link yet.
+        assertTrue(MelodyDoorbellProtocol.shouldGreet(hasLink = false, elapsedSinceLastHelloMs = Long.MAX_VALUE))
+        assertTrue(MelodyDoorbellProtocol.shouldGreet(hasLink = false, elapsedSinceLastHelloMs = 1_000L))
+        assertFalse(MelodyDoorbellProtocol.shouldGreet(hasLink = false, elapsedSinceLastHelloMs = 999L))
+    }
+
+    @Test
+    fun acceptsHello_onlyWhileTheServiceIsAliveAndRateLimited() {
+        assertTrue(MelodyDoorbellProtocol.acceptsHello(serviceAlive = true, elapsedSinceLastRingMs = Long.MAX_VALUE))
+        // Not running: there is no binder to hand out, and ringing would only wake the app.
+        assertFalse(MelodyDoorbellProtocol.acceptsHello(serviceAlive = false, elapsedSinceLastRingMs = Long.MAX_VALUE))
+        assertFalse(MelodyDoorbellProtocol.acceptsHello(serviceAlive = true, elapsedSinceLastRingMs = 500L))
+    }
 }

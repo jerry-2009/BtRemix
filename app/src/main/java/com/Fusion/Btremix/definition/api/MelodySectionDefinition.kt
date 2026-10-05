@@ -133,6 +133,12 @@ data class MelodySupportDefinition(
     val suppressMelodyTransport: Boolean = true,
     /** APK asset path of the whitelist template; `.dcpkg`-provided templates are not supported in M3. */
     val templateWhitelist: String? = null,
+    /**
+     * Optional host version range (M5.4, D-21/D-26), see [MelodyHostVersions]. `null` means no
+     * restriction, which is the shipped 1.4.0 behaviour; a declared range that the host on device
+     * does not match makes the injection fail open (`melody.host.version_unsupported`).
+     */
+    val hostVersions: String? = null,
 ) {
     companion object {
         const val MODE_BRIDGE: String = "bridge"

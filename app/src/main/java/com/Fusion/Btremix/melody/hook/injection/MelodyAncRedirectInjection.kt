@@ -74,7 +74,7 @@ internal class MelodyAncRedirectInjection(
     }
 
     private companion object {
-        const val HOOK = "redirect"
+        const val HOOK = "redirect.v0"
         const val SOURCE = "v0"
         const val PACKAGE = "com.oplus.melody.model.repository.earphone"
         const val METHOD = "v0"

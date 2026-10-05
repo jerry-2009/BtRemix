@@ -105,7 +105,7 @@ class MelodyProjectionBuilder(
                 "version" to JsonValue.NumberValue(ENVELOPE_VERSION.toString()),
                 "mac" to JsonValue.StringValue(device.mac),
                 "definition" to JsonValue.Object(
-                    linkedMapOf(
+                    linkedMapOf<String, JsonValue>(
                         "id" to JsonValue.StringValue(device.definition.manifest.id),
                         "version" to JsonValue.StringValue(device.definition.manifest.version),
                         // M3.4: the DeviceInfo side needs the integer form factor and the transport
@@ -113,7 +113,11 @@ class MelodyProjectionBuilder(
                         // smuggled into the official WhitelistConfigDTO shape.
                         "productType" to JsonValue.NumberValue(device.melody.support.productType.toString()),
                         "suppressTransport" to JsonValue.BooleanValue(device.melody.support.suppressMelodyTransport),
-                    ),
+                    ).apply {
+                        // M5.4 D-21: the optional host version range travels with the envelope, because
+                        // the host-side gate runs per managed device (the range belongs to the dcpkg).
+                        device.melody.support.hostVersions?.let { put("hostVersions", JsonValue.StringValue(it)) }
+                    },
                 ),
                 "whitelist" to whitelist,
                 "panel" to panel(device),

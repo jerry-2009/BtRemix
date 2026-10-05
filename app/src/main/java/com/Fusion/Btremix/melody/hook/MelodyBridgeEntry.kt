@@ -53,6 +53,13 @@ class MelodyBridgeEntry : XposedModule() {
             installSettingsBranch(log, param.defaultClassLoader, processName)
             return
         }
+        // M5.4 D-26: debug-only overrides for the host version gate, so the fail branch can be
+        // exercised on a real device without a substitute APK. Both default to empty (= no override).
+        MelodyHostGateOverrides.range = modulePref(log, KEY_HOST_VERSIONS_OVERRIDE)
+        MelodyHostGateOverrides.version = modulePref(log, KEY_HOST_VERSION_OVERRIDE)
+        // M5.4 D-29 (2026-10-05 revised): the diagnostics switch defaults OFF - the M5.5 matrix turns
+        // it on explicitly, and normal use pays nothing for the forwarding.
+        log.diagnosticsEnabled = diagnosticsEnabled(log)
         if (!observationEnabled(log)) {
             log.event("melody.observation.disabled", "process" to processName)
         } else {
@@ -130,6 +137,22 @@ class MelodyBridgeEntry : XposedModule() {
         true
     }
 
+    /** M5.4 D-29; defaults off, so collecting evidence in M5.5 is an explicit opt-in. */
+    private fun diagnosticsEnabled(log: MelodyLog): Boolean = runCatching {
+        getRemotePreferences(MODULE_PREFS).getBoolean(KEY_DIAGNOSTICS_ENABLED, false)
+    }.getOrElse {
+        log.warn("melody.diag.prefs_unavailable", it)
+        false
+    }
+
+    /** A string preference from the module pipe; `null` (no override) on any error. */
+    private fun modulePref(log: MelodyLog, key: String): String? = runCatching {
+        getRemotePreferences(MODULE_PREFS).getString(key, null)?.trim()?.ifEmpty { null }
+    }.getOrElse {
+        log.warn("melody.prefs.string_unavailable", it)
+        null
+    }
+
     companion object {
         /** logcat tag used by the module; `logcat -s BtRemixMelody` shows the load events. */
         const val TAG: String = MelodyLog.TAG
@@ -143,5 +166,12 @@ class MelodyBridgeEntry : XposedModule() {
         const val MODULE_PREFS: String = "melody_bridge"
         const val KEY_OBSERVATION_ENABLED: String = "observation_enabled"
         const val KEY_BRIDGE_ENABLED: String = "bridge_enabled"
+
+        /** M5.4 D-26 debug overrides; empty by default, see [MelodyHostGateOverrides]. */
+        const val KEY_HOST_VERSIONS_OVERRIDE: String = "host_versions_override"
+        const val KEY_HOST_VERSION_OVERRIDE: String = "host_version_override"
+
+        /** M5.4 D-29 diagnostics switch; written by the BtRemix "Melody 诊断" screen. */
+        const val KEY_DIAGNOSTICS_ENABLED: String = "diagnostics_enabled"
     }
 }

@@ -36,6 +36,9 @@ internal class MelodyBridgeInstaller(
     private fun onApplicationCreated(app: Application?) {
         if (app == null) return
         val client = MelodyBridgeClients.getOrCreate(app, log)
+        // M5.4 D-28: from here on, the events MelodyDiagnosticPolicy forwards travel to BtRemix over
+        // the same binder the control path uses. A dead link just drops them (logcat still has them).
+        log.diagnosticSink = { name, fields -> client.reportDiagnostics(name, fields) }
         MelodyBridgeClients.probeOnce(client, log, processName)
     }
 }

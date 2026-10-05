@@ -54,6 +54,22 @@
             android:name=".melody.bridge.MelodySessionService"
             android:exported="true"
             android:foregroundServiceType="connectedDevice" />
+
+        <!--
+          M5.4b: "the injected host process just came up" nudge. Disabled by default and only enabled
+          by MelodySessionService while the bridge is running, so it can never cold-start BtRemix for
+          nothing. The sender is com.oplus.melody, which cannot hold a BtRemix-declared permission;
+          the receiver therefore grants nothing - it only makes us ring one extra doorbell, and every
+          binder call the host makes afterwards is still UID-checked.
+        -->
+        <receiver
+            android:name=".melody.bridge.MelodyHostHelloReceiver"
+            android:enabled="false"
+            android:exported="true">
+            <intent-filter>
+                <action android:name="com.Fusion.Btremix.melody.HOST_ALIVE" />
+            </intent-filter>
+        </receiver>
     </application>
 
 </manifest>

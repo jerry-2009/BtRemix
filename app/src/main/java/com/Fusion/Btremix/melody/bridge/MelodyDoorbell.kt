@@ -70,6 +70,18 @@ internal class MelodyDoorbellSender(
         log.event("melody.bridge.doorbell_stop")
     }
 
+    /**
+     * M5.4 D-31: one immediate extra broadcast, requested by a host process that just attached (the
+     * `:fg` panel process would otherwise wait for the keepalive). Keeps the normal cadence intact -
+     * the next scheduled ring is simply replaced by this earlier one.
+     */
+    @Synchronized
+    fun ringNow(reason: String) {
+        if (!running) return
+        log.event("melody.bridge.doorbell_requested", "reason" to reason, "attempt" to attempt)
+        ringDoorbell()
+    }
+
     private fun schedule(delayMs: Long) {
         handler.removeCallbacks(ring)
         handler.postDelayed(ring, delayMs)

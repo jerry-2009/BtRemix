@@ -240,6 +240,16 @@ object DefinitionValidator {
         if (support.templateWhitelist?.isBlank() == true) {
             errors += DefinitionValidationError("melody.support.templateWhitelist", "must not be blank")
         }
+        // M5.4 (D-21/D-26): an optional host version range such as ">=17.6.3 <18". Absent means no
+        // restriction; a declared range must parse, otherwise the runtime would silently ignore it.
+        support.hostVersions?.let { spec ->
+            if (MelodyHostVersions.parse(spec) == null) {
+                errors += DefinitionValidationError(
+                    MelodyHostVersions.FIELD,
+                    "must be whitespace-separated version predicates such as '>=17.6.3 <18'",
+                )
+            }
+        }
         // All three lists name official panel keys, so they share the blank / namespace guard
         // (HANDOFF_MELODY_M4_PLAN.md §3 M4.0 A-2).
         validateMelodyKeys(melody.panel.hideSections, "melody.panel.hideSections", errors)

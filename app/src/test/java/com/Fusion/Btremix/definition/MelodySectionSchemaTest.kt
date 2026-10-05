@@ -66,6 +66,46 @@ class MelodySectionSchemaTest {
         assertNull(definition.melody?.support?.productId)
     }
 
+    // --- M5.4: `melody.support.hostVersions` (D-21/D-26) -------------------------------------------
+
+    @Test
+    fun hostVersions_isOptionalAndParsed() {
+        assertNull(DefinitionJsonCodec.decode(melodyDefinition).melody?.support?.hostVersions)
+
+        val declared = DefinitionJsonCodec.decode(
+            melodyDefinition.replace(
+                "\"name\": \"Sony WF-1000XM3\",",
+                "\"name\": \"Sony WF-1000XM3\", \"hostVersions\": \" >=17.6.3  <18 \",",
+            ),
+        )
+
+        assertEquals(">=17.6.3  <18", declared.melody?.support?.hostVersions)
+    }
+
+    @Test
+    fun blankHostVersions_isTreatedAsAbsent() {
+        val definition = DefinitionJsonCodec.decode(
+            melodyDefinition.replace(
+                "\"name\": \"Sony WF-1000XM3\",",
+                "\"name\": \"Sony WF-1000XM3\", \"hostVersions\": \"   \",",
+            ),
+        )
+
+        assertNull(definition.melody?.support?.hostVersions)
+    }
+
+    @Test
+    fun invalidHostVersions_isRejected() {
+        val errors = validationErrors(
+            melodyDefinition.replace(
+                "\"name\": \"Sony WF-1000XM3\",",
+                "\"name\": \"Sony WF-1000XM3\", \"hostVersions\": \">=abc\",",
+            ),
+        )
+
+        assertTrue(errors.any { it.path == "melody.support.hostVersions" })
+    }
+
     @Test
     fun melodySection_requiresSchemaVersionFour() {
         val errors = validationErrors(melodyDefinition.replace("\"schemaVersion\": 4", "\"schemaVersion\": 3"))

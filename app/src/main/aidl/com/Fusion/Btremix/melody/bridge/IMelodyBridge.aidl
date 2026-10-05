@@ -36,4 +36,17 @@ interface IMelodyBridge {
     void register(in IMelodyBridgeListener listener);
 
     void unregister(in IMelodyBridgeListener listener);
+
+    /**
+     * M5.4 D-28: one structured diagnostic event from the host process (whitelist in
+     * MelodyDiagnosticPolicy). `oneway`: the host must never wait on our ring buffer, and the extra
+     * data is not part of the control contract.
+     */
+    oneway void reportDiagnostics(in String name, in Bundle fields);
+
+    /**
+     * M5.4 D-31: a host process that just attached asks for one extra doorbell broadcast, so the
+     * other host process (`:fg`) does not have to wait for the 30 s keepalive.
+     */
+    oneway void requestDoorbell();
 }

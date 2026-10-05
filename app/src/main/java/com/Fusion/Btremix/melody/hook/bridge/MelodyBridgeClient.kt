@@ -1,9 +1,11 @@
 package com.Fusion.Btremix.melody.hook.bridge
 
 import android.content.Context
+import android.content.Intent
 import android.os.DeadObjectException
 import android.os.Handler
 import android.os.IBinder
+import android.os.Bundle
 import android.os.Looper
 import android.os.SystemClock
 import com.Fusion.Btremix.device.runtime.StateValue
@@ -31,6 +33,7 @@ import com.Fusion.Btremix.melody.api.WireValue
 import com.Fusion.Btremix.melody.bridge.IMelodyBridge
 import com.Fusion.Btremix.melody.bridge.IMelodyBridgeListener
 import com.Fusion.Btremix.melody.hook.MelodyLog
+import com.Fusion.Btremix.melody.hook.MelodyHostGate
 import com.Fusion.Btremix.melody.projection.MelodyProjectionBuilder
 import java.util.concurrent.Callable
 import java.util.concurrent.ConcurrentHashMap
@@ -106,6 +109,24 @@ internal class MelodyBridgeClient(
 
     /** Last on-demand snapshot pull per MAC; the header getters must never turn into a poll loop. */
     private val snapshotPulls = ConcurrentHashMap<String, Long>()
+
+    /**
+     * M5.4 D-21/D-25: per-MAC "may this Definition be injected for on this host version" verdicts.
+     * The envelope's range is parsed once per MAC; reading the host `versionName` is one
+     * `PackageManager` call for the whole process, cached inside [MelodyHostGate].
+     */
+    private val hostGate = MelodyHostGate(log) {
+        runCatching { context.packageManager.getPackageInfo(context.packageName, 0).versionName }.getOrNull()
+    }
+    private val gateDecisions = ConcurrentHashMap<String, Boolean>()
+
+    /** M5.4 D-31: one `requestDoorbell` per host process, not one per re-attach. */
+    @Volatile
+    private var doorbellRequested = false
+
+    /** M5.4b: last hello broadcast from this process, for the protocol rate limit. */
+    @Volatile
+    private var lastHelloMs = 0L
 
     /** MACs that already paid for the one bounded synchronous pull of [firstSnapshot]. */
     private val firstSnapshotPulled = ConcurrentHashMap<String, Boolean>()
@@ -214,6 +235,8 @@ internal class MelodyBridgeClient(
             earphones.clear()
             headerSkips.clear()
             firstSnapshotPulled.clear()
+            // A re-installed dcpkg may declare a different host version range (M5.4 D-21).
+            gateDecisions.clear()
             // Refresh on the link stage: this callback runs on a binder thread, and the refresh pulls
             // one `managedMacs` plus one `resolveProjection` per device.
             link.execute { runCatching { refreshFromBridge() }.onFailure { log.warn("melody.bridge.list_failed", it) } }
@@ -226,6 +249,37 @@ internal class MelodyBridgeClient(
         started = true
         receiver.register(context)
         log.event("melody.bridge.client_started", "side" to SIDE)
+        // M5.4b: our process just came up, but the binder can only arrive with the next doorbell - and
+        // the sender may be deep in its 30 s keepalive by now. Ask BtRemix for one immediately.
+        requestLink("process_start")
+    }
+
+    /**
+     * M5.4b: "we are here, send a doorbell now". Sent from the host process start and whenever a panel
+     * page comes up, which is what removes the cold-start wait measured in the 21:02 capture.
+     *
+     * It is a package-addressed broadcast to BtRemix's manifest receiver, rate-limited here and again
+     * on the receiving side. A linked process stays quiet: it already holds the binder, and its own
+     * `requestDoorbell` covers the sibling process.
+     */
+    fun requestLink(reason: String) {
+        if (service != null) return
+        val now = SystemClock.elapsedRealtime()
+        if (!MelodyDoorbellProtocol.shouldGreet(hasLink = false, elapsedSinceLastHelloMs = now - lastHelloMs)) return
+        lastHelloMs = now
+        val sent = runCatching {
+            context.sendBroadcast(
+                Intent(MelodyDoorbellProtocol.HELLO_ACTION)
+                    .setPackage(MelodyDoorbellProtocol.MODULE_PACKAGE)
+                    .addFlags(Intent.FLAG_RECEIVER_FOREGROUND)
+                    .putExtra(MelodyDoorbellProtocol.EXTRA_PROTOCOL, MelodyDoorbellProtocol.VERSION),
+            )
+        }
+        if (sent.isSuccess) {
+            log.event("melody.bridge.hello_sent", "side" to SIDE, "reason" to reason)
+        } else {
+            log.warn("melody.bridge.hello_failed", sent.exceptionOrNull())
+        }
     }
 
     fun stop() {
@@ -348,6 +402,30 @@ internal class MelodyBridgeClient(
      */
     fun projectionFast(mac: String): String? {
         val key = MelodyMac.normalize(mac)
+        val envelope = rawProjection(key) ?: return null
+        return if (gateAllows(key)) envelope else null
+    }
+
+    /**
+     * M5.4 D-21/D-25 host version verdict for [key], cached per MAC.
+     *
+     * This gate sits behind [projectionFast] because that is the single point every projection lane
+     * reads (identity, device info, panel, ANC, earphone header, whitelist repository, and the three
+     * redirect entrances). A rejected device reads as "no envelope", which is exactly the fail-open
+     * posture: the host keeps its own rows, labels and writes.
+     *
+     * "No envelope at all" is not cached: the envelope may simply not have been pulled yet, and the
+     * device is ungated until a range is actually read from it.
+     */
+    private fun gateAllows(key: String): Boolean {
+        gateDecisions[key]?.let { return it }
+        val envelope = rawProjection(key) ?: return true
+        val allowed = hostGate.allows(key, HOOK_PROJECTION, MelodyProviderMerge.hostVersionsOf(envelope))
+        gateDecisions[key] = allowed
+        return allowed
+    }
+
+    private fun rawProjection(key: String): String? {
         store.envelope(key)?.let { cached ->
             if (store.isStale(PROVIDER_STALE_AFTER_MS)) {
                 log.event(
@@ -532,8 +610,13 @@ internal class MelodyBridgeClient(
      * `true`: for a device we claim to support, keeping Melody off its RFCOMM channel is the safe
      * default (M3-D7).
      */
-    fun transportSuppressedFast(mac: String): Boolean =
-        whitelistIdentityFast(mac)?.let { policyOf(mac).suppressTransport } ?: true
+    fun transportSuppressedFast(mac: String): Boolean {
+        val key = MelodyMac.normalize(mac)
+        // M5.4 D-21: a host-version-rejected Definition is not injected at all, so its transport must
+        // not be suppressed either - the official channel has to work as if the module were absent.
+        if (!gateAllows(key)) return false
+        return whitelistIdentityFast(key)?.let { policyOf(key).suppressTransport } ?: true
+    }
 
     /**
      * The raw whitelist identity of [mac] from the (cached) projection envelope. M3.4's in-memory
@@ -591,6 +674,22 @@ internal class MelodyBridgeClient(
             "result" to MelodyBridgeResult.name(code),
         )
         return code
+    }
+
+    /**
+     * M5.4 D-28: forward one whitelisted structured event to BtRemix. `oneway`, so it must not go
+     * through the timed [calls] worker - it is fire-and-forget and a dead link simply drops the event
+     * (the logcat line is still there).
+     */
+    fun reportDiagnostics(name: String, fields: List<Pair<String, Any?>>) {
+        val bridge = service ?: return
+        val bundle = Bundle().apply {
+            for ((key, value) in fields) putString(key, value?.toString())
+        }
+        runCatching { bridge.reportDiagnostics(name, bundle) }
+            .onFailure { error ->
+                if (error.cause is DeadObjectException || error is DeadObjectException) onLinkLost("dead_object")
+            }
     }
 
     /**
@@ -677,6 +776,14 @@ internal class MelodyBridgeClient(
         link.execute {
             runCatching { iface.register(listener) }
                 .onFailure { log.warn("melody.bridge.register_failed", it) }
+            // M5.4 D-31: we are attached now, so ask BtRemix to re-send one doorbell - the sibling
+            // `:fg` process then attaches immediately instead of waiting for the 30 s keepalive. Once
+            // per process is enough; BtRemix rate-limits it anyway.
+            if (!doorbellRequested) {
+                doorbellRequested = true
+                runCatching { iface.requestDoorbell() }
+                    .onFailure { log.warn("melody.bridge.doorbell_request_failed", it) }
+            }
             runCatching { refreshFromBridge() }
                 .onFailure { log.warn("melody.bridge.list_failed", it) }
         }
@@ -758,6 +865,9 @@ internal class MelodyBridgeClient(
 
     private companion object {
         const val SIDE = "melody"
+
+        /** `hook=` value for the version gate on the envelope/projection read (M5.4 D-30). */
+        const val HOOK_PROJECTION = "projection"
 
         /** Plan §6: `execute`/`snapshot` answer within ~2s or degrade; the panel must never block on us. */
         const val CALL_TIMEOUT_MS = 2_000L
