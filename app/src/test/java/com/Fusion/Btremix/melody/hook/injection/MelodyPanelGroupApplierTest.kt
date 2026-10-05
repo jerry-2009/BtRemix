@@ -51,7 +51,8 @@ class MelodyPanelGroupApplierTest {
         val rows = (category as COUIPreferenceCategory).children().filterIsInstance<COUIPreference>()
         assertEquals(listOf("melody_bridge_eqPreset", "melody_bridge_upscaling"), rows.map { it.getKey() })
         assertEquals(listOf("Equalizer", "DSEE HX upscaling"), rows.map { it.getTitle() })
-        assertEquals("Bright", rows[0].getSummary())
+        // The equalizer row uses the native jump style: the value sits on the right (`assignment`).
+        assertEquals("Bright", rows[0].getAssignment())
         // A switch row is bound to the live boolean value.
         assertEquals(true, (rows[1] as COUISwitchPreference).isChecked())
     }
@@ -86,7 +87,7 @@ class MelodyPanelGroupApplierTest {
 
         val rows = (requireNotNull(categoryOf(screen)) as COUIPreferenceCategory)
             .children().filterIsInstance<COUIPreference>()
-        assertEquals("Bright", rows[0].getSummary())
+        assertEquals("Bright", rows[0].getAssignment())
     }
 
     @Test
@@ -133,6 +134,70 @@ class MelodyPanelGroupApplierTest {
         assertEquals(0, screen.children().size)
     }
 
+    @Test
+    fun interactiveRows_getTheClickBinderButReadOnlyRowsDoNot() {
+        val screen = FakeScreen()
+        screen.addGroup("sound", order = 1)
+        val bound = mutableListOf<String>()
+        val binder = MelodyRowClickBinder { _, row, _ ->
+            bound += row.key
+            true
+        }
+
+        apply(screen, policy(equalizerRow(), upscalingRow(), readOnlyRow()), stateText = { "Off" }, clickBinder = binder)
+
+        assertEquals(listOf("melody_bridge_eqPreset", "melody_bridge_upscaling"), bound)
+    }
+
+    @Test
+    fun interactiveRows_areBoundOnlyOnceAcrossTicks() {
+        val screen = FakeScreen()
+        screen.addGroup("sound", order = 1)
+        var binds = 0
+        val binder = MelodyRowClickBinder { _, _, _ ->
+            binds++
+            true
+        }
+        val plan = policy(equalizerRow(), upscalingRow())
+
+        apply(screen, plan, stateText = { "Off" }, clickBinder = binder)
+        apply(screen, plan, stateText = { "Off" }, clickBinder = binder)
+
+        assertEquals(2, binds)
+    }
+
+    @Test
+    fun aChangedRowValue_notifiesTheHostSoTheBoundViewRebinds() {
+        val screen = FakeScreen()
+        screen.addGroup("sound", order = 1)
+        val plan = policy(equalizerRow())
+        apply(screen, plan, stateText = { "Off" })
+        val row = (requireNotNull(categoryOf(screen)) as COUIPreferenceCategory)
+            .children().filterIsInstance<COUIPreference>().single()
+        val before = row.notifyCount()
+
+        // The next tick sees the value the device actually switched to.
+        apply(screen, plan, stateText = { "Bright" })
+
+        assertEquals("Bright", row.getAssignment())
+        assertTrue("a value change must nudge the host to rebind", row.notifyCount() > before)
+    }
+
+    @Test
+    fun anUnchangedRowValue_doesNotRenotify() {
+        val screen = FakeScreen()
+        screen.addGroup("sound", order = 1)
+        val plan = policy(equalizerRow())
+        apply(screen, plan, stateText = { "Off" })
+        val row = (requireNotNull(categoryOf(screen)) as COUIPreferenceCategory)
+            .children().filterIsInstance<COUIPreference>().single()
+        val before = row.notifyCount()
+
+        apply(screen, plan, stateText = { "Off" })
+
+        assertEquals(before, row.notifyCount())
+    }
+
     // --- drivers ----------------------------------------------------------------------------------
 
     private fun apply(
@@ -140,6 +205,7 @@ class MelodyPanelGroupApplierTest {
         policy: MelodyPanelPolicy,
         stateText: (String) -> String?,
         loader: ClassLoader = requireNotNull(javaClass.classLoader),
+        clickBinder: MelodyRowClickBinder? = null,
     ): Boolean = MelodyPanelGroupApplier.apply(
         screenId = "DetailMainActivity",
         screen = screen,
@@ -149,6 +215,7 @@ class MelodyPanelGroupApplierTest {
         mac = "14:3F:A6:02:5F:B0",
         loader = loader,
         log = MelodyGroupLog { _, _ -> },
+        clickBinder = clickBinder,
     )
 
     private fun categoryOf(screen: FakeScreen): COUIPreference? =
@@ -180,6 +247,13 @@ class MelodyPanelGroupApplierTest {
         title = "DSEE HX upscaling",
         state = "upscaling",
         action = "upscaling.set",
+    )
+
+    private fun readOnlyRow(): MelodyPanelRow = MelodyPanelRow(
+        kind = MelodyPanelRowKind.VALUE,
+        key = "melody_bridge_level",
+        title = "Level",
+        state = "level",
     )
 
     // --- stand-ins shaped like the host surface ---------------------------------------------------

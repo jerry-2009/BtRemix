@@ -3,7 +3,8 @@ package com.Fusion.Btremix.melody.projection
 import com.Fusion.Btremix.definition.api.LoadedDeviceDefinition
 import com.Fusion.Btremix.definition.api.MelodyPanelDefinition
 import com.Fusion.Btremix.definition.api.UiNode
-import com.Fusion.Btremix.device.runtime.StateValue
+import com.Fusion.Btremix.melody.api.MelodyPanelActionArgs
+import com.Fusion.Btremix.melody.api.MelodyPanelArg
 import com.Fusion.Btremix.melody.api.MelodyPanelGroup
 import com.Fusion.Btremix.melody.api.MelodyPanelRow
 import com.Fusion.Btremix.melody.api.MelodyPanelRowKind
@@ -72,15 +73,31 @@ object MelodyUiRouting {
             title = node.text,
         )
         is UiNode.Progress -> rowOf(definition, MelodyPanelRowKind.PROGRESS, node.id, node.state, action = null)
-        is UiNode.Button -> rowOf(
-            definition,
-            MelodyPanelRowKind.BUTTON,
-            node.id,
-            state = null,
-            action = node.action,
-            title = node.label,
-            args = node.args.mapValues { (_, value) -> formatArg(value) },
-        )
+        is UiNode.Button -> {
+            // M4.4: the literal args must survive as typed values, so a scalar-only wire form is used.
+            // A structured arg (List/Map) has no wire form and greys the row out instead of firing half
+            // of an action.
+            val typed = LinkedHashMap<String, MelodyPanelArg>(node.args.size)
+            var argsOk = true
+            for ((name, value) in node.args) {
+                val arg = MelodyPanelActionArgs.argOf(value)
+                if (arg == null) {
+                    argsOk = false
+                    break
+                }
+                typed[name] = arg
+            }
+            rowOf(
+                definition,
+                MelodyPanelRowKind.BUTTON,
+                node.id,
+                state = null,
+                action = node.action,
+                title = node.label,
+                args = if (argsOk) typed else emptyMap(),
+                extraUnavailable = !argsOk,
+            )
+        }
         // Containers never reach here: `walk` expands them in place.
         is UiNode.Column, is UiNode.Section -> null
     }
@@ -93,7 +110,8 @@ object MelodyUiRouting {
         action: String?,
         title: String? = null,
         options: List<String> = emptyList(),
-        args: Map<String, String> = emptyMap(),
+        args: Map<String, MelodyPanelArg> = emptyMap(),
+        extraUnavailable: Boolean = false,
     ): MelodyPanelRow? {
         // Native domains are provided by the host; M4.3c must not duplicate them.
         if (MelodyCapabilityMap.domainOf(definition, state, action) != MelodyUiDomain.ADVANCED) return null
@@ -101,7 +119,7 @@ object MelodyUiRouting {
         val actionKnown = action == null || definition.actions.containsKey(action)
         // A node whose state/action the Definition does not declare is still shown (its position in the
         // panel is useful), but greyed so the user cannot mistake it for a working control.
-        val unavailable = (state != null && stateDefinition == null) || !actionKnown
+        val unavailable = (state != null && stateDefinition == null) || !actionKnown || extraUnavailable
         val resolvedTitle = title?.takeIf { it.isNotBlank() }
             ?: stateDefinition?.displayName?.takeIf { it.isNotBlank() }
             ?: state
@@ -110,12 +128,22 @@ object MelodyUiRouting {
         val optionLabels = options.map { option ->
             stateDefinition?.enumValues?.get(option)?.takeIf { it.isNotBlank() } ?: option
         }
+        // M4.4: the execute argument name for the single-value kinds (`Switch`/`Segmented`/`Slider`).
+        // Mirrors `DefinitionRenderer.actionParameter`: the action's first declared parameter, else
+        // "value". Read-only nodes (no action) carry no param.
+        val param = action
+            ?.takeIf { it.isNotBlank() }
+            ?.let { actionId ->
+                MelodyPanelActionArgs.paramName(definition.actions[actionId]?.parameters?.firstOrNull()?.name)
+            }
         return MelodyPanelRow(
             kind = kind,
             key = keyFor(id, state, action, resolvedTitle),
             title = resolvedTitle,
             state = state,
             action = action,
+            param = param,
+            valueType = stateDefinition?.type?.name?.lowercase(),
             args = args,
             options = options,
             optionLabels = optionLabels,
@@ -145,21 +173,4 @@ object MelodyUiRouting {
         return candidate + "_" + index
     }
 
-    /**
-     * A one-line text form for a `Button` action argument. M4.3c only renders the row; M4.4 rebuilds
-     * the exact `StateValue` from this when it wires the click to `IMelodyBridge.execute`.
-     */
-    private fun formatArg(value: StateValue): String = when (value) {
-        is StateValue.BooleanValue -> value.value.toString()
-        is StateValue.IntValue -> value.value.toString()
-        is StateValue.LongValue -> value.value.toString()
-        is StateValue.FloatValue -> value.value.toString()
-        is StateValue.DoubleValue -> value.value.toString()
-        is StateValue.StringValue -> value.value
-        is StateValue.BytesValue -> value.value.joinToString("") { "%02x".format(it) }
-        is StateValue.ListValue -> value.value.joinToString(",", "[", "]") { formatArg(it) }
-        is StateValue.MapValue -> value.value.entries.joinToString(",", "{", "}") { (key, item) ->
-            key + "=" + formatArg(item)
-        }
-    }
 }

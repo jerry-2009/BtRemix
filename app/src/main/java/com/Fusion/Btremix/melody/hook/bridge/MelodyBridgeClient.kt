@@ -2,7 +2,9 @@ package com.Fusion.Btremix.melody.hook.bridge
 
 import android.content.Context
 import android.os.DeadObjectException
+import android.os.Handler
 import android.os.IBinder
+import android.os.Looper
 import android.os.SystemClock
 import com.Fusion.Btremix.device.runtime.StateValue
 import com.Fusion.Btremix.melody.api.MelodyBridgeCache
@@ -22,6 +24,7 @@ import com.Fusion.Btremix.melody.api.MelodyProjectionStore
 import com.Fusion.Btremix.melody.api.MelodyProviderMerge
 import com.Fusion.Btremix.melody.api.MelodySnapshot
 import com.Fusion.Btremix.melody.api.MelodyStateTexts
+import com.Fusion.Btremix.melody.api.MelodySnapshotListeners
 import com.Fusion.Btremix.melody.api.MelodySupportInfo
 import com.Fusion.Btremix.melody.api.MelodyWhitelistIdentity
 import com.Fusion.Btremix.melody.api.WireValue
@@ -115,6 +118,20 @@ internal class MelodyBridgeClient(
     }
 
     /**
+     * M4.4: separate single worker for the panel's non-blocking executes. Running an async execute on
+     * [calls] would self-wait ([execute] submits to [calls] and waits for its result), so the click
+     * link gets its own thread and the UI thread never blocks on the bridge.
+     */
+    private val actions = Executors.newSingleThreadExecutor { runnable ->
+        Thread(runnable, "BtRemixMelodyAction").apply { isDaemon = true }
+    }
+
+    private val mainHandler = Handler(Looper.getMainLooper())
+
+    /** M4.4: in-process "a snapshot was recorded" fan-out for the panel's consistency refresh. */
+    private val snapshotListeners = MelodySnapshotListeners()
+
+    /**
      * Doorbell handling runs here rather than on [calls].
      *
      * Attaching does `register(listener)` and then immediately pulls `listManagedMacs()`. That pull is
@@ -169,6 +186,8 @@ internal class MelodyBridgeClient(
                 MelodyAncStates.levelOfSnapshot(snapshot),
                 MelodyStateTexts.ofSnapshot(snapshot),
             )
+            // M4.4: let the panel react to this push instead of waiting for its own 1 Hz tick.
+            snapshotListeners.notifySnapshot(key)
             log.event(
                 "melody.bridge.push",
                 "side" to SIDE,
@@ -280,6 +299,7 @@ internal class MelodyBridgeClient(
             MelodyAncStates.levelOfSnapshot(snapshot),
             MelodyStateTexts.ofSnapshot(snapshot),
         )
+        snapshotListeners.notifySnapshot(key)
         log.event(
             "melody.bridge.snapshot",
             "side" to SIDE,
@@ -426,7 +446,7 @@ internal class MelodyBridgeClient(
         val payload = runCatching {
             calls.submit(Callable { bridge.snapshot(mac) }).get(PROVIDER_CALL_TIMEOUT_MS, TimeUnit.MILLISECONDS)
         }.getOrNull() ?: return null
-        return cache.recordSnapshot(
+        val recorded = cache.recordSnapshot(
             mac,
             payload.lifecycle,
             payload.stateKeys,
@@ -435,6 +455,8 @@ internal class MelodyBridgeClient(
             MelodyAncStates.levelOfSnapshot(payload),
             MelodyStateTexts.ofSnapshot(payload),
         )
+        snapshotListeners.notifySnapshot(mac)
+        return recorded
     }
 
     /**
@@ -538,6 +560,50 @@ internal class MelodyBridgeClient(
             "result" to MelodyBridgeResult.name(code),
         )
         return code
+    }
+
+    /**
+     * Registers a listener for "a snapshot for this MAC was recorded" (M4.4). Pushes arrive on a binder
+     * thread, so listeners must hand their work to the right thread themselves.
+     */
+    fun addSnapshotListener(listener: MelodySnapshotListeners.Listener) {
+        snapshotListeners.add(listener)
+    }
+
+    fun removeSnapshotListener(listener: MelodySnapshotListeners.Listener) {
+        snapshotListeners.remove(listener)
+    }
+
+    /**
+     * Pulls one fresh snapshot for [mac] on the link thread (M4.4 consistency). A successful write
+     * already makes BtRemix push the new state, but that push can be missed if the host listener is
+     * momentarily unattached; pulling once after an OK execute makes the panel refresh deterministic.
+     * [snapshot] records into the same cache and notifies the same listeners, so nothing else changes.
+     */
+    fun refreshSnapshotAsync(mac: String) {
+        link.execute { runCatching { snapshot(mac) }.onFailure { log.warn("melody.bridge.snapshot_failed", it) } }
+    }
+
+    /**
+     * Non-blocking [execute] for the panel's row clicks (M4.4). The host's `Preference` click runs on
+     * the UI thread and [execute] blocks up to the call budget; here the work is handed to the
+     * dedicated [actions] worker and the result code is posted back to the main thread. The
+     * `melody.bridge.execute … result=…` line is still emitted by [execute], so the failure policy
+     * ("only log") needs nothing extra.
+     */
+    fun executeAsync(
+        mac: String,
+        actionId: String,
+        args: Map<String, StateValue> = emptyMap(),
+        onResult: (Int) -> Unit = {},
+    ) {
+        actions.execute {
+            val code = runCatching { execute(mac, actionId, args) }.getOrElse {
+                log.warn("melody.bridge.execute_failed", it)
+                MelodyBridgeResult.ERROR_INTERNAL
+            }
+            mainHandler.post { runCatching { onResult(code) } }
+        }
     }
 
     // --- connection internals -------------------------------------------------------------------

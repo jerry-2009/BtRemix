@@ -20,7 +20,7 @@ enum class MelodyPanelRowKind {
     PROGRESS,
     BUTTON;
 
-    /** `true` for the kinds M4.4 will wire to `IMelodyBridge.execute`; M4.3c only renders them. */
+    /** `true` for the kinds M4.4 wires to `IMelodyBridge.execute`; the rest stay read-only. */
     val interactive: Boolean
         get() = this == SWITCH || this == SEGMENTED || this == SLIDER || this == BUTTON
 
@@ -34,6 +34,40 @@ enum class MelodyPanelRowKind {
     }
 }
 
+/** Wire tokens for [MelodyPanelRow.valueType]; mirrors `StateDefinitionType.name.lowercase()`. */
+object MelodyPanelValueType {
+    const val BOOLEAN = "boolean"
+    const val INTEGER = "integer"
+    const val NUMBER = "number"
+    const val STRING = "string"
+    const val ENUM = "enum"
+    const val BYTES = "bytes"
+}
+
+/** Wire tokens for [MelodyPanelArg.type]; mirrors the `StateValue` subtype. */
+object MelodyPanelArgType {
+    const val BOOLEAN = "boolean"
+    const val INT = "int"
+    const val LONG = "long"
+    const val FLOAT = "float"
+    const val DOUBLE = "double"
+    const val STRING = "string"
+    const val BYTES = "bytes"
+}
+
+/**
+ * One typed literal argument of a `Button` row (M4.4). The envelope is JSON, so the value travels as
+ * a one-line string; [type] is what lets the host rebuild the exact `StateValue` the Compose renderer
+ * would have sent (`DefinitionRenderer` hands `UiNode.Button.args` straight to `DeviceAction`).
+ *
+ * Only scalar kinds are representable. A `List`/`Map` argument has no wire form here, and the row is
+ * greyed out rather than firing a half-built action (see `MelodyUiRouting`).
+ */
+data class MelodyPanelArg(
+    val type: String,
+    val value: String,
+)
+
 /**
  * One row of BtRemix's self-built「高级功能」group (M4.3c, decision D-8).
  *
@@ -42,9 +76,12 @@ enum class MelodyPanelRowKind {
  * Definition) and rebuilt into a host `Preference` by the panel hook. [key] is always inside the
  * `melody_bridge_*` namespace so hide/grey rules can never touch it (spec §7.2).
  *
- * [state] is the Definition state the row reads its live value from; [action]/[args] are carried for
- * M4.4's click link. M4.3c renders and backfills the value only. [unavailable] marks a row whose
- * state/action the Definition does not declare - it is still shown, but greyed out.
+ * [state] is the Definition state the row reads its live value from; [action]/[param]/[args] are
+ * carried for the click link (M4.4). [param] is the execute argument name for the single-value kinds
+ * (`Switch`/`Segmented`/`Slider`); [valueType] is the declared state type used to coerce a `Slider`
+ * value to the same `StateValue` the Compose renderer would send. [unavailable] marks a row whose
+ * state/action the Definition does not declare, or whose literal args cannot be rebuilt - it is still
+ * shown, but greyed out.
  */
 data class MelodyPanelRow(
     val kind: MelodyPanelRowKind,
@@ -52,7 +89,12 @@ data class MelodyPanelRow(
     val title: String,
     val state: String? = null,
     val action: String? = null,
-    val args: Map<String, String> = emptyMap(),
+    /** Execute argument name (the action's first parameter), or `null` for read-only rows. */
+    val param: String? = null,
+    /** Declared state type wire token, or `null` when the row has no state. */
+    val valueType: String? = null,
+    /** Typed literal args, carried by `Button` rows only. */
+    val args: Map<String, MelodyPanelArg> = emptyMap(),
     /** `Segmented` option values, in display order. */
     val options: List<String> = emptyList(),
     /** Display labels aligned to [options]; a missing/short entry falls back to the raw value. */

@@ -78,6 +78,13 @@ internal object MelodyPanelGroupApplier {
     private val lastItemFingerprint = ConcurrentHashMap<String, String>()
 
     /**
+     * Row object -> the policy row its click listener was built from (M4.4). The 1 Hz re-apply must
+     * not churn a fresh proxy onto a stable row; it only re-binds when the row object or the routed
+     * row changed (a host rebuild, or a new envelope).
+     */
+    private val boundRows = WeakHashMap<Any, MelodyPanelRow>()
+
+    /**
      * Ensures the group matches [policy] and returns `true` when the screen changed (a row was added or
      * re-filled), so the caller can fold it into its own `melody.panel.applied` accounting.
      */
@@ -90,6 +97,7 @@ internal object MelodyPanelGroupApplier {
         mac: String,
         loader: ClassLoader,
         log: MelodyGroupLog,
+        clickBinder: MelodyRowClickBinder? = null,
     ): Boolean {
         val group = policy.group
         val roots = runCatching { PreferenceTree.childrenOf(screen) }.getOrDefault(emptyList())
@@ -133,6 +141,14 @@ internal object MelodyPanelGroupApplier {
             if (preference != null) {
                 rememberRow(category, row.key, preference)
                 val filled = fillRow(preference, row, index, stateText)
+                // M4.4: interactive rows get the click link; read-only rows stay inert. Fail-open -
+                // a bind failure only logs (`melody.panel.click reason=...`).
+                if (row.kind.interactive && clickBinder != null && boundRows[preference] !== row) {
+                    val attached = runCatching {
+                        clickBinder.bind(preference, row, contextOf(preference) ?: context)
+                    }.getOrDefault(false)
+                    if (attached) boundRows[preference] = row
+                }
                 logItem(screenId, mac, row, preference, builtHere, addedHere, filled, log)
             } else {
                 logItem(screenId, mac, row, null, built = false, added = false, filled = null, log = log)
@@ -222,14 +238,63 @@ internal object MelodyPanelGroupApplier {
         setTitle(preference, row.title)
         // Clone the layout only from a sibling of the *same* class: a plain row's layout has no switch
         // widget, so copying it onto a `COUISwitchPreference` would hide the switch (measured symptom).
-        copyLayoutResources(rootTemplateOf(category, cls), preference)
+        val template = if (row.kind == MelodyPanelRowKind.SEGMENTED) {
+            // Native「降噪效果」look (M4.4 follow-up): the current value sits on the right of a jump row,
+            // so the layout/arrow are taken from a host row that already renders that style.
+            jumpTemplate(rootOf(category))
+        } else {
+            rootTemplateOf(category, cls)
+        }
+        copyLayoutResources(template, preference)
+        if (row.kind == MelodyPanelRowKind.SEGMENTED) copyJump(template, preference)
         return preference
     }
 
     private fun rowClass(kind: MelodyPanelRowKind, loader: ClassLoader): Class<*>? = when (kind) {
         MelodyPanelRowKind.SWITCH ->
             Reflect.loadClass(SWITCH_CLASS, loader) ?: Reflect.loadClass(ROW_CLASS, loader)
+        // COUI's jump preference is the same row style as the host's「降噪效果」row and is a real
+        // `Preference`, so a self-built equalizer row can match it.
+        MelodyPanelRowKind.SEGMENTED ->
+            Reflect.loadClass(JUMP_CLASS, loader) ?: Reflect.loadClass(ROW_CLASS, loader)
         else -> Reflect.loadClass(ROW_CLASS, loader)
+    }
+
+    /** The outermost container of [start] (the `PreferenceScreen`), used to look for a style donor. */
+    private fun rootOf(start: Any): Any {
+        var current = start
+        var guard = 0
+        while (guard++ < MAX_PARENT_HOPS) {
+            val parent = Reflect.call(current, "getParent") ?: return current
+            current = parent
+        }
+        return current
+    }
+
+    /**
+     * A host row that already renders the "value on the right + jump arrow" style: a `COUIPreference`
+     * whose `mJumpRes` drawable is set. The first such row in the tree donates its layout resources and
+     * arrow, so the self-built row looks native without hardcoding any build-specific resource id.
+     */
+    private fun jumpTemplate(root: Any): Any? {
+        val queue = ArrayDeque<Any>()
+        queue += root
+        var visited = 0
+        while (queue.isNotEmpty() && visited++ < MAX_TREE_SCAN) {
+            val node = queue.removeFirst()
+            if (Reflect.readField(node, "mJumpRes") != null) return node
+            for (child in runCatching { PreferenceTree.childrenOf(node) }.getOrDefault(emptyList())) {
+                queue += child
+            }
+        }
+        return null
+    }
+
+    private fun copyJump(template: Any?, preference: Any) {
+        val jump = Reflect.readField(template ?: return, "mJumpRes") ?: return
+        if (!Reflect.invokeSingleArg(preference, "setJump", jump)) {
+            Reflect.writeField(preference, arrayOf("mJumpRes"), jump)
+        }
     }
 
     /** The first sibling row of [cls] on the same screen, used as the layout template for a new row. */
@@ -283,12 +348,30 @@ internal object MelodyPanelGroupApplier {
             MelodyPanelRowKind.TEXT -> if (row.state != null) value else null
             MelodyPanelRowKind.BUTTON -> null
         }
-        if (summary != null && currentSummary(preference) != summary) setSummary(preference, summary)
+        var valueChanged = false
+        if (row.kind == MelodyPanelRowKind.SEGMENTED) {
+            // The native jump layout shows the current value on the right (`setAssignment`), which is
+            // where the host's own「降噪效果」row puts it.
+            if (summary != null && currentAssignment(preference) != summary) {
+                setAssignment(preference, summary)
+                valueChanged = true
+            }
+        } else if (summary != null && currentSummary(preference) != summary) {
+            setSummary(preference, summary)
+            valueChanged = true
+        }
         if (row.kind == MelodyPanelRowKind.SWITCH) {
             val checked = isTruthy(value)
-            if (currentChecked(preference) != checked) setChecked(preference, checked)
+            if (currentChecked(preference) != checked) {
+                setChecked(preference, checked)
+                valueChanged = true
+            }
+            // The host setter normally notifies, but the field fallback does not - an explicit nudge
+            // keeps the bound RecyclerView row in sync with the value we just wrote (M4.4).
+            if (valueChanged) notifyChanged(preference)
             return RowFill(value, summary, checked)
         }
+        if (valueChanged) notifyChanged(preference)
         return RowFill(value, summary, null)
     }
 
@@ -403,6 +486,10 @@ internal object MelodyPanelGroupApplier {
         Reflect.callCharSequence(preference, "getSummary")?.toString()
             ?: (Reflect.readField(preference, "mSummary", "summary") as? CharSequence)?.toString()
 
+    private fun currentAssignment(preference: Any): String? =
+        Reflect.callCharSequence(preference, "getAssignment")?.toString()
+            ?: (Reflect.readField(preference, "mAssignment", "assignment") as? CharSequence)?.toString()
+
     private fun currentEnabled(preference: Any): Boolean =
         Reflect.callBoolean(preference, "isEnabled") ?: (Reflect.readField(preference, "mEnabled") as? Boolean) ?: true
 
@@ -428,6 +515,11 @@ internal object MelodyPanelGroupApplier {
         if (summary == null) return
         if (Reflect.invokeSingleArg(preference, "setSummary", summary)) return
         Reflect.writeField(preference, arrayOf("mSummary", "summary"), summary)
+    }
+
+    private fun setAssignment(preference: Any, value: String) {
+        if (Reflect.invokeSingleArg(preference, "setAssignment", value)) return
+        Reflect.writeField(preference, arrayOf("mAssignment", "assignment"), value)
     }
 
     private fun setOrder(preference: Any, order: Int) {
@@ -565,6 +657,11 @@ internal object MelodyPanelGroupApplier {
     private const val SOUND_GROUP_KEY = "sound"
     private const val ROW_CLASS = "com.coui.appcompat.preference.COUIPreference"
     private const val SWITCH_CLASS = "com.coui.appcompat.preference.COUISwitchPreference"
+    private const val JUMP_CLASS = "com.coui.appcompat.preference.COUIJumpPreference"
+
+    /** Bounds for walking up to the screen and scanning the tree for a style donor row. */
+    private const val MAX_PARENT_HOPS = 8
+    private const val MAX_TREE_SCAN = 300
 
     /** The category class names survive R8 (M4.3b prereq); the Melody one is the first choice. */
     private val CATEGORY_CLASSES = listOf(

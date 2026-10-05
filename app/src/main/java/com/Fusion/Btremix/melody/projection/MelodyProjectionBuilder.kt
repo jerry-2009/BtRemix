@@ -276,8 +276,22 @@ class MelodyProjectionBuilder(
         )
         row.state?.let { fields["state"] = JsonValue.StringValue(it) }
         row.action?.let { fields["action"] = JsonValue.StringValue(it) }
+        // M4.4: the execute argument name + declared state type, so the host can rebuild the exact
+        // `DeviceAction` the Compose renderer would send without owning the Definition.
+        row.param?.let { fields["param"] = JsonValue.StringValue(it) }
+        row.valueType?.let { fields["valueType"] = JsonValue.StringValue(it) }
         if (row.args.isNotEmpty()) {
-            fields["args"] = JsonValue.Object(row.args.mapValues { (_, value) -> JsonValue.StringValue(value) })
+            // Typed literal args (Button): `{ "<name>": { "type": "...", "value": "..." } }`.
+            fields["args"] = JsonValue.Object(
+                row.args.mapValues { (_, arg) ->
+                    JsonValue.Object(
+                        linkedMapOf(
+                            "type" to JsonValue.StringValue(arg.type),
+                            "value" to JsonValue.StringValue(arg.value),
+                        ),
+                    )
+                },
+            )
         }
         if (row.options.isNotEmpty()) {
             fields["options"] = JsonValue.Array(row.options.map(JsonValue::StringValue))
@@ -344,6 +358,11 @@ class MelodyProjectionBuilder(
 
     companion object {
         /** Envelope wire version; a bump invalidates any host-side cache (M3 plan §2.2). */
-        const val ENVELOPE_VERSION: Int = 1
+        /**
+         * Wire version of the projection envelope. M4.4 bumped it 1 -> 2: `panel.group.rows[]` gained
+         * `param`/`valueType` and typed `Button` args, so a persisted v1 envelope must be re-pulled
+         * (a stale one cannot wire its rows to `execute`).
+         */
+        const val ENVELOPE_VERSION: Int = 2
     }
 }

@@ -12,9 +12,18 @@ package com.coui.appcompat.preference
  */
 @Suppress("unused")
 open class COUIPreference(initialKey: String? = null) {
+    /**
+     * The listener interface the real host inherits from `androidx.preference.Preference` (R8-renamed
+     * to `Preference$d`, single abstract `j(Preference)Z`). Same shape here: one boolean method.
+     */
+    fun interface OnClickListener {
+        fun onPreferenceClick(preference: Any?): Boolean
+    }
+
     private var key: String? = initialKey
     private var title: CharSequence? = null
     private var summary: CharSequence? = null
+    private var assignment: CharSequence? = null
     private var visible = true
     private var enabled = true
     private var order = 0
@@ -22,6 +31,8 @@ open class COUIPreference(initialKey: String? = null) {
     private var layoutResource = 0
     private var widgetLayoutResource = 0
     private var parent: Any? = null
+    private var clickListener: OnClickListener? = null
+    private var notifications = 0
 
     fun getKey(): String? = key
     fun setKey(value: String?) { key = value }
@@ -29,6 +40,8 @@ open class COUIPreference(initialKey: String? = null) {
     fun setTitle(value: CharSequence?) { title = value }
     fun getSummary(): CharSequence? = summary
     fun setSummary(value: CharSequence?) { summary = value }
+    fun getAssignment(): CharSequence? = assignment
+    fun setAssignment(value: CharSequence?) { assignment = value }
     fun isVisible(): Boolean = visible
     fun setVisible(value: Boolean) { visible = value }
     fun isEnabled(): Boolean = enabled
@@ -43,7 +56,14 @@ open class COUIPreference(initialKey: String? = null) {
     fun setWidgetLayoutResource(value: Int) { widgetLayoutResource = value }
     fun getParent(): Any? = parent
     fun getContext(): Any? = null
-    fun notifyChanged() = Unit
+    fun notifyChanged() { notifications++ }
+    fun notifyCount(): Int = notifications
+
+    fun setOnPreferenceClickListener(listener: OnClickListener?) { clickListener = listener }
+    fun getOnPreferenceClickListener(): OnClickListener? = clickListener
+
+    /** Test driver: what the host does when the row is tapped. */
+    fun performClick(): Boolean = clickListener?.onPreferenceClick(this) ?: false
 
     internal fun attachTo(container: Any) { parent = container }
 }

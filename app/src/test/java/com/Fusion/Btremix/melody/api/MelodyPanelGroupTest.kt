@@ -32,13 +32,48 @@ class MelodyPanelGroupTest {
         assertEquals("melody_bridge_eqPreset", equalizer.key)
         assertEquals("eqPreset", equalizer.state)
         assertEquals("eq.set", equalizer.action)
+        assertEquals("preset", equalizer.param)
+        assertEquals("enum", equalizer.valueType)
         assertEquals(listOf("off", "bright"), equalizer.options)
         assertEquals(listOf("Off", "Bright"), equalizer.optionLabels)
 
         val upscaling = group.rows[1]
         assertEquals(MelodyPanelRowKind.SWITCH, upscaling.kind)
         assertEquals("melody_bridge_upscaling", upscaling.key)
+        assertEquals("value", upscaling.param)
+        assertEquals("boolean", upscaling.valueType)
         assertFalse(upscaling.unavailable)
+    }
+
+    @Test
+    fun panelOf_readsTypedButtonArgsAndGreysAMalformedOne() {
+        val policy = MelodyProviderMerge.panelOf(
+            envelope(
+                """
+                "panel": {
+                  "sectionTitle": "高级功能",
+                  "group": {
+                    "key": "melody_bridge_advanced",
+                    "title": "高级功能",
+                    "rows": [
+                      { "kind": "button", "key": "melody_bridge_find", "title": "Find", "action": "device.find",
+                        "args": { "count": { "type": "int", "value": "3" } } },
+                      { "kind": "button", "key": "melody_bridge_reset", "title": "Reset", "action": "device.reset",
+                        "args": "nope" }
+                    ]
+                  }
+                }
+                """.trimIndent(),
+            ),
+            fallbackTitle = "ignored",
+        )
+
+        val rows = requireNotNull(policy.group).rows
+        assertEquals(MelodyPanelArg("int", "3"), rows[0].args["count"])
+        assertFalse(rows[0].unavailable)
+        // A malformed typed arg means the row could fire a half-built action: greyed, not dropped.
+        assertTrue(rows[1].unavailable)
+        assertTrue(rows[1].args.isEmpty())
     }
 
     @Test
@@ -135,6 +170,8 @@ class MelodyPanelGroupTest {
                       "title": "Equalizer",
                       "state": "eqPreset",
                       "action": "eq.set",
+                      "param": "preset",
+                      "valueType": "enum",
                       "options": ["off", "bright"],
                       "labels": ["Off", "Bright"]
                     },
@@ -143,7 +180,9 @@ class MelodyPanelGroupTest {
                       "key": "melody_bridge_upscaling",
                       "title": "DSEE HX upscaling",
                       "state": "upscaling",
-                      "action": "upscaling.set"
+                      "action": "upscaling.set",
+                      "param": "value",
+                      "valueType": "boolean"
                     }
                   ]
                 }

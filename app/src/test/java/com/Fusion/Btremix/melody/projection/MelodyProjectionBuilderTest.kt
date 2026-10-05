@@ -30,7 +30,8 @@ class MelodyProjectionBuilderTest {
         val envelope = parse(builder.build(device))
         val whitelist = envelope.getValue("whitelist").asObject()
 
-        assertEquals(1.0, requireNotNull(envelope.getValue("version").asNumber()), 0.0)
+        // M4.4 bumped the envelope to v2 (panel rows gained param/valueType + typed Button args).
+        assertEquals(2.0, requireNotNull(envelope.getValue("version").asNumber()), 0.0)
         assertEquals("14:3F:A6:02:5F:B0", envelope.getValue("mac").asString())
         val definitionNode = envelope.getValue("definition").asObject()
         assertEquals("sony.wf1000xm3", definitionNode.getValue("id").asString())

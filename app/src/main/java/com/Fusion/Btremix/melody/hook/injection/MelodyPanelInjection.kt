@@ -10,6 +10,7 @@ import android.os.Handler
 import android.os.Looper
 import com.Fusion.Btremix.BuildConfig
 import com.Fusion.Btremix.melody.api.MelodyMac
+import com.Fusion.Btremix.melody.api.MelodyBridgeResult
 import com.Fusion.Btremix.melody.api.MelodyPanelApplyResult
 import com.Fusion.Btremix.melody.api.MelodyPanelPolicy
 import com.Fusion.Btremix.melody.api.PanelRow
@@ -24,7 +25,9 @@ import java.lang.ref.WeakReference
 import java.lang.reflect.Field
 import java.lang.reflect.Method
 import java.lang.reflect.Modifier
+import java.util.Collections
 import java.util.IdentityHashMap
+import java.util.concurrent.atomic.AtomicBoolean
 
 /**
  * M4.2 official-row hide/grey injection on the Melody detail page
@@ -83,6 +86,28 @@ internal class MelodyPanelInjection(
     /** Host classes already reported as having no PreferenceScreen (one line each, not one per tick). */
     private val reportedScreenMissing = HashSet<String>()
 
+    /** The M4.4 host-native picker (COUI bottom sheet), built lazily with the host class loader. */
+    private val picker: MelodyHostPicker by lazy {
+        MelodyHostPicker(loader, MelodyGroupLog { name, fields -> log.event(name, *fields.toTypedArray()) })
+    }
+
+    /** One debounced snapshot-driven re-apply is pending; set on the binder thread, cleared on main. */
+    private val snapshotRefreshPending = AtomicBoolean(false)
+
+    /** The client's snapshot listener is registered at most once per host process. */
+    private var snapshotListenerRegistered = false
+
+    /**
+     * Host objects (fragment or activity) that resolved a `PreferenceScreen` at least once.
+     *
+     * The lifecycle rescans (`collectFragments`) do not always reach the fragment that owns the
+     * detail panel - a renamed nested manager or a differently-hosted page makes them return empty,
+     * and the activity host then has no screen of its own. The objects the anchor hooks fired on are
+     * exactly the ones that built the panel, so they are kept (weakly) and re-applied while their
+     * activity is still resumed. This is what makes a later value change reach the panel (M4.4).
+     */
+    private val liveHosts = Collections.synchronizedList(ArrayList<WeakReference<Any>>())
+
     private val poll = object : Runnable {
         override fun run() {
             val activities = synchronized(resumedLock) { resumed.keys.toList() }
@@ -97,13 +122,11 @@ internal class MelodyPanelInjection(
             runCatching { applyResumed(activities, heartbeat) }
                 .onFailure { log.warn("melody.panel.poll_failed", it) }
             pollTicks++
-            // The panel is filled within seconds and is not rebuilt forever; stop well after that so a
-            // page left open does not keep a 1 Hz reflection walk alive.
-            if (pollTicks >= MAX_POLL_TICKS) {
-                polling = false
-                return
-            }
-            handler.postDelayed(this, POLL_INTERVAL_MS)
+            // Fast phase while the host is filling the page, then a slow idle backstop for as long as
+            // the page stays resumed: a write that succeeds but whose push we miss (M4.4) still shows
+            // up within a few seconds instead of never.
+            val interval = if (pollTicks >= MAX_POLL_TICKS) IDLE_POLL_INTERVAL_MS else POLL_INTERVAL_MS
+            handler.postDelayed(this, interval)
         }
     }
 
@@ -184,18 +207,30 @@ internal class MelodyPanelInjection(
     }
 
     private fun applyResumed(activities: List<Activity>, heartbeat: Boolean) {
+        val applied = IdentityHashMap<Any, Boolean>()
         var hosts = 0
         for (activity in activities) {
             val fragments = runCatching { PreferenceTree.collectFragments(activity) }.getOrDefault(emptyList())
             if (fragments.isEmpty()) {
                 hosts++
                 applyHost(activity, "poll", heartbeat)
+                applied[activity] = true
             } else {
                 for (fragment in fragments) {
                     hosts++
                     applyHost(fragment, "poll", heartbeat)
+                    applied[fragment] = true
                 }
             }
+        }
+        // Re-apply the hosts that actually resolved a screen before; the fragment scan can miss them.
+        for (reference in synchronized(liveHosts) { liveHosts.toList() }) {
+            val host = reference.get() ?: continue
+            if (applied.containsKey(host)) continue
+            val activity = activityOf(host) ?: continue
+            if (activities.none { it === activity }) continue
+            hosts++
+            applyHost(host, "poll", heartbeat)
         }
         if (heartbeat) {
             log.event("melody.panel.poll", "activities" to activities.size, "hosts" to hosts, "tick" to pollTicks)
@@ -354,10 +389,19 @@ internal class MelodyPanelInjection(
             }
             return
         }
+        rememberHost(host)
         runCatching { applyScreen(screen, host, screenLabel(host), reason, forceLog) }
             .getOrElse {
                 log.warn("melody.panel.apply_failed", it)
             }
+    }
+
+    /** Keeps a weak reference to a host that resolved a screen, pruning dead/duplicate entries. */
+    private fun rememberHost(host: Any) {
+        synchronized(liveHosts) {
+            liveHosts.removeAll { it.get() == null }
+            if (liveHosts.none { it.get() === host }) liveHosts.add(WeakReference(host))
+        }
     }
 
     /**
@@ -398,6 +442,22 @@ internal class MelodyPanelInjection(
         }
         clearSkip(screenId)
         logPolicyOnce(screenId, mac, policy)
+        ensureSnapshotListener(client)
+        if (forceLog) {
+            // Heartbeat: prove the re-apply reaches this screen and show what the rows read from the
+            // snapshot cache (M4.4 on-device diagnosis).
+            val readings = policy.group?.rows?.joinToString(",") { row ->
+                row.key + "=" + (row.state?.let { state -> client.stateTextFast(mac, state) } ?: "-")
+            }
+            log.event(
+                "melody.panel.read",
+                "screen" to screenId,
+                "mac" to mac,
+                "reason" to reason,
+                "roots" to roots.size,
+                "rows" to readings,
+            )
+        }
 
         val result = PanelVisibilityApplier.apply(policy, roots)
         if (!result.isEmpty) logApplied(screenId, mac, reason, result)
@@ -414,8 +474,51 @@ internal class MelodyPanelInjection(
                 mac,
                 loader,
                 MelodyGroupLog { name, fields -> log.event(name, *fields.toTypedArray()) },
+                clickBinder = MelodyPanelActionBinder.binder(
+                    mac = mac,
+                    // Spec §7.4: the click re-checks the page's device before it writes.
+                    currentMac = { resolveManagedMac(host, managed) },
+                    stateText = MelodyRowStateText { state -> client.stateTextFast(mac, state) },
+                    executor = MelodyPanelExecutor { action, args, onResult ->
+                        client.executeAsync(mac, action, args) { code ->
+                            onResult(code)
+                            // A successful write is pushed by BtRemix, but the panel must not hinge on
+                            // that push reaching this process: pull once so the row refreshes even if
+                            // the listener was momentarily unattached (M4.4 consistency).
+                            if (code == MelodyBridgeResult.OK) client.refreshSnapshotAsync(mac)
+                        }
+                    },
+                    choicePresenter = picker,
+                    sliderPresenter = picker,
+                    loader = loader,
+                    log = MelodyGroupLog { name, fields -> log.event(name, *fields.toTypedArray()) },
+                ),
             )
         }.onFailure { log.warn("melody.panel.group_failed", it) }
+    }
+
+    /**
+     * M4.4 consistency link: react to a pushed snapshot instead of waiting for the next 1 Hz tick, so a
+     * value the Compose page (or the device) changed after the initial fill still reaches the panel.
+     * The push arrives on a binder thread, so it only sets a flag and posts one coalesced re-apply.
+     */
+    private fun ensureSnapshotListener(client: MelodyBridgeClient) {
+        if (snapshotListenerRegistered) return
+        snapshotListenerRegistered = true
+        client.addSnapshotListener { mac ->
+            if (!snapshotRefreshPending.compareAndSet(false, true)) return@addSnapshotListener
+            if (BuildConfig.DEBUG) {
+                log.event("melody.panel.refresh", "mac" to mac, "reason" to "snapshot")
+            }
+            handler.postDelayed({
+                snapshotRefreshPending.set(false)
+                val activities = synchronized(resumedLock) { resumed.keys.toList() }
+                if (activities.isEmpty()) return@postDelayed
+                runCatching { applyResumed(activities, heartbeat = false) }
+                    .onFailure { log.warn("melody.panel.snapshot_refresh_failed", it) }
+            }, SNAPSHOT_DEBOUNCE_MS)
+        }
+        log.event("melody.panel.snapshot_listener")
     }
 
     /** Logs the screen's top-level keys whenever they change - this is what proves a late panel fill. */
@@ -631,11 +734,17 @@ internal class MelodyPanelInjection(
         /** Re-apply cadence while a relevant page is resumed; cheap (top-level rows only). */
         const val POLL_INTERVAL_MS = 1000L
 
-        /** 2 minutes of coverage: far past the host's asynchronous fill, bounded for power. */
+        /** Fast-phase ticks (~2 minutes at 1 Hz): far past the host's asynchronous fill. */
         const val MAX_POLL_TICKS = 120
+
+        /** After the fast phase the panel only needs a cheap self-heal cadence while it stays visible. */
+        const val IDLE_POLL_INTERVAL_MS = 5_000L
 
         /** One unconditional row dump every 10 ticks (~10 s) while polling, for on-device diagnosis. */
         const val HEARTBEAT_TICKS = 10
+
+        /** Coalescing window for snapshot-driven re-applies (M4.4); a burst of pushes costs one walk. */
+        const val SNAPSHOT_DEBOUNCE_MS = 250L
 
         /** Bounded fallback scan when the Intent carries no MAC; the page's device is 1~2 hops away. */
         const val MAX_MAC_SCAN_DEPTH = 3

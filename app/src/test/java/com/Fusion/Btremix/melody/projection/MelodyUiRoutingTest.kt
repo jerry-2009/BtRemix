@@ -8,6 +8,7 @@ import com.Fusion.Btremix.definition.api.StateDefinitionType
 import com.Fusion.Btremix.definition.api.UiNode
 import com.Fusion.Btremix.definition.api.UiSchema
 import com.Fusion.Btremix.definition.json.DefinitionJsonCodec
+import com.Fusion.Btremix.melody.api.MelodyPanelArg
 import com.Fusion.Btremix.melody.api.MelodyPanelRowKind
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
@@ -38,12 +39,78 @@ class MelodyUiRoutingTest {
         assertEquals("eq.set", equalizer.action)
         assertEquals(SONY_PRESETS, equalizer.options)
         assertEquals(SONY_PRESET_LABELS, equalizer.optionLabels)
+        // M4.4: the execute argument the host has to rebuild (DefinitionRenderer's `actionParameter`).
+        assertEquals("preset", equalizer.param)
+        assertEquals("enum", equalizer.valueType)
         assertFalse(equalizer.unavailable)
 
         val upscaling = group.rows[1]
         assertEquals("upscaling", upscaling.state)
         assertEquals("upscaling.set", upscaling.action)
+        assertEquals("value", upscaling.param)
+        assertEquals("boolean", upscaling.valueType)
         assertFalse(upscaling.unavailable)
+    }
+
+    @Test
+    fun interactiveRows_useTheFirstDeclaredParameterAndFallBackToValue() {
+        val definition = DefinitionJsonCodec.decode(
+            definitionJson(
+                melody = """"melody": { "support": { "name": "Params" } },""",
+                states = """
+                    "flag": { "type": "boolean", "displayName": "Flag" },
+                    "level": { "type": "integer", "displayName": "Level", "min": 0, "max": 10, "step": 1 }
+                """.trimIndent(),
+                actions = """
+                    "flag.set": { "displayName": "Set", "parameters": [{ "name": "enabled", "type": "boolean" }], "resultState": "flag" },
+                    "level.set": { "displayName": "Set", "resultState": "level" }
+                """.trimIndent(),
+                ui = """
+                    "ui": { "children": [
+                      { "type": "switch", "state": "flag", "action": "flag.set" },
+                      { "type": "slider", "state": "level", "action": "level.set" }
+                    ] }
+                """.trimIndent(),
+            ),
+        )
+
+        val rows = requireNotNull(MelodyUiRouting.advancedGroup(definition, "Advanced")).rows
+        assertEquals("enabled", rows[0].param)
+        // The action declares no parameter: the renderer's "value" fallback must travel instead.
+        assertEquals("value", rows[1].param)
+        assertEquals("integer", rows[1].valueType)
+    }
+
+    @Test
+    fun buttonArgs_areTypedAndAStructuredArgGreysTheRow() {
+        val definition = DefinitionJsonCodec.decode(
+            definitionJson(
+                melody = """"melody": { "support": { "name": "Buttons" } },""",
+                states = """"level": { "type": "integer", "displayName": "Level" }""",
+                actions = """
+                    "find": { "displayName": "Find" },
+                    "structured": { "displayName": "Structured" }
+                """.trimIndent(),
+                ui = """
+                    "ui": { "children": [
+                      { "type": "button", "label": "Find", "action": "find",
+                        "args": { "count": 3, "flag": true, "name": "abc" } },
+                      { "type": "button", "label": "Structured", "action": "structured",
+                        "args": { "list": [1, 2] } }
+                    ] }
+                """.trimIndent(),
+            ),
+        )
+
+        val rows = requireNotNull(MelodyUiRouting.advancedGroup(definition, "Advanced")).rows
+        val find = rows[0]
+        assertEquals(MelodyPanelArg("int", "3"), find.args["count"])
+        assertEquals(MelodyPanelArg("boolean", "true"), find.args["flag"])
+        assertEquals(MelodyPanelArg("string", "abc"), find.args["name"])
+        assertFalse(find.unavailable)
+        // A List/Map arg has no scalar wire form: the row stays for layout, but cannot be fired.
+        assertTrue(rows[1].unavailable)
+        assertTrue(rows[1].args.isEmpty())
     }
 
     @Test
@@ -326,8 +393,8 @@ class MelodyUiRoutingTest {
             "anc.refresh": { "displayName": "Refresh noise control" },
             "anc.setMode": { "displayName": "Set noise control", "resultState": "ancMode" },
             "anc.setLevel": { "displayName": "Set ambient level", "resultState": "ancLevel" },
-            "eq.set": { "displayName": "Set equalizer", "resultState": "eqPreset" },
-            "upscaling.set": { "displayName": "Set DSEE HX upscaling", "resultState": "upscaling" }
+            "eq.set": { "displayName": "Set equalizer", "parameters": [{ "name": "preset", "type": "enum", "enumValues": { "off": "Off", "bright": "Bright", "bass": "Bass boost" } }], "resultState": "eqPreset" },
+            "upscaling.set": { "displayName": "Set DSEE HX upscaling", "parameters": [{ "name": "value", "type": "boolean" }], "resultState": "upscaling" }
         """.trimIndent()
 
         private val SONY_UI = """

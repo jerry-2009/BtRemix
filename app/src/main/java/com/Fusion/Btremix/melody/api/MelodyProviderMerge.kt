@@ -307,23 +307,31 @@ object MelodyProviderMerge {
         val title = (obj.values["title"] as? JsonValue.StringValue)?.value?.takeIf { it.isNotBlank() } ?: return null
         val state = (obj.values["state"] as? JsonValue.StringValue)?.value?.takeIf { it.isNotBlank() }
         val action = (obj.values["action"] as? JsonValue.StringValue)?.value?.takeIf { it.isNotBlank() }
+        val param = (obj.values["param"] as? JsonValue.StringValue)?.value?.takeIf { it.isNotBlank() }
+        val valueType = (obj.values["valueType"] as? JsonValue.StringValue)?.value?.takeIf { it.isNotBlank() }
         val options = stringList(obj.values["options"])
         val optionLabels = stringList(obj.values["labels"])
-        val args = stringMap(obj.values["args"])
+        // M4.4: the typed `args` object. A present-but-malformed one means the row could fire a
+        // half-built action, so it is greyed out instead of silently losing an argument.
+        val argsNode = obj.values["args"]
+        val args = panelArgsOf(argsNode)
+        val argsMalformed = argsNode != null && args == null
         return MelodyPanelRow(
             kind = kind,
             key = key,
             title = title,
             state = state,
             action = action,
-            args = args,
+            param = param,
+            valueType = valueType,
+            args = args ?: emptyMap(),
             options = options,
             optionLabels = optionLabels,
             min = number(obj.values["min"]),
             max = number(obj.values["max"]),
             step = number(obj.values["step"]),
             unit = (obj.values["unit"] as? JsonValue.StringValue)?.value?.takeIf { it.isNotBlank() },
-            unavailable = (obj.values["unavailable"] as? JsonValue.BooleanValue)?.value ?: false,
+            unavailable = ((obj.values["unavailable"] as? JsonValue.BooleanValue)?.value ?: false) || argsMalformed,
         )
     }
 
@@ -332,11 +340,19 @@ object MelodyProviderMerge {
         return array.values.mapNotNull { (it as? JsonValue.StringValue)?.value }
     }
 
-    private fun stringMap(value: JsonValue?): Map<String, String> {
-        val obj = value as? JsonValue.Object ?: return emptyMap()
-        val out = LinkedHashMap<String, String>()
-        for ((key, item) in obj.values) {
-            out[key] = (item as? JsonValue.StringValue)?.value ?: return emptyMap()
+    /**
+     * Reads the M4.4 typed `args` node (`{ "<name>": { "type": ..., "value": ... } }`). Absent = empty
+     * map (a Button with no literal args is legal); present but malformed = `null`, which greys the row.
+     */
+    private fun panelArgsOf(value: JsonValue?): Map<String, MelodyPanelArg>? {
+        if (value == null) return emptyMap()
+        val obj = value as? JsonValue.Object ?: return null
+        val out = LinkedHashMap<String, MelodyPanelArg>(obj.values.size)
+        for ((name, item) in obj.values) {
+            val arg = item as? JsonValue.Object ?: return null
+            val type = (arg.values["type"] as? JsonValue.StringValue)?.value?.takeIf { it.isNotBlank() } ?: return null
+            val text = (arg.values["value"] as? JsonValue.StringValue)?.value ?: return null
+            out[name] = MelodyPanelArg(type = type, value = text)
         }
         return out
     }
