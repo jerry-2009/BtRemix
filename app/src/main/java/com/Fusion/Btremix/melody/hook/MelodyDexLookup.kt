@@ -31,13 +31,53 @@ internal object MelodyDexLookup {
         hostApkPath: String?,
         packages: Collection<String>,
         params: Array<Class<*>>,
+    ): String? = findClassNamesWithMethod(hostApkPath, packages, params, Void.TYPE).singleOrNull()
+
+    /**
+     * Every class in [packages] declaring a method with exactly [params] and an optional [returnType].
+     *
+     * The v0 redirect anchor (M5.1) has the same signature on the abstract repository base (`b`) and
+     * on the concrete `EarphoneRepositoryClientImpl`, so the caller gets the full candidate list and
+     * picks the concrete implementation itself - a `singleOrNull` here would wrongly report "missing".
+     */
+    fun findClassNamesWithMethod(
+        hostApkPath: String?,
+        packages: Collection<String>,
+        params: Array<Class<*>>,
+        returnType: Class<*>? = null,
+    ): List<String> {
+        if (hostApkPath.isNullOrBlank()) return emptyList()
+        val bridge = runCatching { DexKitBridge.create(hostApkPath) }.getOrNull() ?: return emptyList()
+        return bridge.use { kit ->
+            val matcher = MethodMatcher.create()
+                .paramTypes(*params)
+            if (returnType != null) matcher.returnType(returnType)
+            val methods = runCatching {
+                kit.findMethod(FindMethod.create().searchPackages(packages).matcher(matcher))
+            }.getOrNull().orEmpty()
+            methods.map { it.declaredClassName }.distinct()
+        }
+    }
+
+    /**
+     * Name of the single class in [packages] declaring a no-argument method named [methodName] with
+     * return type [returnType]. Used to find the host's ANC command-state DTO (`O`, `SetCommandStateDTO`)
+     * by its accessor rather than by its obfuscated class name (M5.1 D-19).
+     */
+    fun findClassDeclaringMethod(
+        hostApkPath: String?,
+        packages: Collection<String>,
+        methodName: String,
+        params: Array<Class<*>> = emptyArray(),
+        returnType: Class<*>? = null,
     ): String? {
         if (hostApkPath.isNullOrBlank()) return null
         val bridge = runCatching { DexKitBridge.create(hostApkPath) }.getOrNull() ?: return null
         return bridge.use { kit ->
             val matcher = MethodMatcher.create()
+                .name(methodName)
                 .paramTypes(*params)
-                .returnType(Void.TYPE)
+            if (returnType != null) matcher.returnType(returnType)
             val methods = runCatching {
                 kit.findMethod(FindMethod.create().searchPackages(packages).matcher(matcher))
             }.getOrNull().orEmpty()

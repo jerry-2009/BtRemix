@@ -12,6 +12,7 @@ import com.Fusion.Btremix.definition.json.DefinitionJsonCodec
 import com.Fusion.Btremix.melody.api.MelodyBridgeResult
 import com.Fusion.Btremix.melody.api.MelodyLifecycleWire
 import com.Fusion.Btremix.melody.config.MelodyManagedDevice
+import com.Fusion.Btremix.melody.projection.MelodyProjectionBuilder
 import java.util.concurrent.CountDownLatch
 import java.util.concurrent.TimeUnit
 import kotlinx.coroutines.runBlocking
@@ -104,7 +105,10 @@ class MelodySessionServiceTest {
 
         val envelope = requireNotNull(requireNotNull(bridge).resolveProjection(MANAGED_MAC))
 
-        assertTrue("missing envelope version", envelope.contains("\"version\":1"))
+        assertTrue(
+            "missing envelope version",
+            envelope.contains("\"version\":${MelodyProjectionBuilder.ENVELOPE_VERSION}"),
+        )
         assertTrue("missing mac", envelope.contains("\"mac\":\"$MANAGED_MAC\""))
         assertTrue("missing synthesised identity", envelope.contains("Sony WF-1000XM3"))
         assertTrue("managed MAC missing from listManagedMacs", requireNotNull(bridge).listManagedMacs().contains(MANAGED_MAC))

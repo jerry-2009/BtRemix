@@ -64,6 +64,10 @@ class MelodyProviderMergeTest {
         assertEquals(listOf(1, 10, 20), strength.levels.map { it.level })
         assertEquals(listOf(3, 8, 4), strength.levels.map { it.modeType })
         assertEquals(listOf(10, 11, 12), strength.levels.map { it.protocolIndex })
+        // M5.1 D-18: the redirect carries the parent action/argument names alongside the tables.
+        assertEquals("anc.setMode", policy.modeAction)
+        assertEquals("mode", policy.modeParam)
+        assertEquals("value", policy.strengthParam)
     }
 
     @Test
@@ -387,6 +391,9 @@ class MelodyProviderMergeTest {
               { "modeType": 5, "protocolIndex": 0, "state": "anc", "label": "Noise canceling" },
               { "modeType": 1, "protocolIndex": 1, "state": "off", "label": "Off" }
             ],
+            "modeAction": "anc.setMode",
+            "modeParam": "mode",
+            "strengthParam": "value",
             "strength": { "state": "ancLevel", "action": "anc.setLevel", "levels": [
               { "modeType": 3, "protocolIndex": 10, "level": 1 },
               { "modeType": 8, "protocolIndex": 11, "level": 10 },

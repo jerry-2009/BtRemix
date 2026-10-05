@@ -63,6 +63,16 @@ data class MelodyAncPolicy(
      * (M4.3b D-14), or `null` when the Definition has none.
      */
     val strength: MelodyAncStrengthDefinition? = null,
+    /**
+     * M5.1 (D-18): the action that selects a parent mode (Sony = `anc.setMode`). Derived by the
+     * projection from the Definition's `ui` row whose `state` is the ANC mode state; `null` when the
+     * Definition has no such row, which leaves the parent half of the redirect mapping fail-open.
+     */
+    val modeAction: String? = null,
+    /** Argument name of [modeAction] (Sony = `mode`), or `null` when it could not be derived. */
+    val modeParam: String? = null,
+    /** Argument name of [strength]'s action (Sony = `value`), or `null`. */
+    val strengthParam: String? = null,
 ) {
     val isEmpty: Boolean get() = modes.isEmpty()
 
@@ -195,8 +205,20 @@ object MelodyProviderMerge {
         val modesNode = anc.values["modes"] as? JsonValue.Array ?: return null
         val modes = modesNode.values.mapNotNull { item -> modeOf(item) }
         if (modes.isEmpty()) return null
-        return MelodyAncPolicy(uiVersion = uiVersion, modes = modes, strength = strengthOf(anc.values["strength"]))
+        // M5.1: the redirect mapping needs the parent action id and both argument names. They are
+        // optional additions to the M4.3b node; a missing one only costs that half of the mapping.
+        return MelodyAncPolicy(
+            uiVersion = uiVersion,
+            modes = modes,
+            strength = strengthOf(anc.values["strength"]),
+            modeAction = stringField(anc, "modeAction"),
+            modeParam = stringField(anc, "modeParam"),
+            strengthParam = stringField(anc, "strengthParam"),
+        )
     }
+
+    private fun stringField(obj: JsonValue.Object, name: String): String? =
+        (obj.values[name] as? JsonValue.StringValue)?.value?.takeIf { it.isNotBlank() }
 
     /**
      * The D-15「降噪效果」descriptor. All-or-nothing: the state, the action and at least one level are

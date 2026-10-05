@@ -177,13 +177,15 @@ internal class MelodyBridgeClient(
         override fun onSnapshot(mac: String?, snapshot: MelodySnapshot?) {
             if (snapshot == null) return
             val key = MelodyMac.normalize(mac ?: snapshot.mac)
+            val ancMode = MelodyAncStates.ofSnapshot(snapshot)
+            val ancLevel = MelodyAncStates.levelOfSnapshot(snapshot)
             cache.recordSnapshot(
                 key,
                 snapshot.lifecycle,
                 snapshot.stateKeys,
                 MelodyEarphoneBattery.ofSnapshot(snapshot),
-                MelodyAncStates.ofSnapshot(snapshot),
-                MelodyAncStates.levelOfSnapshot(snapshot),
+                ancMode,
+                ancLevel,
                 MelodyStateTexts.ofSnapshot(snapshot),
             )
             // M4.4: let the panel react to this push instead of waiting for its own 1 Hz tick.
@@ -194,6 +196,10 @@ internal class MelodyBridgeClient(
                 "mac" to key,
                 "lifecycle" to snapshot.lifecycle,
                 "keys" to snapshot.state.size(),
+                // M5.1 diagnostics: the ANC state is what the redirect's `noop` and the panel's
+                // projection are built from, so it must be visible without a debugger.
+                "ancMode" to ancMode,
+                "ancLevel" to ancLevel,
             )
         }
 
@@ -290,13 +296,15 @@ internal class MelodyBridgeClient(
             )
             return null
         }
+        val ancMode = MelodyAncStates.ofSnapshot(snapshot)
+        val ancLevel = MelodyAncStates.levelOfSnapshot(snapshot)
         cache.recordSnapshot(
             key,
             snapshot.lifecycle,
             snapshot.stateKeys,
             MelodyEarphoneBattery.ofSnapshot(snapshot),
-            MelodyAncStates.ofSnapshot(snapshot),
-            MelodyAncStates.levelOfSnapshot(snapshot),
+            ancMode,
+            ancLevel,
             MelodyStateTexts.ofSnapshot(snapshot),
         )
         snapshotListeners.notifySnapshot(key)
@@ -306,6 +314,8 @@ internal class MelodyBridgeClient(
             "mac" to key,
             "lifecycle" to snapshot.lifecycle,
             "keys" to snapshot.state.size(),
+            "ancMode" to ancMode,
+            "ancLevel" to ancLevel,
         )
         return snapshot
     }
@@ -426,6 +436,27 @@ internal class MelodyBridgeClient(
         val policy = MelodyProviderMerge.ancOf(envelope) ?: MelodyAncPolicy.NONE
         ancs[key] = policy
         return policy
+    }
+
+    /**
+     * The `protocolIndex` the Definition currently projects for [mac] (M5.1 D-18/D-20), or `null` when
+     * there is no live snapshot or no ANC table. This is what makes a tap on the already-selected mode a
+     * `noop` instead of a redundant write. Pure cache read - it runs on the host's UI thread inside the
+     * `v0` hook, so it must never pay for a Bundle decode or a binder call.
+     */
+    fun currentAncIndexFast(mac: String): Int? {
+        val key = MelodyMac.normalize(mac)
+        val cached = cache.snapshot(key) ?: return null
+        val anc = ancFast(key)
+        if (anc.isEmpty) return null
+        return MelodyEarphoneProjection.from(
+            cached.lifecycle,
+            cached.battery,
+            cached.ancMode,
+            anc.modes,
+            cached.ancLevel,
+            anc.strength,
+        ).noiseModeIndex
     }
 
     /**

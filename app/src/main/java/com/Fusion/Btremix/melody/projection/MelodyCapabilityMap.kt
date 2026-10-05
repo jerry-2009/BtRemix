@@ -7,6 +7,8 @@ import com.Fusion.Btremix.definition.api.MelodyAncStrengthLevel
 import com.Fusion.Btremix.definition.api.MelodyAncMode
 import com.Fusion.Btremix.definition.api.StateDefinition
 import com.Fusion.Btremix.definition.api.StateDefinitionType
+import com.Fusion.Btremix.definition.api.UiNode
+import com.Fusion.Btremix.definition.api.UiSchema
 import com.Fusion.Btremix.definition.json.JsonValue
 
 /**
@@ -158,13 +160,64 @@ object MelodyCapabilityMap {
         val declaredModes = declared?.modes.orEmpty()
         val modes = if (declaredModes.isNotEmpty()) declaredModes else deriveAncModes(definition)
         val state = ancStateOf(definition)
+        val strength = declared?.strength ?: deriveAncStrength(definition)
+        val modeAction = state?.key
+            ?.let { key -> uiNodeForState(definition.ui, key) }
+            ?.let(::actionOf)
         return MelodyAncPlan(
             uiVersion = uiVersion,
             modes = modes.map { mode ->
                 mode.copy(label = mode.label ?: state?.enumValues?.get(mode.state))
             },
-            strength = declared?.strength ?: deriveAncStrength(definition),
+            strength = strength,
+            // M5.1 (D-18): the parent mode action is not part of the M4.3b node; it is derived here
+            // from the Definition's own `ui` (the row that reads the ANC mode state) and from the
+            // declared action's first parameter. Both are optional: a Definition with no such row
+            // simply cannot rewrite a parent-mode call, and the redirect fails open.
+            modeAction = modeAction,
+            modeParam = modeAction
+                ?.let { action -> definition.actions[action]?.parameters?.firstOrNull()?.name },
+            strengthParam = strength?.action
+                ?.let { action -> definition.actions[action]?.parameters?.firstOrNull()?.name },
         )
+    }
+
+    /**
+     * The interactive `ui` node backing [state] (M5.1): the segmented row is the mode selector on both
+     * the Sony and Cleer packages; the slider/switch fallbacks only exist so a differently-shaped
+     * package does not silently lose its parent mapping. `null` when no interactive row reads [state].
+     */
+    private fun uiNodeForState(schema: UiSchema, state: String): UiNode? {
+        val nodes = mutableListOf<UiNode>()
+        fun collect(children: List<UiNode>) {
+            children.forEach { node ->
+                nodes += node
+                when (node) {
+                    is UiNode.Column -> collect(node.children)
+                    is UiNode.Section -> collect(node.children)
+                    else -> Unit
+                }
+            }
+        }
+        collect(schema.children)
+        val matches = nodes.filter { stateOf(it) == state }
+        return matches.firstOrNull { it is UiNode.Segmented }
+            ?: matches.firstOrNull { it is UiNode.Slider }
+            ?: matches.firstOrNull { it is UiNode.Switch }
+    }
+
+    private fun stateOf(node: UiNode): String? = when (node) {
+        is UiNode.Segmented -> node.state
+        is UiNode.Slider -> node.state
+        is UiNode.Switch -> node.state
+        else -> null
+    }
+
+    private fun actionOf(node: UiNode?): String? = when (node) {
+        is UiNode.Segmented -> node.action
+        is UiNode.Slider -> node.action
+        is UiNode.Switch -> node.action
+        else -> null
     }
 
     /**
@@ -349,6 +402,12 @@ data class MelodyAncPlan(
     val modes: List<MelodyAncMode>,
     /** The「降噪效果」strength mapping, or `null` when the Definition has none (M4.3b D-15). */
     val strength: MelodyAncStrengthDefinition? = null,
+    /** The action that selects a parent mode (M5.1 D-18), or `null` when it cannot be derived. */
+    val modeAction: String? = null,
+    /** Argument name of [modeAction] (Sony = `mode`), or `null`. */
+    val modeParam: String? = null,
+    /** Argument name of [strength]'s action (Sony = `value`), or `null`. */
+    val strengthParam: String? = null,
 ) {
     val isEmpty: Boolean get() = modes.isEmpty()
 

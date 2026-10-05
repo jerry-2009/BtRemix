@@ -56,6 +56,38 @@ internal class MelodyInjectionInstaller(
         // so a mode the host's vocabulary renders as "Adaptive" shows the Definition's own wording.
         runCatching { MelodyAncLabelInjection(module, log, loader).install() }
             .onFailure { log.warn("melody.injection.anc_label_failed", it) }
+        // M5.1: redirect every official ANC write (the single `earphone/b;->v0` collection point) into
+        // `IMelodyBridge.execute`, so system/device-centre initiated controls also run through BtRemix.
+        runCatching { MelodyAncRedirectInjection(module, log, loader, hostApkPath).install() }
+            .onFailure { log.warn("melody.injection.redirect_failed", it) }
+        // M5.2: the `setgate` broadcast (device card / settings / OneSpace) is the second layer. It is
+        // upstream of `v0`, so taking it over also skips the host's own `modeType` mapping and wear
+        // validation, and it keeps the entrance covered if the `v0` anchor is ever renamed. The M1
+        // `melody.command.receive` observation is emitted by this same hook (one hook per method).
+        runCatching { MelodySetgateRedirectInjection(module, log, loader).install() }
+            .onFailure { log.warn("melody.injection.setgate_failed", it) }
+        // M5.1 follow-up: the device-centre card's rows come from the SDK repository row, which the host
+        // fills from its own (suppressed) session - and its own restore path even uses an *empty* noise
+        // value, i.e. "关闭". Installed first so the snapshot refresh below can replay it after a write.
+        val cardMenus = runCatching { MelodyAncCardMenuInjection(module, log, loader) }.getOrNull()
+        cardMenus?.let {
+            runCatching { it.install() }.onFailure { error -> log.warn("melody.injection.anc_card_failed", error) }
+        }
+        // M5.1 follow-up: after a redirected write the host's own ANC view-model is stale (its LiveData
+        // is fed by the suppressed official session), so re-dispatch the projected index to the live
+        // detail-page item and OneSpace fragment. Snapshot-driven, fail-open.
+        runCatching {
+            MelodyAncRefreshInjection(module, log, loader) { mac -> cardMenus?.republish(mac) }.install()
+        }
+            .onFailure { log.warn("melody.injection.anc_refresh_failed", it) }
+        // M5.1 follow-up: the device-centre card is not built from the DTO - its rows read the btsdk
+        // `CurrentNoiseModeInfo.getCurrentNoiseReductionModeIndex()`, which our redirect never touches.
+        runCatching { MelodyAncNoiseInfoInjection(module, log, loader).install() }
+            .onFailure { log.warn("melody.injection.anc_noiseinfo_failed", it) }
+        // M5.1 diagnostics: what the desktop card actually receives (read-only), so a "card shows 关闭"
+        // report can be told apart from "no push happened" without a debugger.
+        runCatching { MelodyCardPushInjection(module, log, loader).install() }
+            .onFailure { log.warn("melody.injection.card_push_failed", it) }
     }
 
     private fun moduleApkStamp(): Long? =

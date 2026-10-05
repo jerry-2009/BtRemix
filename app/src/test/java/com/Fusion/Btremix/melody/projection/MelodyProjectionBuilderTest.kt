@@ -30,8 +30,9 @@ class MelodyProjectionBuilderTest {
         val envelope = parse(builder.build(device))
         val whitelist = envelope.getValue("whitelist").asObject()
 
-        // M4.4 bumped the envelope to v2 (panel rows gained param/valueType + typed Button args).
-        assertEquals(2.0, requireNotNull(envelope.getValue("version").asNumber()), 0.0)
+        // M4.4 bumped it to v2 (panel rows gained param/valueType + typed Button args); M5.1 bumped it
+        // to v3 (`melody.anc` gained modeAction/modeParam/strengthParam for the ANC redirect).
+        assertEquals(3.0, requireNotNull(envelope.getValue("version").asNumber()), 0.0)
         assertEquals("14:3F:A6:02:5F:B0", envelope.getValue("mac").asString())
         val definitionNode = envelope.getValue("definition").asObject()
         assertEquals("sony.wf1000xm3", definitionNode.getValue("id").asString())
@@ -233,6 +234,11 @@ class MelodyProjectionBuilderTest {
         val anc = parse(builder.build(managedAncDevice())).getValue("anc").asObject()
 
         assertEquals(1.0, anc.getValue("uiVersion").asNumber()!!, 0.0)
+        // M5.1 D-18: the redirect mapping is derived from the Definition's own ui row + action
+        // parameters, so the host hook never hard-codes the package's action vocabulary.
+        assertEquals("anc.setMode", anc.getValue("modeAction").asString())
+        assertEquals("mode", anc.getValue("modeParam").asString())
+        assertEquals("value", anc.getValue("strengthParam").asString())
         val modes = (anc.getValue("modes") as JsonValue.Array).values.map { it.asObject() }
         assertEquals(listOf(5.0, 1.0, 2.0, 10.0), modes.map { it.getValue("modeType").asNumber() })
         assertEquals(listOf(0.0, 1.0, 2.0, 3.0), modes.map { it.getValue("protocolIndex").asNumber() })
@@ -372,6 +378,24 @@ class MelodyProjectionBuilderTest {
           "states": {
             "ancMode": { "type": "enum", "enumValues": { "off": "Off", "anc": "Noise canceling", "ambient": "Ambient sound", "wind": "Wind noise reduction" } },
             "ancLevel": { "type": "integer", "min": 1, "max": 20, "step": 1 }
+          },
+          "actions": {
+            "anc.setMode": {
+              "displayName": "Set noise control",
+              "parameters": [{ "name": "mode", "type": "enum", "enumValues": { "anc": "Noise canceling", "off": "Off" } }],
+              "resultState": "ancMode"
+            },
+            "anc.setLevel": {
+              "displayName": "Set ambient level",
+              "parameters": [{ "name": "value", "type": "integer", "min": 1, "max": 20 }],
+              "resultState": "ancLevel"
+            }
+          },
+          "ui": {
+            "children": [
+              { "type": "segmented", "state": "ancMode", "action": "anc.setMode", "options": ["anc", "off"] },
+              { "type": "slider", "state": "ancLevel", "action": "anc.setLevel" }
+            ]
           }
         }
     """.trimIndent()

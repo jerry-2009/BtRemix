@@ -319,6 +319,11 @@ class MelodyProjectionBuilder(
         // M4.3b D-15: the「降噪效果」level mapping travels with the table so the host process can
         // project the selected child position without having the Definition.
         plan.strength?.let { fields["strength"] = ancStrength(it) }
+        // M5.1 D-18: the redirect mapping's action ids/argument names. Derived by the Definition and
+        // carried here so the host hook never has to hard-code a package's action vocabulary.
+        plan.modeAction?.let { fields["modeAction"] = JsonValue.StringValue(it) }
+        plan.modeParam?.let { fields["modeParam"] = JsonValue.StringValue(it) }
+        plan.strengthParam?.let { fields["strengthParam"] = JsonValue.StringValue(it) }
         return JsonValue.Object(fields)
     }
 
@@ -363,6 +368,11 @@ class MelodyProjectionBuilder(
          * `param`/`valueType` and typed `Button` args, so a persisted v1 envelope must be re-pulled
          * (a stale one cannot wire its rows to `execute`).
          */
-        const val ENVELOPE_VERSION: Int = 2
+        /**
+         * M5.1 bumped it 2 -> 3: the `anc` node gained `modeAction` / `modeParam` / `strengthParam`,
+         * which the M5 redirect needs. A persisted v2 envelope would silently fail the redirect
+         * (`unmapped`) until a re-pull, so the version gate is what makes the new fields land.
+         */
+        const val ENVELOPE_VERSION: Int = 3
     }
 }
