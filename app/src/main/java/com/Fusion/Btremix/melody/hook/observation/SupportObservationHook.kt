@@ -6,9 +6,11 @@ import android.net.Uri
 import android.os.Bundle
 import android.os.CancellationSignal
 import com.Fusion.Btremix.melody.api.WhitelistExport
+import com.Fusion.Btremix.melody.hook.MelodyAnchorSession
 import com.Fusion.Btremix.melody.hook.MelodyLog
 import com.Fusion.Btremix.melody.hook.Reflect
 import com.Fusion.Btremix.melody.hook.WhitelistExportSink
+import com.Fusion.Btremix.melody.hook.anchor.MelodyAnchorCatalog
 import io.github.libxposed.api.XposedInterface
 
 /**
@@ -35,7 +37,7 @@ internal class SupportObservationHook(
     private val exportSink = WhitelistExportSink(log)
 
     fun install() {
-        val providerClass = Reflect.loadClass(PROVIDER_CLASS, loader)
+        val providerClass = MelodyAnchorSession.classOrNull(MelodyAnchorCatalog.PROVIDER_ALIVE, loader)
         if (providerClass == null) {
             log.event("melody.anchor.missing", "hook" to "support", "class" to PROVIDER_CLASS)
             return

@@ -1,33 +1,29 @@
 package com.Fusion.Btremix.melody.hook
 
+import com.Fusion.Btremix.melody.hook.anchor.MelodyAnchorCatalog
 import java.lang.reflect.Method
-import java.lang.reflect.Modifier
 
 /**
- * Three-level host anchor resolution, extracted for the M5.1 redirect anchor
- * (`HANDOFF_MELODY_M5_PLAN.md` §4 M5.1/§4 M5.4).
+ * The hook-facing view of [MelodyAnchorSession] (M5.4 D-30, retargeted at the M6 catalog).
  *
- * The obfuscated baseline (17.6.3) is always tried first, and only by *shape* when the recorded name
- * no longer exists:
- *
- *  1. baseline class name + method name + parameter types;
- *  2. baseline class name + parameter types (the method was renamed, the class kept);
- *  3. DexKit scan of the recorded packages by parameter types (+ return type when given), picking the
- *     concrete (non-abstract) declaring class.
- *
- * A miss is reported as `melody.anchor.missing` and costs only the caller's own feature; it never
- * throws into the host. `melody.anchor.renamed` is emitted whenever level 2/3 had to be used, so a host
- * update is visible in logcat before it becomes a functional regression.
+ * Before M6 this class carried the three-level resolution itself; it now delegates to the process-scoped
+ * session so every hook (transport, the three redirects, and the M4 panel/DTO/card anchors) shares one
+ * DexKit pass and one persisted report. The constructor keeps its `(log, loader, hostApkPath)` shape so
+ * the existing call sites do not change; only the catalog id ([hook]) selects the anchor, which is why
+ * the ids must stay equal to the `hook=` values recorded in M5.
  */
 internal class MelodyAnchorResolver(
     private val log: MelodyLog,
     private val loader: ClassLoader,
-    /** `ApplicationInfo.sourceDir` of the host, used only by the DexKit level. */
-    private val hostApkPath: String?,
+    @Suppress("unused") private val hostApkPath: String? = null,
 ) {
 
     data class Anchor(val clazz: Class<*>, val method: Method)
 
+    /**
+     * The single anchor for [hook]. The remaining parameters are the pre-M6 fallback description and are
+     * only used when `hook` is not in the catalog (kept so a future ad-hoc anchor still resolves by name).
+     */
     fun resolve(
         hook: String,
         baselineClass: String,
@@ -37,53 +33,17 @@ internal class MelodyAnchorResolver(
         returnType: Class<*>? = null,
     ): Anchor? = resolveAll(hook, listOf(baselineClass), packages, methodName, params, returnType).firstOrNull()
 
-    /**
-     * Transport-style anchor (M5.4 D-30): the layer method has no recorded name, so it is matched by
-     * its parameter signature and a `void` return. The DexKit level keeps the original "exactly one
-     * candidate" requirement - an ambiguous scan must not hook an unrelated method.
-     */
+    /** Transport-style anchor: matched by parameter signature and a `void` return. */
     fun resolveVoid(
         hook: String,
         baselineClass: String,
         packages: List<String>,
         params: Array<Class<*>>,
-    ): Anchor? {
-        val cls = Reflect.loadClass(baselineClass, loader)
-        val method = cls?.let { Reflect.findUniqueMethodByParams(it, params) }
-        if (cls != null && method != null) {
-            hit(hook, "baseline", cls.name, method.name)
-            return Anchor(cls, method)
-        }
-        val found = runCatching {
-            MelodyDexLookup.findClassNamesWithMethod(hostApkPath, packages, params, java.lang.Void.TYPE).singleOrNull()
-        }
-            .onFailure { log.warn("melody.anchor.dexkit_failed", it) }
-            .getOrNull()
-        val resolvedClass = found?.let { Reflect.loadClass(it, loader) }
-        val resolvedMethod = resolvedClass?.let { Reflect.findUniqueMethodByParams(it, params) }
-        if (resolvedClass != null && resolvedMethod != null) {
-            log.event(
-                "melody.anchor.renamed",
-                "hook" to hook,
-                "expected" to baselineClass,
-                "resolved" to resolvedClass.name,
-            )
-            hit(hook, "dexkit", resolvedClass.name, resolvedMethod.name)
-            return Anchor(resolvedClass, resolvedMethod)
-        }
-        log.event("melody.anchor.missing", "hook" to hook, "class" to baselineClass, "method" to "(params)")
-        return null
-    }
+    ): Anchor? = resolveAll(hook, listOf(baselineClass), packages, methodName = "", params = params).firstOrNull()
 
     /**
-     * All concrete declarations of one contract, across the recorded baseline classes.
-     *
-     * A single baseline is not enough for `earphone/b;->v0`: 17.6.3 ships **two** concrete
-     * implementations (`EarphoneRepositoryClientImpl` in `:fg`, `J` in the main process), and only
-     * hooking both covers every official ANC entrance. Each recorded baseline is tried by name first;
-     * if one is missing or did not resolve, the DexKit level runs and picks up every other concrete
-     * class with the same signature (renames included). The steady state (all baselines present) never
-     * pays for DexKit.
+     * Every concrete declaration of one contract. Only `redirect.v0` needs more than one (the main
+     * process and `:fg` implementations), and the catalog marks it `allowMultiple`.
      */
     fun resolveAll(
         hook: String,
@@ -93,21 +53,23 @@ internal class MelodyAnchorResolver(
         params: Array<Class<*>>,
         returnType: Class<*>? = null,
     ): List<Anchor> {
+        val resolved = if (MelodyAnchorCatalog.spec(hook) != null) {
+            MelodyAnchorSession.anchors(hook, loader).map { Anchor(it.clazz, it.method!!) }
+        } else {
+            emptyList()
+        }
+        if (resolved.isNotEmpty()) return resolved
+        if (MelodyAnchorCatalog.spec(hook) != null) return emptyList()
+        // Not in the catalog: behave like the pre-M6 resolver (baseline name first, then signature).
         val anchors = LinkedHashMap<String, Anchor>()
-        var missedBaseline = false
         for (baseline in baselineClasses) {
-            val cls = Reflect.loadClass(baseline, loader)
-            if (cls == null) {
-                missedBaseline = true
-                continue
-            }
-            val method = Reflect.findMethod(cls, methodName, params)
-                ?: Reflect.findUniqueMethodByParams(cls, params)
-            if (method == null) {
-                missedBaseline = true
-                continue
-            }
-            if (method.name != methodName) {
+            val cls = Reflect.loadClass(baseline, loader) ?: continue
+            val method = if (methodName.isEmpty()) {
+                Reflect.findUniqueMethodByParams(cls, params)
+            } else {
+                Reflect.findMethod(cls, methodName, params) ?: Reflect.findUniqueMethodByParams(cls, params)
+            } ?: continue
+            if (methodName.isNotEmpty() && method.name != methodName) {
                 log.event(
                     "melody.anchor.renamed",
                     "hook" to hook,
@@ -115,52 +77,11 @@ internal class MelodyAnchorResolver(
                     "resolved" to "${cls.name}.${method.name}",
                 )
             }
-            hit(hook, if (method.name == methodName) "baseline" else "rename", cls.name, method.name)
             anchors[cls.name] = Anchor(cls, method)
         }
-
-        if (missedBaseline || anchors.isEmpty()) {
-            val candidates = runCatching {
-                MelodyDexLookup.findClassNamesWithMethod(hostApkPath, packages, params, returnType)
-            }
-                .onFailure { log.warn("melody.anchor.dexkit_failed", it) }
-                .getOrNull()
-                .orEmpty()
-            for (name in candidates) {
-                if (name in anchors) continue
-                val cls = Reflect.loadClass(name, loader) ?: continue
-                if (Modifier.isAbstract(cls.modifiers)) continue
-                val method = Reflect.findUniqueMethodByParams(cls, params) ?: continue
-                log.event(
-                    "melody.anchor.renamed",
-                    "hook" to hook,
-                    "expected" to baselineClasses.firstOrNull(),
-                    "resolved" to name,
-                )
-                hit(hook, "dexkit", name, method.name)
-                anchors[name] = Anchor(cls, method)
-            }
-        }
-
         if (anchors.isEmpty()) {
-            log.event(
-                "melody.anchor.missing",
-                "hook" to hook,
-                "class" to baselineClasses.joinToString(","),
-                "method" to methodName,
-            )
+            log.event("melody.anchor.missing", "hook" to hook, "class" to baselineClasses.joinToString(","))
         }
         return anchors.values.toList()
-    }
-
-    /** One line per resolved anchor; the export groups these into the "锚点命中表" (M5.4 D-30). */
-    private fun hit(hook: String, level: String, className: String, methodName: String) {
-        log.event(
-            "melody.anchor.hit",
-            "hook" to hook,
-            "level" to level,
-            "class" to className,
-            "method" to methodName,
-        )
     }
 }

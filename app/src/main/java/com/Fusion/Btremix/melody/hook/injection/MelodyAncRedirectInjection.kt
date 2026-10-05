@@ -6,10 +6,11 @@ import com.Fusion.Btremix.melody.api.MelodyAncRedirectPolicy
 import com.Fusion.Btremix.melody.api.MelodyBridgeResult
 import com.Fusion.Btremix.melody.api.MelodyMac
 import com.Fusion.Btremix.melody.hook.MelodyAnchorResolver
-import com.Fusion.Btremix.melody.hook.MelodyDexLookup
+import com.Fusion.Btremix.melody.hook.MelodyAnchorSession
 import com.Fusion.Btremix.melody.hook.MelodyLog
 import com.Fusion.Btremix.melody.hook.Reflect
 import com.Fusion.Btremix.melody.hook.bridge.MelodyBridgeClients
+import com.Fusion.Btremix.melody.hook.anchor.MelodyAnchorCatalog
 import io.github.libxposed.api.XposedInterface
 import java.lang.reflect.Method
 import java.lang.reflect.ParameterizedType
@@ -324,15 +325,8 @@ private object MelodyAncStateDto {
         // 2. The DTO lives in the same package as the intercepted implementation in 17.6.3.
         val pkg = method.declaringClass.name.substringBeforeLast('.', "")
         if (pkg.isNotEmpty()) Reflect.loadClass("$pkg.O", loader)?.let { return it }
-        // 3. DexKit by the DTO's own accessor, so a renamed class is still found.
-        runCatching {
-            MelodyDexLookup.findClassDeclaringMethod(
-                hostApkPath = hostApkPath,
-                packages = listOf(pkg.ifEmpty { PACKAGE }),
-                methodName = STATUS_ACCESSOR,
-                returnType = Int::class.javaPrimitiveType,
-            )
-        }.getOrNull()?.let { name -> Reflect.loadClass(name, loader)?.let { return it } }
+        // 3. The catalog anchor resolved by the DTO's own accessor, so a renamed class is still found.
+        MelodyAnchorSession.classOrNull(MelodyAnchorCatalog.REDIRECT_V0_RESULT, loader)?.let { return it }
         // 4. Recorded baseline class name.
         return Reflect.loadClass(BASELINE_CLASS, loader)
     }

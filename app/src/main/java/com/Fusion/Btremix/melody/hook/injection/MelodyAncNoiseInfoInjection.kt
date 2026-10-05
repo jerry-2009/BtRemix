@@ -3,8 +3,10 @@ package com.Fusion.Btremix.melody.hook.injection
 import android.os.SystemClock
 import com.Fusion.Btremix.melody.api.MelodyAncNoiseIndex
 import com.Fusion.Btremix.melody.hook.MelodyLog
+import com.Fusion.Btremix.melody.hook.MelodyAnchorSession
 import com.Fusion.Btremix.melody.hook.Reflect
 import com.Fusion.Btremix.melody.hook.bridge.MelodyBridgeClients
+import com.Fusion.Btremix.melody.hook.anchor.MelodyAnchorCatalog
 import io.github.libxposed.api.XposedInterface
 import java.util.concurrent.ConcurrentHashMap
 
@@ -45,7 +47,7 @@ internal class MelodyAncNoiseInfoInjection(
     private var cached: Pair<Long, MelodyAncNoiseIndex.Target?>? = null
 
     fun install() {
-        val cls = Reflect.loadClass(INFO_CLASS, loader)
+        val cls = MelodyAnchorSession.classOrNull(MelodyAnchorCatalog.BTSDK_NOISE_INFO, loader)
         if (cls == null) {
             log.event("melody.anchor.missing", "hook" to HOOK, "class" to INFO_CLASS)
             return

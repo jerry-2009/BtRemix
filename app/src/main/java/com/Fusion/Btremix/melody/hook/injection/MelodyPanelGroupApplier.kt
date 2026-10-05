@@ -7,8 +7,10 @@ import com.Fusion.Btremix.melody.api.MelodyPanelGroup
 import com.Fusion.Btremix.melody.api.MelodyPanelPolicy
 import com.Fusion.Btremix.melody.api.MelodyPanelRow
 import com.Fusion.Btremix.melody.api.MelodyPanelRowKind
+import com.Fusion.Btremix.melody.hook.MelodyAnchorSession
 import com.Fusion.Btremix.melody.hook.PreferenceTree
 import com.Fusion.Btremix.melody.hook.Reflect
+import com.Fusion.Btremix.melody.hook.anchor.MelodyAnchorCatalog
 import java.lang.reflect.Modifier
 import java.util.concurrent.ConcurrentHashMap
 import java.util.WeakHashMap
@@ -195,7 +197,8 @@ internal object MelodyPanelGroupApplier {
         loader: ClassLoader,
         log: MelodyGroupLog,
     ): Any? {
-        val cls = CATEGORY_CLASSES.firstNotNullOfOrNull { Reflect.loadClass(it, loader) } ?: return null
+        val cls = MelodyAnchorSession.classOrNull(MelodyAnchorCatalog.PANEL_PREFERENCE_CATEGORY, loader)
+            ?: return null
         val themed = contextOf(screen) ?: context
         val category = construct(cls, themed) ?: return null
         setKey(category, MelodyPanelGroup.ADVANCED_KEY)
@@ -278,7 +281,8 @@ internal object MelodyPanelGroupApplier {
         loader: ClassLoader,
         log: MelodyGroupLog,
     ): Any? {
-        val cls = Reflect.loadClass(COUI_MENU_PREFERENCE, loader) ?: return null
+        val cls = MelodyAnchorSession.classOrNull(MelodyAnchorCatalog.PANEL_COUI_MENU_PREFERENCE, loader)
+            ?: return null
         val preference = construct(cls, context) ?: run {
             logRowFailure(screenId, row, "construct_failed", cls.name, log)
             return null

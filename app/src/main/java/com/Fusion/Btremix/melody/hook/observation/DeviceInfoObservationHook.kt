@@ -3,8 +3,10 @@ package com.Fusion.Btremix.melody.hook.observation
 import android.bluetooth.BluetoothDevice
 import android.os.SystemClock
 import com.Fusion.Btremix.melody.api.ObservationRateLimiter
+import com.Fusion.Btremix.melody.hook.MelodyAnchorSession
 import com.Fusion.Btremix.melody.hook.MelodyLog
 import com.Fusion.Btremix.melody.hook.Reflect
+import com.Fusion.Btremix.melody.hook.anchor.MelodyAnchorCatalog
 import io.github.libxposed.api.XposedInterface
 
 /**
@@ -41,12 +43,12 @@ internal class DeviceInfoObservationHook(
     private val limiter = ObservationRateLimiter(POLLING_LOG_INTERVAL_MS)
 
     fun install() {
-        val managerClass = Reflect.loadClass(MANAGER_CLASS, loader)
+        val managerClass = MelodyAnchorSession.classOrNull(MelodyAnchorCatalog.BTSDK_DEVICE_INFO_MANAGER, loader)
         if (managerClass == null) {
             log.event("melody.anchor.missing", "hook" to "deviceinfo", "class" to MANAGER_CLASS)
             return
         }
-        val deviceInfoClass = Reflect.loadClass(DEVICE_INFO_CLASS, loader)
+        val deviceInfoClass = MelodyAnchorSession.classOrNull(MelodyAnchorCatalog.BTSDK_DEVICE_INFO, loader)
         if (deviceInfoClass == null) {
             log.event("melody.anchor.missing", "hook" to "deviceinfo", "class" to DEVICE_INFO_CLASS)
         }

@@ -3,9 +3,11 @@ package com.Fusion.Btremix.melody.hook.injection
 import com.Fusion.Btremix.melody.api.MelodyAncPolicy
 import com.Fusion.Btremix.melody.api.MelodyAncRenderOrder
 import com.Fusion.Btremix.melody.hook.MelodyLog
+import com.Fusion.Btremix.melody.hook.MelodyAnchorSession
 import com.Fusion.Btremix.melody.hook.Reflect
 import com.Fusion.Btremix.melody.hook.bridge.MelodyBridgeClient
 import com.Fusion.Btremix.melody.hook.bridge.MelodyBridgeClients
+import com.Fusion.Btremix.melody.hook.anchor.MelodyAnchorCatalog
 import io.github.libxposed.api.XposedInterface
 import java.util.concurrent.ConcurrentHashMap
 
@@ -48,7 +50,7 @@ internal class MelodyAncLabelInjection(
     private var ambiguousLogged = false
 
     fun install() {
-        val cls = Reflect.loadClass(WIDGET_CLASS, loader)
+        val cls = MelodyAnchorSession.classOrNull(MelodyAnchorCatalog.PANEL_DEVICE_CONTROL_WIDGET, loader)
         if (cls == null) {
             log.event("melody.anchor.missing", "hook" to "inject.anc.label", "class" to WIDGET_CLASS)
             return

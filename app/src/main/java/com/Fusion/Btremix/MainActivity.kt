@@ -1,6 +1,9 @@
 package com.Fusion.Btremix
 
+import android.Manifest
+import android.content.Intent
 import android.content.pm.PackageManager
+import android.os.Build
 import android.os.Bundle
 import androidx.activity.ComponentActivity
 import androidx.activity.compose.rememberLauncherForActivityResult
@@ -28,6 +31,7 @@ import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.DisposableEffect
+import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
@@ -52,15 +56,37 @@ import com.Fusion.Btremix.ui.packages.PackageToolsViewModel
 import com.Fusion.Btremix.ui.studio.DefinitionStudioScreen
 import com.Fusion.Btremix.ui.studio.StudioViewModel
 import com.Fusion.Btremix.ui.theme.BtRemixTheme
+import com.Fusion.Btremix.melody.bridge.MelodyHostUpdateState
+import com.Fusion.Btremix.melody.bridge.MelodyHostUpdateTracker
 
 class MainActivity : ComponentActivity() {
     private val explorerViewModel by viewModels<ExplorerViewModel>()
     private val packagesViewModel by viewModels<PackageToolsViewModel>()
     private val studioViewModel by viewModels<StudioViewModel>()
 
+    /** Set from the notification / explicit intent so a cold start lands on the Melody page. */
+    private val requestedPage = mutableStateOf<String?>(null)
+
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
-        setContent { BtRemixTheme { BtRemixApp(explorerViewModel, packagesViewModel, studioViewModel) } }
+        requestedPage.value = intent?.getStringExtra(MelodyHostUpdateTracker.EXTRA_PAGE)
+        setContent {
+            BtRemixTheme {
+                BtRemixApp(
+                    explorerViewModel = explorerViewModel,
+                    packagesViewModel = packagesViewModel,
+                    studioViewModel = studioViewModel,
+                    requestedPage = requestedPage.value,
+                    onRequestedPageConsumed = { requestedPage.value = null },
+                )
+            }
+        }
+    }
+
+    override fun onNewIntent(intent: Intent) {
+        super.onNewIntent(intent)
+        setIntent(intent)
+        requestedPage.value = intent.getStringExtra(MelodyHostUpdateTracker.EXTRA_PAGE)
     }
 }
 
@@ -71,12 +97,29 @@ private fun BtRemixApp(
     explorerViewModel: ExplorerViewModel,
     packagesViewModel: PackageToolsViewModel,
     studioViewModel: StudioViewModel,
+    requestedPage: String?,
+    onRequestedPageConsumed: () -> Unit,
 ) {
+    val context = LocalContext.current
     var page by rememberSaveable { mutableStateOf(AppPage.Explorer) }
     val packageState by packagesViewModel.state.collectAsState()
     val studioState by studioViewModel.state.collectAsState()
+    val hostUpdate by MelodyHostUpdateTracker.state.collectAsState()
+    LaunchedEffect(requestedPage) {
+        if (requestedPage == MelodyHostUpdateTracker.PAGE_MELODY) {
+            page = AppPage.Melody
+            onRequestedPageConsumed()
+        }
+    }
     Scaffold { padding ->
         Column(Modifier.fillMaxSize().padding(padding)) {
+            HostUpdateBanner(
+                state = hostUpdate,
+                onOpen = {
+                    page = AppPage.Melody
+                    MelodyHostUpdateTracker.acknowledge(context.applicationContext)
+                },
+            )
             Row(
                 modifier = Modifier.fillMaxWidth().padding(horizontal = 20.dp, vertical = 8.dp),
                 horizontalArrangement = Arrangement.spacedBy(8.dp),
@@ -139,6 +182,55 @@ private fun PageTab(label: String, selected: Boolean, modifier: Modifier, onClic
                 style = MaterialTheme.typography.labelLarge,
                 color = if (selected) MaterialTheme.colorScheme.onPrimary else MaterialTheme.colorScheme.onSurfaceVariant,
             )
+        }
+    }
+}
+
+/**
+ * M6: slim, dismissible-looking banner shown on every page while a Melody update has not been
+ * acknowledged. Opening it switches to the Melody page (which carries the full anchor report) and marks
+ * the current install as seen, so the banner and the system notification go away together.
+ */
+@Composable
+private fun HostUpdateBanner(state: MelodyHostUpdateState?, onOpen: () -> Unit) {
+    if (state == null || !state.updateDetected) return
+    val context = LocalContext.current
+    val permissionLauncher = rememberLauncherForActivityResult(ActivityResultContracts.RequestPermission()) { }
+    LaunchedEffect(state.installId) {
+        if (Build.VERSION.SDK_INT >= 33 &&
+            ContextCompat.checkSelfPermission(context, Manifest.permission.POST_NOTIFICATIONS) !=
+            PackageManager.PERMISSION_GRANTED
+        ) {
+            runCatching { permissionLauncher.launch(Manifest.permission.POST_NOTIFICATIONS) }
+        }
+    }
+    Surface(
+        modifier = Modifier.fillMaxWidth().padding(horizontal = 12.dp, vertical = 6.dp),
+        shape = RoundedCornerShape(8.dp),
+        color = MaterialTheme.colorScheme.tertiaryContainer,
+    ) {
+        Row(
+            modifier = Modifier.fillMaxWidth().padding(horizontal = 12.dp, vertical = 8.dp),
+            verticalAlignment = Alignment.CenterVertically,
+        ) {
+            Column(Modifier.weight(1f)) {
+                Text(
+                    "Melody 已更新" + (state.version?.let { "  $it" } ?: ""),
+                    style = MaterialTheme.typography.titleSmall,
+                    color = MaterialTheme.colorScheme.onTertiaryContainer,
+                )
+                Text(
+                    if (state.awaitingHost) {
+                        "宿主启动后自动用 DexKit 重新定位锚点"
+                    } else {
+                        "已重新定位锚点 ${state.hits}/${state.total}" +
+                            if (state.missingIds.isEmpty()) "" else "，${state.missingIds.size} 项降级"
+                    },
+                    style = MaterialTheme.typography.bodySmall,
+                    color = MaterialTheme.colorScheme.onTertiaryContainer,
+                )
+            }
+            TextButton(onClick = onOpen) { Text("查看") }
         }
     }
 }

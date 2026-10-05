@@ -34,6 +34,9 @@ import com.Fusion.Btremix.BtRemixApplication
 import com.Fusion.Btremix.BuildConfig
 import com.Fusion.Btremix.melody.api.MelodyCallPolicy
 import com.Fusion.Btremix.melody.bridge.MelodyDiagnosticStore
+import com.Fusion.Btremix.melody.bridge.MelodyHostUpdateState
+import com.Fusion.Btremix.melody.bridge.MelodyHostUpdateTracker
+import com.Fusion.Btremix.melody.hook.anchor.MelodyAnchorCatalog
 import java.io.File
 import java.text.SimpleDateFormat
 import java.util.Date
@@ -61,6 +64,7 @@ fun MelodyDiagnosticsScreen(modifier: Modifier = Modifier) {
     var buffered by remember { mutableStateOf(MelodyDiagnosticStore.size()) }
     var dropped by remember { mutableStateOf(MelodyDiagnosticStore.dropped()) }
     val managedMacs = app?.melodySupport?.managedMacsFlow?.collectAsState()?.value ?: emptyList()
+    val hostUpdate by MelodyHostUpdateTracker.state.collectAsState()
 
     Column(
         modifier = modifier.fillMaxSize().verticalScroll(rememberScrollState()).padding(20.dp),
@@ -72,6 +76,14 @@ fun MelodyDiagnosticsScreen(modifier: Modifier = Modifier) {
                 "默认关闭；打开后才开始采集，关掉会同时停掉宿主侧的日志格式化与回传，" +
                 "把开销降到接近零。开关在宿主进程下次启动时生效。",
             style = MaterialTheme.typography.bodyMedium,
+        )
+
+        HostUpdateSection(
+            state = hostUpdate,
+            onRescan = {
+                MelodyHostUpdateTracker.requestRescan(context)
+                message = "已清除锚点缓存；下次打开 Melody 时重新定位"
+            },
         )
 
         Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
@@ -146,6 +158,46 @@ private fun KeyValue(key: String, value: String) {
     }
 }
 
+/**
+ * M6 "宿主更新 / 锚点" block: shows which Melody build was seen, whether the anchors were re-located,
+ * and - when something failed - which feature is degraded, by human label. The rescan action clears the
+ * persisted report so the next host start pays for a full DexKit pass again.
+ */
+@Composable
+private fun HostUpdateSection(state: MelodyHostUpdateState?, onRescan: () -> Unit) {
+    Divider()
+    Text("宿主更新 / 锚点", style = MaterialTheme.typography.titleMedium)
+    if (state == null) {
+        Text("未检测到 com.oplus.melody（未安装或读不到）。", style = MaterialTheme.typography.bodySmall)
+        return
+    }
+    val status = when {
+        state.awaitingHost -> "已检测到更新，等待宿主启动后重新定位"
+        state.updateDetected -> "已检测到更新；锚点已重新定位"
+        state.resolved -> "锚点已就绪（安装未变化）"
+        else -> "尚未收到锚点报告（打开一次 Melody 详情页）"
+    }
+    KeyValue("宿主版本", state.version ?: "读不到")
+    KeyValue("上次提示版本", state.previousVersion ?: "-")
+    KeyValue("安装指纹", state.installId)
+    KeyValue("适配状态", status)
+    if (state.resolved) {
+        KeyValue("锚点命中", "${state.hits}/${state.total}")
+        state.report?.processes?.forEach { process ->
+            KeyValue("· ${process.processName.substringAfterLast('.')}", "${process.hits}/${process.total}")
+        }
+    }
+    if (state.missingIds.isNotEmpty()) {
+        Text("未命中（对应功能降级）：", style = MaterialTheme.typography.bodySmall)
+        state.missingIds.forEach { id ->
+            Text("· ${MelodyAnchorCatalog.labelOf(id)}  ($id)", style = MaterialTheme.typography.bodySmall)
+        }
+    }
+    Row(horizontalArrangement = Arrangement.spacedBy(12.dp)) {
+        OutlinedButton(onClick = onRescan) { Text("重新扫描锚点") }
+    }
+}
+
 private fun buildExport(context: Context, managedMacs: List<String>): String {
     val app = context.applicationContext as? BtRemixApplication
     val managed = managedMacs.joinToString(" | ") { mac ->
@@ -160,10 +212,20 @@ private fun buildExport(context: Context, managedMacs: List<String>): String {
             "android" to "${Build.VERSION.RELEASE} (API ${Build.VERSION.SDK_INT})",
             "hostPackage" to MelodyCallPolicy.HOST_PACKAGE,
             "hostVersion" to (hostVersion(context) ?: "?"),
+            "anchorReport" to anchorReportSummary(context),
             "diagnosticsEnabled" to (MelodyDiagnosticStore.diagnosticsEnabled).toString(),
             "managedDefinitions" to (managed.ifEmpty { "-" }),
         ),
     )
+}
+
+/** One-line summary of the persisted M6 anchor report, e.g. `inst=ab12 hits=26/28 miss=panel.model`. */
+private fun anchorReportSummary(context: Context): String {
+    val report = com.Fusion.Btremix.melody.bridge.MelodyAnchorStore.read(context) ?: return "none"
+    val hits = report.processes.sumOf { it.hits }
+    val total = report.processes.sumOf { it.total }
+    val misses = report.processes.flatMap { process -> process.misses.map { it.id } }.distinct()
+    return "inst=${report.installId} hits=$hits/$total" + if (misses.isEmpty()) "" else " miss=${misses.joinToString(",")}"
 }
 
 private fun share(context: Context, content: String) {

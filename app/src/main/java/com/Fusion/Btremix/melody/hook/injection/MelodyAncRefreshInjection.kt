@@ -5,9 +5,11 @@ import android.os.Handler
 import android.os.Looper
 import com.Fusion.Btremix.melody.api.MelodyMac
 import com.Fusion.Btremix.melody.hook.MelodyLog
+import com.Fusion.Btremix.melody.hook.MelodyAnchorSession
 import com.Fusion.Btremix.melody.hook.Reflect
 import com.Fusion.Btremix.melody.hook.bridge.MelodyBridgeClient
 import com.Fusion.Btremix.melody.hook.bridge.MelodyBridgeClients
+import com.Fusion.Btremix.melody.hook.anchor.MelodyAnchorCatalog
 import io.github.libxposed.api.XposedInterface
 import java.lang.reflect.Method
 import java.lang.ref.WeakReference
@@ -79,7 +81,7 @@ internal class MelodyAncRefreshInjection(
     private var armAttempts = 0
 
     fun install() {
-        voClass = Reflect.loadClass(VO_CLASS, loader)
+        voClass = MelodyAnchorSession.classOrNull(MelodyAnchorCatalog.ANC_REFRESH_VO, loader)
         val detail = hookDetailItem()
         val space = hookOneSpace()
         // The card model is built in the main process where neither of the two surfaces above exists, so
@@ -97,7 +99,7 @@ internal class MelodyAncRefreshInjection(
     // --- anchors --------------------------------------------------------------------------------
 
     private fun hookDetailItem(): Boolean {
-        val cls = Reflect.loadClass(ITEM_CLASS, loader) ?: return false
+        val cls = MelodyAnchorSession.classOrNull(MelodyAnchorCatalog.ANC_REFRESH_ITEM, loader) ?: return false
         val vo = voClass ?: return false
         val method = Reflect.findMethod(cls, ITEM_METHOD, arrayOf(vo))
             ?: Reflect.findUniqueMethodByParams(cls, arrayOf(vo))
@@ -124,7 +126,7 @@ internal class MelodyAncRefreshInjection(
     }
 
     private fun hookOneSpace(): Boolean {
-        val cls = Reflect.loadClass(ONE_SPACE_CLASS, loader) ?: return false
+        val cls = MelodyAnchorSession.classOrNull(MelodyAnchorCatalog.ANC_REFRESH_ONE_SPACE, loader) ?: return false
         val update = Reflect.findMethod(cls, ONE_SPACE_UPDATE, emptyArray()) ?: return false
         module.hook(update).intercept(XposedInterface.Hooker { chain ->
             val result = chain.proceed()
@@ -150,7 +152,7 @@ internal class MelodyAncRefreshInjection(
      * desktop may not re-observe). The refresh itself stays snapshot-driven.
      */
     private fun hookCardProvider(): Boolean {
-        val cls = Reflect.loadClass(CARD_PROVIDER_CLASS, loader) ?: return false
+        val cls = MelodyAnchorSession.classOrNull(MelodyAnchorCatalog.CARD_WIDGET_PROVIDER, loader) ?: return false
         var hooked = false
         for ((name, params) in listOf(
             "onCardsObserve" to arrayOf(Context::class.java, java.util.List::class.java),
@@ -266,7 +268,7 @@ internal class MelodyAncRefreshInjection(
      * only thing that changes is that our hooked getters are read again.
      */
     private fun reemitEarphoneLiveData(mac: String, index: Int): Int {
-        val repoClass = Reflect.loadClass(REPO_CLASS, loader) ?: return 0
+        val repoClass = MelodyAnchorSession.classOrNull(MelodyAnchorCatalog.EARPHONE_REPOSITORY, loader) ?: return 0
         val repo = repoInstance(repoClass) ?: return 0
         val seen = Collections.newSetFromMap(IdentityHashMap<Any, Boolean>())
         var posted = 0
@@ -287,7 +289,7 @@ internal class MelodyAncRefreshInjection(
      * keeps the DTO it received before the redirected write.
      */
     private fun reemitActiveEarphoneLiveData(mac: String, index: Int): Int {
-        val repoClass = Reflect.loadClass(REPO_CLASS, loader) ?: return 0
+        val repoClass = MelodyAnchorSession.classOrNull(MelodyAnchorCatalog.EARPHONE_REPOSITORY, loader) ?: return 0
         val repo = repoInstance(repoClass) ?: return 0
         val seen = Collections.newSetFromMap(IdentityHashMap<Any, Boolean>())
         var posted = 0
@@ -381,7 +383,7 @@ internal class MelodyAncRefreshInjection(
     private val dtoClass: Class<*>?
         get() {
             if (!dtoClassResolved) {
-                resolvedDtoClass = Reflect.loadClass(DTO_CLASS, loader)
+                resolvedDtoClass = MelodyAnchorSession.classOrNull(MelodyAnchorCatalog.DTO_EARPHONE, loader)
                 dtoClassResolved = true
             }
             return resolvedDtoClass
@@ -467,7 +469,7 @@ internal class MelodyAncRefreshInjection(
     /** Builds a `Ba/z` from the repository's current `EarphoneDTO` (its getters carry our projection). */
     private fun buildVo(mac: String): Any? {
         val cls = voClass ?: return null
-        val repoClass = Reflect.loadClass(REPO_CLASS, loader) ?: return null
+        val repoClass = MelodyAnchorSession.classOrNull(MelodyAnchorCatalog.EARPHONE_REPOSITORY, loader) ?: return null
         val repo = repoInstance(repoClass) ?: return null
         val dto = callStringArgReturning(repo, DTO_CLASS, mac) ?: return null
         return Reflect.newInstanceArgs(cls, dto.javaClass to dto)

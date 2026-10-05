@@ -70,6 +70,21 @@
                 <action android:name="com.Fusion.Btremix.melody.HOST_ALIVE" />
             </intent-filter>
         </receiver>
+
+        <!--
+          M6: the injected host reports which class name each anchor resolved to for the installed
+          Melody build. Always enabled on purpose: the report has to arrive even when BtRemix is not
+          running, otherwise a Melody update would silently degrade the panel until the user opens the
+          app. The payload is only stored and shown; the host re-validates every class before hooking.
+        -->
+        <receiver
+            android:name=".melody.bridge.MelodyHostAnchorsReceiver"
+            android:enabled="true"
+            android:exported="true">
+            <intent-filter>
+                <action android:name="com.Fusion.Btremix.melody.HOST_ANCHORS" />
+            </intent-filter>
+        </receiver>
     </application>
 
 </manifest>

@@ -12,7 +12,9 @@ import com.Fusion.Btremix.melody.api.MelodyQueryPath
 import com.Fusion.Btremix.melody.api.MelodyQueryTarget
 import com.Fusion.Btremix.melody.api.MelodyWhitelistIdentity
 import com.Fusion.Btremix.melody.hook.MelodyLog
+import com.Fusion.Btremix.melody.hook.MelodyAnchorSession
 import com.Fusion.Btremix.melody.hook.Reflect
+import com.Fusion.Btremix.melody.hook.anchor.MelodyAnchorCatalog
 import com.Fusion.Btremix.melody.hook.bridge.MelodyBridgeClient
 import com.Fusion.Btremix.melody.hook.bridge.MelodyBridgeClients
 import io.github.libxposed.api.XposedInterface
@@ -42,7 +44,7 @@ internal class MelodyAliveProviderInjection(
     private val contentMemo = LinkedHashMap<Long, ByteArray>()
 
     fun install() {
-        val providerClass = Reflect.loadClass(PROVIDER_CLASS, loader)
+        val providerClass = MelodyAnchorSession.classOrNull(MelodyAnchorCatalog.PROVIDER_ALIVE, loader)
         if (providerClass == null) {
             log.event("melody.anchor.missing", "hook" to "inject", "class" to PROVIDER_CLASS)
             return

@@ -3,8 +3,10 @@ package com.Fusion.Btremix.melody.hook.injection
 import android.app.Application
 import com.Fusion.Btremix.melody.api.MelodyMac
 import com.Fusion.Btremix.melody.hook.MelodyLog
+import com.Fusion.Btremix.melody.hook.MelodyAnchorSession
 import com.Fusion.Btremix.melody.hook.Reflect
 import com.Fusion.Btremix.melody.hook.bridge.MelodyBridgeClients
+import com.Fusion.Btremix.melody.hook.anchor.MelodyAnchorCatalog
 import io.github.libxposed.api.XposedInterface
 import java.lang.reflect.Method
 import java.util.concurrent.ConcurrentHashMap
@@ -53,12 +55,12 @@ internal class MelodyAncCardMenuInjection(
 
     fun install() {
         hookApplication()
-        val cls = Reflect.loadClass(UTILS_CLASS, loader)
+        val cls = MelodyAnchorSession.classOrNull(MelodyAnchorCatalog.CARD_MENU_BUILDER, loader)
         if (cls == null) {
             log.event("melody.anchor.missing", "hook" to HOOK, "class" to UTILS_CLASS)
             return
         }
-        noiseClass = Reflect.loadClass(NOISE_CLASS, loader)
+        noiseClass = MelodyAnchorSession.classOrNull(MelodyAnchorCatalog.BTSDK_NOISE_INFO, loader)
         val method = findBuilder(cls)
         if (method == null) {
             log.event("melody.anchor.missing", "hook" to HOOK, "class" to cls.name, "target" to METHOD)
@@ -123,7 +125,7 @@ internal class MelodyAncCardMenuInjection(
     }
 
     private fun findRow(mac: String): Any? {
-        val manager = Reflect.loadClass(SDK_MANAGER, loader) ?: return null
+        val manager = MelodyAnchorSession.classOrNull(MelodyAnchorCatalog.CARD_MENU_SDK_MANAGER, loader) ?: return null
         val find = Reflect.findMethod(manager, "d", arrayOf(String::class.java)) ?: return null
         find.isAccessible = true
         return find.invoke(null, mac)
@@ -131,7 +133,7 @@ internal class MelodyAncCardMenuInjection(
 
     /** `i9.c.d(MelodyApplication, sdk.DeviceInfo)` - the host's own "restore the card's noise menus". */
     private fun restoreMethod(row: Any): Method? =
-        runCatching { Reflect.loadClass(UTILS_CLASS, loader) }.getOrNull()
+        runCatching { MelodyAnchorSession.classOrNull(MelodyAnchorCatalog.CARD_MENU_BUILDER, loader) }.getOrNull()
             ?.let { utils ->
                 runCatching { utils.declaredMethods }.getOrNull().orEmpty().firstOrNull { method ->
                     method.name == RESTORE &&
@@ -144,7 +146,7 @@ internal class MelodyAncCardMenuInjection(
 
     /** `DeviceInfoManager.h(DeviceInfo)` - SDK update + card notification. */
     private fun publish(row: Any): Boolean {
-        val manager = Reflect.loadClass(SDK_MANAGER, loader) ?: return false
+        val manager = MelodyAnchorSession.classOrNull(MelodyAnchorCatalog.CARD_MENU_SDK_MANAGER, loader) ?: return false
         val update = Reflect.findMethod(manager, "h", arrayOf(row.javaClass)) ?: return false
         update.isAccessible = true
         update.invoke(null, row)

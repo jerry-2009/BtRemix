@@ -5,9 +5,11 @@ import android.os.SystemClock
 import com.Fusion.Btremix.melody.api.MelodyDeviceInfoProjection
 import com.Fusion.Btremix.melody.api.MelodyMac
 import com.Fusion.Btremix.melody.hook.MelodyLog
+import com.Fusion.Btremix.melody.hook.MelodyAnchorSession
 import com.Fusion.Btremix.melody.hook.Reflect
 import com.Fusion.Btremix.melody.hook.bridge.MelodyBridgeClient
 import com.Fusion.Btremix.melody.hook.bridge.MelodyBridgeClients
+import com.Fusion.Btremix.melody.hook.anchor.MelodyAnchorCatalog
 import io.github.libxposed.api.XposedInterface
 import java.util.concurrent.ConcurrentHashMap
 
@@ -66,12 +68,12 @@ internal class MelodyDeviceInfoInjection(
     private var managed: Pair<Long, Set<String>>? = null
 
     fun install() {
-        val managerClass = Reflect.loadClass(MANAGER_CLASS, loader)
+        val managerClass = MelodyAnchorSession.classOrNull(MelodyAnchorCatalog.BTSDK_DEVICE_INFO_MANAGER, loader)
         if (managerClass == null) {
             log.event("melody.anchor.missing", "hook" to "inject.deviceinfo", "class" to MANAGER_CLASS)
             return
         }
-        deviceInfoClass = Reflect.loadClass(DEVICE_INFO_CLASS, loader)
+        deviceInfoClass = MelodyAnchorSession.classOrNull(MelodyAnchorCatalog.BTSDK_DEVICE_INFO, loader)
         if (deviceInfoClass == null) {
             log.event("melody.anchor.missing", "hook" to "inject.deviceinfo", "class" to DEVICE_INFO_CLASS)
         }

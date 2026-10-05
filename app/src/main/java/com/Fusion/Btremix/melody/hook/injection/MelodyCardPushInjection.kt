@@ -1,7 +1,9 @@
 package com.Fusion.Btremix.melody.hook.injection
 
 import com.Fusion.Btremix.melody.hook.MelodyLog
+import com.Fusion.Btremix.melody.hook.MelodyAnchorSession
 import com.Fusion.Btremix.melody.hook.Reflect
+import com.Fusion.Btremix.melody.hook.anchor.MelodyAnchorCatalog
 import io.github.libxposed.api.XposedInterface
 
 /**
@@ -27,12 +29,12 @@ internal class MelodyCardPushInjection(
     private var lastPush: String? = null
 
     fun install() {
-        val sender = Reflect.loadClass(SENDER_CLASS, loader)
+        val sender = MelodyAnchorSession.classOrNull(MelodyAnchorCatalog.CARD_SENDER, loader)
         if (sender == null) {
             log.event("melody.anchor.missing", "hook" to HOOK, "class" to SENDER_CLASS)
             return
         }
-        val vo = Reflect.loadClass(VO_CLASS, loader)
+        val vo = MelodyAnchorSession.classOrNull(MelodyAnchorCatalog.CARD_VO, loader)
         if (vo == null) {
             log.event("melody.anchor.missing", "hook" to HOOK, "class" to VO_CLASS)
             return

@@ -17,6 +17,14 @@ internal object MelodyHostGateOverrides {
 
     @Volatile
     var version: String? = null
+
+    /**
+     * M6 debug override for the host install fingerprint. Setting it to a different value makes the
+     * next host start look like "Melody was updated", which exercises the full rescan + prompt path
+     * without swapping the host APK.
+     */
+    @Volatile
+    var installId: String? = null
 }
 
 /**

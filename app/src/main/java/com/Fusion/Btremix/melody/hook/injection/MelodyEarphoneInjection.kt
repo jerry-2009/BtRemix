@@ -6,9 +6,11 @@ import com.Fusion.Btremix.melody.api.MelodyEarphoneBattery
 import com.Fusion.Btremix.melody.api.MelodyEarphoneProjection
 import com.Fusion.Btremix.melody.api.MelodyMac
 import com.Fusion.Btremix.melody.hook.MelodyLog
+import com.Fusion.Btremix.melody.hook.MelodyAnchorSession
 import com.Fusion.Btremix.melody.hook.Reflect
 import com.Fusion.Btremix.melody.hook.bridge.MelodyBridgeClient
 import com.Fusion.Btremix.melody.hook.bridge.MelodyBridgeClients
+import com.Fusion.Btremix.melody.hook.anchor.MelodyAnchorCatalog
 import io.github.libxposed.api.XposedInterface
 import java.util.concurrent.ConcurrentHashMap
 
@@ -56,7 +58,7 @@ internal class MelodyEarphoneInjection(
     private val lastSkip = ConcurrentHashMap<String, String>()
 
     fun install() {
-        val cls = Reflect.loadClass(DTO_CLASS, loader)
+        val cls = MelodyAnchorSession.classOrNull(MelodyAnchorCatalog.DTO_EARPHONE, loader)
         if (cls == null) {
             log.event("melody.anchor.missing", "hook" to "inject.header", "class" to DTO_CLASS)
             return

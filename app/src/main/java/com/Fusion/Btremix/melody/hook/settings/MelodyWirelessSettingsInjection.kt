@@ -1,7 +1,9 @@
 package com.Fusion.Btremix.melody.hook.settings
 
 import com.Fusion.Btremix.melody.hook.MelodyLog
+import com.Fusion.Btremix.melody.hook.MelodyAnchorSession
 import com.Fusion.Btremix.melody.hook.Reflect
+import com.Fusion.Btremix.melody.hook.anchor.MelodyAnchorCatalog
 import io.github.libxposed.api.XposedInterface
 
 /**
@@ -33,7 +35,7 @@ internal class MelodyWirelessSettingsInjection(
 ) {
 
     fun install() {
-        val cls = Reflect.loadClass(DATA_MANAGER_CLASS, loader)
+        val cls = MelodyAnchorSession.classOrNull(MelodyAnchorCatalog.SETTINGS_PODS_DATA_MANAGER, loader)
         if (cls == null) {
             log.event("melody.anchor.missing", "hook" to "settings.pods", "class" to DATA_MANAGER_CLASS)
             return

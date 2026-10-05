@@ -4,6 +4,9 @@ import com.Fusion.Btremix.melody.hook.bridge.MelodyBridgeInstaller
 import com.Fusion.Btremix.melody.hook.injection.MelodyInjectionInstaller
 import com.Fusion.Btremix.melody.hook.observation.MelodyObservationInstaller
 import com.Fusion.Btremix.melody.hook.settings.MelodyWirelessSettingsInjection
+import com.Fusion.Btremix.melody.api.MelodyAnchorPrefs
+import com.Fusion.Btremix.melody.api.MelodyAnchorReport
+import com.Fusion.Btremix.melody.hook.anchor.MelodyAnchorHost
 import io.github.libxposed.api.XposedModule
 import io.github.libxposed.api.XposedModuleInterface
 
@@ -49,14 +52,19 @@ class MelodyBridgeEntry : XposedModule() {
             "process" to processName,
             "first_package" to runCatching { param.isFirstPackage }.getOrNull(),
         )
+        // M6 debug override, read before the branch so it also applies to the settings process.
+        MelodyHostGateOverrides.installId = modulePref(log, MelodyAnchorPrefs.INSTALL_OVERRIDE)
         if (packageName == SETTINGS_PACKAGE) {
+            beginAnchorSession(log, param, MelodyAnchorHost.Settings)
             installSettingsBranch(log, param.defaultClassLoader, processName)
+            finishAnchorSession(this, log, MelodyAnchorHost.Settings)
             return
         }
         // M5.4 D-26: debug-only overrides for the host version gate, so the fail branch can be
         // exercised on a real device without a substitute APK. Both default to empty (= no override).
         MelodyHostGateOverrides.range = modulePref(log, KEY_HOST_VERSIONS_OVERRIDE)
         MelodyHostGateOverrides.version = modulePref(log, KEY_HOST_VERSION_OVERRIDE)
+        beginAnchorSession(log, param, MelodyAnchorHost.Melody)
         // M5.4 D-29 (2026-10-05 revised): the diagnostics switch defaults OFF - the M5.5 matrix turns
         // it on explicitly, and normal use pays nothing for the forwarding.
         log.diagnosticsEnabled = diagnosticsEnabled(log)
@@ -93,6 +101,68 @@ class MelodyBridgeEntry : XposedModule() {
                 hostApkPath = runCatching { param.applicationInfo.sourceDir }.getOrNull(),
             ).install()
         }.onFailure { log.warn("melody.injection.install_failed", it) }
+        finishAnchorSession(this, log, MelodyAnchorHost.Melody)
+    }
+
+    /**
+     * M6: opens the process-scoped anchor session before any hook resolves a class, feeding it the
+     * report BtRemix persisted for the *same* install fingerprint. A different (or missing) fingerprint
+     * means "Melody was updated or this is the first run", which is exactly when the resolver has to
+     * scan with DexKit again.
+     */
+    private fun beginAnchorSession(
+        log: MelodyLog,
+        param: XposedModuleInterface.PackageLoadedParam,
+        host: MelodyAnchorHost,
+    ) {
+        val applicationInfo = runCatching { param.applicationInfo }.getOrNull()
+        val computed = MelodyInstallId.of(applicationInfo)
+        val installId = MelodyHostGateOverrides.installId ?: computed
+        val processName = runCatching { applicationInfo?.processName }.getOrNull()
+            ?: runCatching { param.applicationInfo.processName }.getOrNull()
+            ?: host.hostPackage
+        val persisted = runCatching { MelodyAnchorReport.decode(modulePref(log, MelodyAnchorPrefs.REPORT)) }
+            .getOrNull()
+        val sameInstall = persisted?.takeIf { it.installId == installId && it.hostPackage == host.hostPackage }
+        if (persisted != null && persisted.installId != installId) {
+            log.event(
+                "melody.host.update",
+                "host" to host.hostPackage,
+                "from" to persisted.installId,
+                "to" to installId,
+                "previous_version" to (persisted.version ?: "?"),
+            )
+        }
+        runCatching {
+            MelodyAnchorSession.begin(
+                log = log,
+                loader = param.defaultClassLoader,
+                processName = processName,
+                host = host,
+                installId = installId,
+                cached = sameInstall?.process(processName),
+                apkPath = applicationInfo?.sourceDir,
+            )
+        }.onFailure { log.warn("melody.anchor.session_failed", it) }
+    }
+
+    /** M6: closes the session and hands the report to the broadcaster parked on `Application.onCreate`. */
+    private fun finishAnchorSession(
+        module: XposedModule,
+        log: MelodyLog,
+        host: MelodyAnchorHost,
+    ) {
+        val installId = MelodyAnchorSession.installId ?: MelodyInstallId.of(null)
+        val report = runCatching { MelodyAnchorSession.finish() }.getOrNull() ?: return
+        runCatching {
+            MelodyAnchorBroadcaster(
+                module = module,
+                log = log,
+                report = report,
+                installId = installId,
+                hostPackage = host.hostPackage,
+            ).install()
+        }.onFailure { log.warn("melody.host.anchors_broadcaster_failed", it) }
     }
 
     /**

@@ -2,8 +2,10 @@ package com.Fusion.Btremix.melody.hook.observation
 
 import android.content.ContentProvider
 import android.os.Bundle
+import com.Fusion.Btremix.melody.hook.MelodyAnchorSession
 import com.Fusion.Btremix.melody.hook.MelodyLog
 import com.Fusion.Btremix.melody.hook.Reflect
+import com.Fusion.Btremix.melody.hook.anchor.MelodyAnchorCatalog
 import io.github.libxposed.api.XposedInterface
 
 /**
@@ -27,7 +29,7 @@ internal class DeviceCardObservationHook(
 ) {
 
     fun install() {
-        val cls = Reflect.loadClass(PROVIDER_CLASS, loader)
+        val cls = MelodyAnchorSession.classOrNull(MelodyAnchorCatalog.PROVIDER_MY_DEVICE, loader)
         if (cls == null) {
             log.event("melody.anchor.missing", "hook" to "devicecard", "class" to PROVIDER_CLASS)
             return

@@ -18,6 +18,7 @@ import com.Fusion.Btremix.device.session.SessionRegistry
 import com.Fusion.Btremix.melody.api.MelodyCallPolicy
 import com.Fusion.Btremix.melody.bridge.MelodyBridgeLog
 import com.Fusion.Btremix.melody.bridge.MelodySessionService
+import com.Fusion.Btremix.melody.bridge.MelodyHostUpdateTracker
 import com.Fusion.Btremix.melody.config.MelodySupportRegistry
 import com.Fusion.Btremix.melody.projection.AndroidMelodyTemplateSource
 import com.Fusion.Btremix.melody.projection.MelodyCapabilityDebug
@@ -135,6 +136,8 @@ class BtRemixApplication : Application() {
         scope.launch { packageBootstrap.load() }
         melodySupport.start()
         watchSessionsForMelodyBridge()
+        // M6: detect a Melody update (install fingerprint changed) and arm the in-app/system prompt.
+        runCatching { MelodyHostUpdateTracker.refresh(this) }
     }
 
     /**

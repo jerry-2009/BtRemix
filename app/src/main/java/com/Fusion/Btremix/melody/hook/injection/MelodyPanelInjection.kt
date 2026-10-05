@@ -15,9 +15,11 @@ import com.Fusion.Btremix.melody.api.MelodyPanelApplyResult
 import com.Fusion.Btremix.melody.api.MelodyPanelPolicy
 import com.Fusion.Btremix.melody.api.PanelRow
 import com.Fusion.Btremix.melody.api.PanelVisibilityApplier
+import com.Fusion.Btremix.melody.hook.MelodyAnchorSession
 import com.Fusion.Btremix.melody.hook.MelodyLog
 import com.Fusion.Btremix.melody.hook.PreferenceTree
 import com.Fusion.Btremix.melody.hook.Reflect
+import com.Fusion.Btremix.melody.hook.anchor.MelodyAnchorCatalog
 import com.Fusion.Btremix.melody.hook.bridge.MelodyBridgeClient
 import com.Fusion.Btremix.melody.hook.bridge.MelodyBridgeClients
 import io.github.libxposed.api.XposedInterface
@@ -306,23 +308,26 @@ internal class MelodyPanelInjection(
      * already exist, this handles rows that are about to be created. Both are fail-open.
      */
     private fun hookGroupModel(): Boolean {
-        val cls = Reflect.loadClass(GROUP_OBSERVER_CLASS, loader)
-        if (cls == null) {
+        val classes = MelodyAnchorSession.classes(MelodyAnchorCatalog.PANEL_GROUP_OBSERVER, loader)
+        if (classes.isEmpty()) {
             log.event("melody.anchor.missing", "hook" to "inject.panel.model", "class" to GROUP_OBSERVER_CLASS)
             return false
         }
-        val method = Reflect.findMethod(cls, "onChanged", arrayOf(Any::class.java))
-        if (method == null) {
-            log.event("melody.anchor.missing", "hook" to "inject.panel.model", "class" to GROUP_OBSERVER_CLASS)
-            return false
+        var hooked = false
+        for (cls in classes) {
+            val method = Reflect.findMethod(cls, "onChanged", arrayOf(Any::class.java)) ?: continue
+            module.hook(method).intercept(XposedInterface.Hooker { chain ->
+                runCatching { filterGroupModel(chain) }
+                    .onFailure { log.warn("melody.panel.model_filter_failed", it) }
+                chain.proceed()
+            })
+            log.event("melody.anchor.hooked", "hook" to "inject.panel.model", "class" to cls.name, "method" to method.name)
+            hooked = true
         }
-        module.hook(method).intercept(XposedInterface.Hooker { chain ->
-            runCatching { filterGroupModel(chain) }
-                .onFailure { log.warn("melody.panel.model_filter_failed", it) }
-            chain.proceed()
-        })
-        log.event("melody.anchor.hooked", "hook" to "inject.panel.model", "class" to cls.name, "method" to method.name)
-        return true
+        if (!hooked) {
+            log.event("melody.anchor.missing", "hook" to "inject.panel.model", "class" to GROUP_OBSERVER_CLASS)
+        }
+        return hooked
     }
 
     /**

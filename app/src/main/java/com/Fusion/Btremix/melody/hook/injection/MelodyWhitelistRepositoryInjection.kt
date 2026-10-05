@@ -4,9 +4,11 @@ import android.os.SystemClock
 import com.Fusion.Btremix.melody.api.MelodyMac
 import com.Fusion.Btremix.melody.api.MelodyWhitelistIdentity
 import com.Fusion.Btremix.melody.hook.MelodyLog
+import com.Fusion.Btremix.melody.hook.MelodyAnchorSession
 import com.Fusion.Btremix.melody.hook.Reflect
 import com.Fusion.Btremix.melody.hook.bridge.MelodyBridgeClient
 import com.Fusion.Btremix.melody.hook.bridge.MelodyBridgeClients
+import com.Fusion.Btremix.melody.hook.anchor.MelodyAnchorCatalog
 import io.github.libxposed.api.XposedInterface
 import java.util.concurrent.ConcurrentHashMap
 
@@ -52,15 +54,19 @@ internal class MelodyWhitelistRepositoryInjection(
     @Volatile
     private var managed: Pair<Long, Set<String>>? = null
 
+    /** Resolved once at install time; the mapper hook fires on every panel refresh. */
+    @Volatile
+    private var contentClassName: String? = null
+
     fun install() {
-        val dtoClass = Reflect.loadClass(DTO_CLASS, loader)
+        val dtoClass = MelodyAnchorSession.classOrNull(MelodyAnchorCatalog.DTO_WHITELIST_CONFIG, loader)
         if (dtoClass == null) {
             log.event("melody.anchor.missing", "hook" to "whitelist_repo", "class" to DTO_CLASS)
             return
         }
+        contentClassName = MelodyAnchorSession.classOrNull(MelodyAnchorCatalog.DTO_WHITELIST_CONTENT, loader)?.name
         var installed = false
-        for (className in IMPL_CLASSES) {
-            val cls = Reflect.loadClass(className, loader) ?: continue
+        for (cls in MelodyAnchorSession.classes(MelodyAnchorCatalog.WHITELIST_REPO_IMPL, loader)) {
             installed = hookByMac(cls) || installed
             installed = hookByIdOrName(cls) || installed
         }
@@ -79,39 +85,45 @@ internal class MelodyWhitelistRepositoryInjection(
      * `null`; anything else is passed through untouched.
      */
     private fun hookPanelLiveDataMapper(): Boolean {
-        val cls = Reflect.loadClass(MAPPER_CLASS, loader) ?: run {
+        val classes = MelodyAnchorSession.classes(MelodyAnchorCatalog.WHITELIST_REPO_MAPPER, loader)
+        if (classes.isEmpty()) {
             log.event("melody.anchor.missing", "hook" to "whitelist_repo.liveData", "class" to MAPPER_CLASS)
             return false
         }
-        val method = Reflect.findMethod(cls, "apply", arrayOf(Any::class.java)) ?: run {
-            log.event("melody.anchor.missing", "hook" to "whitelist_repo.liveData", "class" to MAPPER_CLASS)
-            return false
+        var hooked = false
+        // Several merged synthetic lambdas can declare `apply`/`accept`; every one is hooked, and the
+        // per-call guard below (`WhitelistContentDO` argument + official answer null) picks the real one.
+        for (cls in classes) {
+            val method = Reflect.findMethod(cls, "apply", arrayOf(Any::class.java)) ?: continue
+            if (method.returnType != Any::class.java) continue
+            module.hook(method).intercept(XposedInterface.Hooker { chain ->
+                val official = chain.proceed()
+                val content = chain.args.getOrNull(0)
+                if (official != null || !isPanelMapper(chain.thisObject, content)) {
+                    official
+                } else {
+                    answer(
+                        via = "byLiveData",
+                        key = capturedString(chain.thisObject, CAPTURE_KEY_FIELD),
+                        selection = capturedString(chain.thisObject, CAPTURE_NAME_FIELD),
+                        owner = MAPPER_CLASS,
+                    ) ?: official
+                }
+            })
+            log.event("melody.anchor.hooked", "hook" to "whitelist_repo.liveData", "class" to cls.name, "method" to method.name)
+            hooked = true
         }
-        if (method.returnType != Any::class.java) {
+        if (!hooked) {
             log.event("melody.anchor.missing", "hook" to "whitelist_repo.liveData", "class" to MAPPER_CLASS)
-            return false
         }
-        module.hook(method).intercept(XposedInterface.Hooker { chain ->
-            val official = chain.proceed()
-            val content = chain.args.getOrNull(0)
-            if (official != null || !isPanelMapper(chain.thisObject, content)) {
-                official
-            } else {
-                answer(
-                    via = "byLiveData",
-                    key = capturedString(chain.thisObject, CAPTURE_KEY_FIELD),
-                    selection = capturedString(chain.thisObject, CAPTURE_NAME_FIELD),
-                    owner = MAPPER_CLASS,
-                ) ?: official
-            }
-        })
-        log.event("melody.anchor.hooked", "hook" to "whitelist_repo.liveData", "class" to cls.name, "method" to method.name)
-        return true
+        return hooked
     }
 
     /** True for the `h(...)` mapper: it consumes the whole official whitelist (`WhitelistContentDO`). */
-    private fun isPanelMapper(mapper: Any?, content: Any?): Boolean =
-        content != null && content.javaClass.name == CONTENT_CLASS && mapper != null
+    private fun isPanelMapper(mapper: Any?, content: Any?): Boolean {
+        if (content == null || mapper == null) return false
+        return content.javaClass.name == (contentClassName ?: CONTENT_CLASS)
+    }
 
     /**
      * Reads one R8 lambda capture field.
@@ -242,7 +254,7 @@ internal class MelodyWhitelistRepositoryInjection(
     private fun dtoFor(client: MelodyBridgeClient, mac: String): Any? {
         dtos[mac]?.let { return it }
         val identity = client.whitelistIdentityFast(mac) ?: return null
-        val dtoClass = Reflect.loadClass(DTO_CLASS, loader) ?: return null
+        val dtoClass = MelodyAnchorSession.classOrNull(MelodyAnchorCatalog.DTO_WHITELIST_CONFIG, loader) ?: return null
         val parsed = parse(identity, dtoClass) ?: run {
             log.event("melody.inject.whitelist_repo.parse_failed", "mac" to mac)
             return null
