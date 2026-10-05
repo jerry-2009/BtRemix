@@ -1,4 +1,4 @@
-id=com.Fusion.Btremix.melody
+id=com.fusion.melodyLinkNeo.melody
 name=BtRemix Melody Bridge
 author=FusionBT
 description=Projects BtRemix device definitions onto the ColorOS Melody control panel. The BtRemix process keeps the BLE/RFCOMM session; Melody only renders controls.

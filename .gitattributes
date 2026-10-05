@@ -1,0 +1,3 @@
+# Keep the Melody whitelist template LF-only; MelodyWhitelistTemplateTest asserts the exact
+# byte shape (.gitattributes overrides core.autocrlf for this path).
+app/src/main/assets/melody/whitelist-template.json text eol=lf

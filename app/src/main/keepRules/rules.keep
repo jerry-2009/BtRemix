@@ -14,17 +14,17 @@
 # --- Melody bridge (LSPosed) ---------------------------------------------------------------
 # The libxposed framework loads the entry point by its exact class name from
 # META-INF/xposed/java_init.list, so it and its no-argument constructor must survive R8.
--keep class com.Fusion.Btremix.melody.hook.MelodyBridgeEntry {
+-keep class com.fusion.melodyLinkNeo.melody.hook.MelodyBridgeEntry {
     public <init>();
 }
 
 # M1+ observation hooks are resolved from the entry point at runtime inside the host process.
--keep class com.Fusion.Btremix.melody.hook.** { *; }
--keep class com.Fusion.Btremix.melody.api.** { *; }
+-keep class com.fusion.melodyLinkNeo.melody.hook.** { *; }
+-keep class com.fusion.melodyLinkNeo.melody.api.** { *; }
 
 # Compiled AIDL types are looked up by interface name across the process boundary (M2+).
--keep interface com.Fusion.Btremix.melody.bridge.** { *; }
--keep class com.Fusion.Btremix.melody.bridge.** { *; }
+-keep interface com.fusion.melodyLinkNeo.melody.bridge.** { *; }
+-keep class com.fusion.melodyLinkNeo.melody.bridge.** { *; }
 
 # The Xposed API is compile-only; the runtime classes come from the framework.
 -dontwarn io.github.libxposed.**

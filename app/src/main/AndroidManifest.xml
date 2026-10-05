@@ -67,7 +67,7 @@
             android:enabled="false"
             android:exported="true">
             <intent-filter>
-                <action android:name="com.Fusion.Btremix.melody.HOST_ALIVE" />
+                <action android:name="com.fusion.melodyLinkNeo.melody.HOST_ALIVE" />
             </intent-filter>
         </receiver>
 
@@ -82,7 +82,7 @@
             android:enabled="true"
             android:exported="true">
             <intent-filter>
-                <action android:name="com.Fusion.Btremix.melody.HOST_ANCHORS" />
+                <action android:name="com.fusion.melodyLinkNeo.melody.HOST_ANCHORS" />
             </intent-filter>
         </receiver>
     </application>
