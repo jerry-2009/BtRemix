@@ -21,6 +21,7 @@ import com.Fusion.Btremix.melody.api.MelodyPanelPolicy
 import com.Fusion.Btremix.melody.api.MelodyProjectionStore
 import com.Fusion.Btremix.melody.api.MelodyProviderMerge
 import com.Fusion.Btremix.melody.api.MelodySnapshot
+import com.Fusion.Btremix.melody.api.MelodyStateTexts
 import com.Fusion.Btremix.melody.api.MelodySupportInfo
 import com.Fusion.Btremix.melody.api.MelodyWhitelistIdentity
 import com.Fusion.Btremix.melody.api.WireValue
@@ -166,6 +167,7 @@ internal class MelodyBridgeClient(
                 MelodyEarphoneBattery.ofSnapshot(snapshot),
                 MelodyAncStates.ofSnapshot(snapshot),
                 MelodyAncStates.levelOfSnapshot(snapshot),
+                MelodyStateTexts.ofSnapshot(snapshot),
             )
             log.event(
                 "melody.bridge.push",
@@ -276,6 +278,7 @@ internal class MelodyBridgeClient(
             MelodyEarphoneBattery.ofSnapshot(snapshot),
             MelodyAncStates.ofSnapshot(snapshot),
             MelodyAncStates.levelOfSnapshot(snapshot),
+            MelodyStateTexts.ofSnapshot(snapshot),
         )
         log.event(
             "melody.bridge.snapshot",
@@ -430,6 +433,7 @@ internal class MelodyBridgeClient(
             MelodyEarphoneBattery.ofSnapshot(payload),
             MelodyAncStates.ofSnapshot(payload),
             MelodyAncStates.levelOfSnapshot(payload),
+            MelodyStateTexts.ofSnapshot(payload),
         )
     }
 
@@ -511,6 +515,14 @@ internal class MelodyBridgeClient(
         panels[key] = policy
         return policy
     }
+
+    /**
+     * Display text of one Definition state from the last pushed snapshot (M4.3c), or `null` when that
+     * state has not been seen. Pure cache read: the「高级功能」rows are re-filled on every panel tick,
+     * so this must never trigger a Bundle decode or a binder call.
+     */
+    fun stateTextFast(mac: String, state: String): String? =
+        cache.snapshot(MelodyMac.normalize(mac))?.values?.get(state)
 
     fun execute(mac: String, actionId: String, args: Map<String, StateValue> = emptyMap()): Int {
         val key = MelodyMac.normalize(mac)

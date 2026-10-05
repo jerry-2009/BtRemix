@@ -24,6 +24,12 @@ data class MelodyPanelPolicy(
     val hideSections: Set<String> = emptySet(),
     val hideKeys: Set<String> = emptySet(),
     val greyKeys: Set<String> = emptySet(),
+    /**
+     * M4.3c (D-8): the self-built「高级功能」group the panel adds after the official `sound` group,
+     * already routed and resolved by the projection builder. `null` means "insert nothing"; a
+     * present-but-malformed `group` node degrades to `null` while the hide/grey policy survives.
+     */
+    val group: MelodyPanelGroup? = null,
     val missingReason: String? = null,
 ) {
     /** True when the envelope carried a usable `panel` node; false for the inert/degraded policy. */

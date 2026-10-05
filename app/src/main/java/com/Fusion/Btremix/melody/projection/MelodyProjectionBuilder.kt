@@ -7,6 +7,8 @@ import com.Fusion.Btremix.definition.api.MelodySupportDefinition
 import com.Fusion.Btremix.definition.json.JsonParser
 import com.Fusion.Btremix.definition.json.JsonValue
 import com.Fusion.Btremix.definition.json.JsonWriter
+import com.Fusion.Btremix.melody.api.MelodyPanelGroup
+import com.Fusion.Btremix.melody.api.MelodyPanelRow
 import com.Fusion.Btremix.melody.config.MelodyManagedDevice
 
 /** Supplies the whitelist template JSON for a Definition-declared path; `null` when unreadable. */
@@ -241,17 +243,57 @@ class MelodyProjectionBuilder(
 
     private fun panel(device: MelodyManagedDevice): JsonValue.Object {
         val panel = device.melody.panel
-        return JsonValue.Object(
-            linkedMapOf(
-                "sectionTitle" to JsonValue.StringValue(
-                    panel.sectionTitle ?: device.definition.manifest.displayName,
-                ),
-                "hideSections" to strings(panel.hideSections),
-                "hideKeys" to strings(panel.hideKeys),
-                "greyKeys" to strings(panel.greyKeys),
-            ),
+        val sectionTitle = panel.sectionTitle ?: device.definition.manifest.displayName
+        val fields = linkedMapOf<String, JsonValue>(
+            "sectionTitle" to JsonValue.StringValue(sectionTitle),
+            "hideSections" to strings(panel.hideSections),
+            "hideKeys" to strings(panel.hideKeys),
+            "greyKeys" to strings(panel.greyKeys),
         )
+        // M4.3c D-8: the self-built「高级功能」group, routed from the Definition's `ui` tree. Omitted
+        // when every node belongs to a host-native domain, which keeps a fully-native Definition's
+        // envelope shape unchanged.
+        MelodyUiRouting.advancedGroup(device.definition, sectionTitle)?.let { group ->
+            fields["group"] = panelGroup(group)
+        }
+        return JsonValue.Object(fields)
     }
+
+    /** Serialises the routed「高级功能」group into the envelope `panel.group` node (M4.3c). */
+    private fun panelGroup(group: MelodyPanelGroup): JsonValue.Object = JsonValue.Object(
+        linkedMapOf(
+            "key" to JsonValue.StringValue(group.key),
+            "title" to JsonValue.StringValue(group.title),
+            "rows" to JsonValue.Array(group.rows.map(::panelRow)),
+        ),
+    )
+
+    private fun panelRow(row: MelodyPanelRow): JsonValue.Object {
+        val fields = linkedMapOf<String, JsonValue>(
+            "kind" to JsonValue.StringValue(row.kind.wire),
+            "key" to JsonValue.StringValue(row.key),
+            "title" to JsonValue.StringValue(row.title),
+        )
+        row.state?.let { fields["state"] = JsonValue.StringValue(it) }
+        row.action?.let { fields["action"] = JsonValue.StringValue(it) }
+        if (row.args.isNotEmpty()) {
+            fields["args"] = JsonValue.Object(row.args.mapValues { (_, value) -> JsonValue.StringValue(value) })
+        }
+        if (row.options.isNotEmpty()) {
+            fields["options"] = JsonValue.Array(row.options.map(JsonValue::StringValue))
+            fields["labels"] = JsonValue.Array(row.optionLabels.map(JsonValue::StringValue))
+        }
+        row.min?.let { fields["min"] = JsonValue.NumberValue(formatNumber(it)) }
+        row.max?.let { fields["max"] = JsonValue.NumberValue(formatNumber(it)) }
+        row.step?.let { fields["step"] = JsonValue.NumberValue(formatNumber(it)) }
+        row.unit?.let { fields["unit"] = JsonValue.StringValue(it) }
+        if (row.unavailable) fields["unavailable"] = JsonValue.BooleanValue(true)
+        return JsonValue.Object(fields)
+    }
+
+    /** Whole numbers are written without a decimal point so the envelope stays byte-stable. */
+    private fun formatNumber(value: Double): String =
+        if (value % 1.0 == 0.0 && value.isFinite()) value.toLong().toString() else value.toString()
 
     /** The `melody.anc` node, resolved to the concrete table the host will render (M4.3b D-12). */
     private fun anc(device: MelodyManagedDevice): JsonValue.Object {

@@ -277,8 +277,71 @@ object MelodyProviderMerge {
             hideSections = hideSections,
             hideKeys = hideKeys,
             greyKeys = greyKeys,
+            // M4.3c: the self-built「高级功能」group. It is an additive node, so a malformed one only
+            // drops the group (nothing is inserted); the hide/grey policy above stays in force.
+            group = panelGroupOf(panel.values["group"]),
         )
     }
+
+    /**
+     * Reads the M4.3c `panel.group` node: the「高级功能」card the panel inserts after `sound`. It is
+     * all-or-nothing (a malformed key/title/kind drops the whole group) and every key must stay inside
+     * the `melody_bridge_*` namespace, so a hand-written envelope cannot smuggle an official key in.
+     */
+    private fun panelGroupOf(value: JsonValue?): MelodyPanelGroup? {
+        val obj = value as? JsonValue.Object ?: return null
+        val key = (obj.values["key"] as? JsonValue.StringValue)?.value?.takeIf { it.isNotBlank() } ?: return null
+        if (!key.startsWith(MelodyPanelDefinition.CUSTOM_KEY_PREFIX)) return null
+        val title = (obj.values["title"] as? JsonValue.StringValue)?.value?.takeIf { it.isNotBlank() } ?: return null
+        val rowsNode = obj.values["rows"] as? JsonValue.Array ?: return null
+        val rows = rowsNode.values.map { rowOf(it) ?: return null }
+        if (rows.isEmpty()) return null
+        return MelodyPanelGroup(key = key, title = title, rows = rows)
+    }
+
+    private fun rowOf(value: JsonValue): MelodyPanelRow? {
+        val obj = value as? JsonValue.Object ?: return null
+        val kind = MelodyPanelRowKind.fromWire((obj.values["kind"] as? JsonValue.StringValue)?.value) ?: return null
+        val key = (obj.values["key"] as? JsonValue.StringValue)?.value?.takeIf { it.isNotBlank() } ?: return null
+        if (!key.startsWith(MelodyPanelDefinition.CUSTOM_KEY_PREFIX)) return null
+        val title = (obj.values["title"] as? JsonValue.StringValue)?.value?.takeIf { it.isNotBlank() } ?: return null
+        val state = (obj.values["state"] as? JsonValue.StringValue)?.value?.takeIf { it.isNotBlank() }
+        val action = (obj.values["action"] as? JsonValue.StringValue)?.value?.takeIf { it.isNotBlank() }
+        val options = stringList(obj.values["options"])
+        val optionLabels = stringList(obj.values["labels"])
+        val args = stringMap(obj.values["args"])
+        return MelodyPanelRow(
+            kind = kind,
+            key = key,
+            title = title,
+            state = state,
+            action = action,
+            args = args,
+            options = options,
+            optionLabels = optionLabels,
+            min = number(obj.values["min"]),
+            max = number(obj.values["max"]),
+            step = number(obj.values["step"]),
+            unit = (obj.values["unit"] as? JsonValue.StringValue)?.value?.takeIf { it.isNotBlank() },
+            unavailable = (obj.values["unavailable"] as? JsonValue.BooleanValue)?.value ?: false,
+        )
+    }
+
+    private fun stringList(value: JsonValue?): List<String> {
+        val array = value as? JsonValue.Array ?: return emptyList()
+        return array.values.mapNotNull { (it as? JsonValue.StringValue)?.value }
+    }
+
+    private fun stringMap(value: JsonValue?): Map<String, String> {
+        val obj = value as? JsonValue.Object ?: return emptyMap()
+        val out = LinkedHashMap<String, String>()
+        for ((key, item) in obj.values) {
+            out[key] = (item as? JsonValue.StringValue)?.value ?: return emptyMap()
+        }
+        return out
+    }
+
+    private fun number(value: JsonValue?): Double? = (value as? JsonValue.NumberValue)?.raw?.toDouble()
 
     /**
      * The keys of one `panel` list field, or `null` when it is present but not a valid list of

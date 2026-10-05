@@ -32,6 +32,12 @@ class MelodyBridgeCache(private val clock: () -> Long = { System.currentTimeMill
          * native「降噪效果」index projection; it is decoded here so the DTO getter is a plain read.
          */
         val ancLevel: Int? = null,
+        /**
+         * Display text of every scalar state at record time (M4.3c). The self-built「高级功能」rows
+         * are re-filled from this on every panel tick, so the row summary never pays for a Bundle
+         * decode (and never has to reach back into the host's session).
+         */
+        val values: Map<String, String> = emptyMap(),
         val updatedAtMs: Long,
     )
 
@@ -67,6 +73,7 @@ class MelodyBridgeCache(private val clock: () -> Long = { System.currentTimeMill
         battery: MelodyEarphoneBattery? = null,
         ancMode: String? = null,
         ancLevel: Int? = null,
+        values: Map<String, String> = emptyMap(),
     ): CachedSnapshot {
         val key = MelodyMac.normalize(mac)
         val entry = CachedSnapshot(
@@ -76,6 +83,7 @@ class MelodyBridgeCache(private val clock: () -> Long = { System.currentTimeMill
             battery = battery,
             ancMode = ancMode,
             ancLevel = ancLevel,
+            values = values,
             updatedAtMs = clock(),
         )
         snapshots[key] = entry

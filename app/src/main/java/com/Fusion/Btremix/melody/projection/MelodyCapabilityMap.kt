@@ -96,6 +96,12 @@ object MelodyCapabilityMap {
     /** Definition state key the ANC strength is read from (conventional, M4.3b D-14). */
     const val LEVEL_STATE_KEY: String = "ancLevel"
 
+    /** Definition namespace the battery domain lives in (`battery.left`, `battery.refresh`, ...). */
+    const val BATTERY_NAMESPACE: String = "battery"
+
+    /** Definition namespace the native ANC domain lives in (`ancMode`, `anc.setLevel`, ...). */
+    const val ANC_NAMESPACE: String = "anc"
+
     /** Definition `manifest.capabilities` token that opts into the official sound group (M4.1). */
     const val CAPABILITY_SPATIAL: String = "spatial"
 
@@ -159,6 +165,73 @@ object MelodyCapabilityMap {
             },
             strength = declared?.strength ?: deriveAncStrength(definition),
         )
+    }
+
+    /**
+     * The Definition state the host's native ANC mode table is read from (M4.3c routing), i.e. the
+     * enum state behind `function.noiseReductionMode`. `null` when the Definition has no ANC table.
+     */
+    fun ancStateKeyOf(definition: LoadedDeviceDefinition): String? = ancStateOf(definition)?.key
+
+    /**
+     * Which destination one `ui` node belongs to (M4.3c, D-8): the plan's routing table, expressed as
+     * a pure function so the whole split is JVM tested instead of only observable on a phone.
+     *
+     * The "native" domains are the ones the host already provides, so a node backed by them must not
+     * be re-inserted as a custom row:
+     *  - [MelodyUiDomain.BATTERY] -> the M4.3a header (`battery*` states and `battery*` actions);
+     *  - [MelodyUiDomain.ANC_MODE] -> the native `noise` group's mode cells;
+     *  - [MelodyUiDomain.ANC_STRENGTH] -> the native「降噪效果」row (`melody.anc.strength`);
+     *  - everything else -> the self-built「高级功能」group ([MelodyUiDomain.ADVANCED]).
+     *
+     * The ANC domains only exist when the Definition actually declares a mode table: a Definition
+     * with no `melody.anc` (or no ANC state) has no native ANC group, so its `anc*` nodes route to
+     * [MelodyUiDomain.ADVANCED] like any other control (fail-open; the row is then greyed if the
+     * state does not exist either).
+     */
+    fun domainOf(
+        definition: LoadedDeviceDefinition,
+        state: String? = null,
+        action: String? = null,
+    ): MelodyUiDomain {
+        val stateDomain = state?.let { stateDomainOf(definition, it) } ?: MelodyUiDomain.ADVANCED
+        val actionDomain = action?.let { actionDomainOf(definition, it) } ?: MelodyUiDomain.ADVANCED
+        return when {
+            stateDomain == MelodyUiDomain.BATTERY || actionDomain == MelodyUiDomain.BATTERY ->
+                MelodyUiDomain.BATTERY
+            // The node's own state is the most specific answer; the action only refines when the state
+            // is missing (a `Button` has no state) or itself non-native.
+            stateDomain != MelodyUiDomain.ADVANCED -> stateDomain
+            actionDomain != MelodyUiDomain.ADVANCED -> actionDomain
+            else -> MelodyUiDomain.ADVANCED
+        }
+    }
+
+    private fun stateDomainOf(definition: LoadedDeviceDefinition, key: String): MelodyUiDomain {
+        if (key.startsWith(BATTERY_NAMESPACE, ignoreCase = true)) return MelodyUiDomain.BATTERY
+        val anc = ancPlan(definition)
+        if (anc.isEmpty) return MelodyUiDomain.ADVANCED
+        return when {
+            key == ancStateKeyOf(definition) -> MelodyUiDomain.ANC_MODE
+            key == anc.strength?.state -> MelodyUiDomain.ANC_STRENGTH
+            // Any other state the package keeps in the ANC namespace still belongs to the native group.
+            key.substringBefore('.').equals(ANC_NAMESPACE, ignoreCase = true) -> MelodyUiDomain.ANC_MODE
+            else -> MelodyUiDomain.ADVANCED
+        }
+    }
+
+    private fun actionDomainOf(definition: LoadedDeviceDefinition, id: String): MelodyUiDomain {
+        if (id.startsWith(BATTERY_NAMESPACE, ignoreCase = true)) return MelodyUiDomain.BATTERY
+        val anc = ancPlan(definition)
+        if (anc.isEmpty) return MelodyUiDomain.ADVANCED
+        definition.actions[id]?.resultState?.let { result ->
+            val byState = stateDomainOf(definition, result)
+            if (byState != MelodyUiDomain.ADVANCED) return byState
+        }
+        if (id == anc.strength?.action) return MelodyUiDomain.ANC_STRENGTH
+        // `anc.refresh`-style actions (no result state, ANC namespace) are part of the native group.
+        if (id.substringBefore('.').equals(ANC_NAMESPACE, ignoreCase = true)) return MelodyUiDomain.ANC_MODE
+        return MelodyUiDomain.ADVANCED
     }
 
     /**
@@ -316,4 +389,16 @@ object MelodyProductType {
         CLIP_OPEN -> "O1"
         else -> null
     }
+}
+
+/**
+ * The destination one Definition `ui` node routes to (M4.3c, `HANDOFF_MELODY_M4_PLAN.md` §3 M4.3c
+ * routing table). [BATTERY] / [ANC_MODE] / [ANC_STRENGTH] are the host-native domains and produce no
+ * custom row; [ADVANCED] is the self-built「高级功能」group.
+ */
+enum class MelodyUiDomain {
+    BATTERY,
+    ANC_MODE,
+    ANC_STRENGTH,
+    ADVANCED,
 }

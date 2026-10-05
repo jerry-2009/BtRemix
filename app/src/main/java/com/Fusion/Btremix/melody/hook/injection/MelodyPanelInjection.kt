@@ -401,6 +401,21 @@ internal class MelodyPanelInjection(
 
         val result = PanelVisibilityApplier.apply(policy, roots)
         if (!result.isEmpty) logApplied(screenId, mac, reason, result)
+
+        // M4.3c: keep the self-built「高级功能」card in sync (create after `sound`, re-fill the live
+        // values, hide it when the policy no longer carries a group). Idempotent and fail-open.
+        runCatching {
+            MelodyPanelGroupApplier.apply(
+                screenId,
+                screen,
+                appContext,
+                policy,
+                MelodyRowStateText { state -> client.stateTextFast(mac, state) },
+                mac,
+                loader,
+                MelodyGroupLog { name, fields -> log.event(name, *fields.toTypedArray()) },
+            )
+        }.onFailure { log.warn("melody.panel.group_failed", it) }
     }
 
     /** Logs the screen's top-level keys whenever they change - this is what proves a late panel fill. */
