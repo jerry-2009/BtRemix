@@ -5,6 +5,7 @@ import com.Fusion.Btremix.definition.api.MelodyAncStrengthDefinition
 import com.Fusion.Btremix.definition.api.MelodyAncStrengthLevel
 import com.Fusion.Btremix.device.runtime.StateValue
 import org.junit.Assert.assertEquals
+import org.junit.Assert.assertNull
 import org.junit.Assert.assertTrue
 import org.junit.Test
 
@@ -114,8 +115,10 @@ class MelodyAncRedirectPolicyTest {
 
     @Test
     fun aChildModeType_isNotReachableThroughTheParentTable() {
-        // 3 / 8 are the strength child `modeType`s, nested under the noise-cancelling entry; the host's
-        // own `setgate`/provider mapping only searches the top-level table, so neither may be guessed.
+        // 3 / 8 are the strength child `modeType`s, nested under the noise-cancelling entry; the
+        // `setgate` host mapping (`NoiseReductionCommand.a`) only searches the top-level table, so
+        // neither may be guessed through this key. (The provider lane has its own function below,
+        // because `EarphoneControlProvider`'s `L.n` resolver *does* search the children.)
         assertSkip(MelodyAncRedirectPolicy.REASON_UNMAPPED, decideByModeType(modeType = 3))
         assertSkip(MelodyAncRedirectPolicy.REASON_UNMAPPED, decideByModeType(modeType = 8))
     }
@@ -138,6 +141,66 @@ class MelodyAncRedirectPolicyTest {
         assertSkip(MelodyAncRedirectPolicy.REASON_NO_ANC, decideByModeType(modeType = 5, anc = MelodyAncPolicy.NONE))
     }
 
+    // --- M5.3: the device-centre SDK lane (a `modeType` through parents *and* children) -------------
+
+    @Test
+    fun providerModeType_reachesAChildStrengthLevel() {
+        assertEquals(
+            MelodyAncRedirectPolicy.Decision.Redirect(
+                actionId = "anc.setLevel",
+                args = mapOf("value" to StateValue.IntValue(1)),
+            ),
+            decideByProviderModeType(modeType = 3),
+        )
+    }
+
+    @Test
+    fun providerModeType_keepsTheParentTableFirst() {
+        assertEquals(
+            MelodyAncRedirectPolicy.Decision.Redirect(
+                actionId = "anc.setMode",
+                args = mapOf("mode" to StateValue.StringValue("anc")),
+            ),
+            decideByProviderModeType(modeType = 5),
+        )
+    }
+
+    @Test
+    fun providerModeType_unlistedOrUnknown_isUnmapped() {
+        // 7 (Auto) is a host child `modeType` this package does not declare; 99 is nothing at all.
+        assertSkip(MelodyAncRedirectPolicy.REASON_UNMAPPED, decideByProviderModeType(modeType = 7))
+        assertSkip(MelodyAncRedirectPolicy.REASON_UNMAPPED, decideByProviderModeType(modeType = 99))
+    }
+
+    @Test
+    fun providerModeType_alreadyProjectedChild_isANoop() {
+        assertSkip(MelodyAncRedirectPolicy.REASON_NOOP, decideByProviderModeType(modeType = 3, currentIndex = 10))
+    }
+
+    @Test
+    fun providerModeType_keepsTheFailOpenOrdering() {
+        assertSkip(MelodyAncRedirectPolicy.REASON_NOT_MANAGED, decideByProviderModeType(modeType = 3, managed = false))
+        assertSkip(
+            MelodyAncRedirectPolicy.REASON_NOT_MANAGED,
+            decideByProviderModeType(modeType = 3, managed = false, anc = null),
+        )
+        assertSkip(MelodyAncRedirectPolicy.REASON_NO_ENVELOPE, decideByProviderModeType(modeType = 3, anc = null))
+        assertSkip(MelodyAncRedirectPolicy.REASON_NO_ANC, decideByProviderModeType(modeType = 3, anc = MelodyAncPolicy.NONE))
+        assertSkip(
+            MelodyAncRedirectPolicy.REASON_UNMAPPED,
+            decideByProviderModeType(modeType = 3, anc = policy(strength = null)),
+        )
+    }
+
+    @Test
+    fun indexOfModeType_searchesChildrenOnlyWhenAsked() {
+        assertEquals(0, MelodyAncRedirectPolicy.indexOfModeType(5, policy(), includeChildren = true))
+        assertEquals(0, MelodyAncRedirectPolicy.indexOfModeType(5, policy(), includeChildren = false))
+        assertEquals(10, MelodyAncRedirectPolicy.indexOfModeType(3, policy(), includeChildren = true))
+        assertNull(MelodyAncRedirectPolicy.indexOfModeType(3, policy(), includeChildren = false))
+        assertNull(MelodyAncRedirectPolicy.indexOfModeType(3, null, includeChildren = true))
+    }
+
     // --- drivers ----------------------------------------------------------------------------------
 
     private fun decide(
@@ -155,6 +218,14 @@ class MelodyAncRedirectPolicyTest {
         currentIndex: Int? = null,
     ): MelodyAncRedirectPolicy.Decision =
         MelodyAncRedirectPolicy.decideByModeType(MAC, modeType, managed, anc, currentIndex)
+
+    private fun decideByProviderModeType(
+        modeType: Int,
+        managed: Boolean = true,
+        anc: MelodyAncPolicy? = policy(),
+        currentIndex: Int? = null,
+    ): MelodyAncRedirectPolicy.Decision =
+        MelodyAncRedirectPolicy.decideByModeTypeIncludingChildren(MAC, modeType, managed, anc, currentIndex)
 
     private fun policy(
         modeAction: String? = "anc.setMode",

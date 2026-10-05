@@ -23,7 +23,10 @@ internal class MelodyObservationInstaller(
         log.event("melody.observation.install", "process" to processName)
         installQuietly("support") { SupportObservationHook(module, log, loader).install() }
         installQuietly("deviceinfo") { DeviceInfoObservationHook(module, log, loader).install() }
-        installQuietly("command") { CommandObservationHook(module, log, loader).install() }
+        // M5.2/M5.3: the `setgate` receive and the `EarphoneControlProvider.call` observation moved into
+        // their redirect hooks (one hook per method, see MelodySetgateRedirectInjection /
+        // MelodyProviderCallRedirectInjection). With no read-only surface left, CommandObservationHook
+        // was removed in M5.3.
         installQuietly("panel") { PanelObservationHook(module, log, loader).install() }
         // M3.4b: the device-centre card protocol; added once the device run showed the card never
         // goes through the whitelist provider (see DeviceCardObservationHook).

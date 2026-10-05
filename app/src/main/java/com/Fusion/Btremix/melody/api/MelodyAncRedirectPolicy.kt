@@ -85,12 +85,15 @@ object MelodyAncRedirectPolicy {
     /**
      * M5.2: the same mapping, keyed on the host's `modeType` instead of a `protocolIndex`.
      *
-     * The `setgate` broadcast and the device-centre SDK's `melody_method_noise_reduction` carry only a
-     * `modeType`; the host itself resolves that through its injected `noiseReductionMode` table, which
-     * is the parent [MelodyAncPolicy.modes] here (`docs/melody-capability-map.md` §8.5/§8.6). The
-     * child「降噪效果」positions are nested under the noise-cancelling entry and are never reached this
-     * way, so a `modeType` found only there (or nowhere) is not guessed: it stays [REASON_UNMAPPED] and
-     * the caller lets the host run its own path.
+     * The `setgate` broadcast carries only a `modeType`; the host itself resolves that through its
+     * injected `noiseReductionMode` table, and (`NoiseReductionCommand.a`) it searches **only the
+     * top-level entries**. The child「降噪效果」positions are nested under the noise-cancelling entry, so
+     * a `modeType` found only there (or nowhere) is not guessed: it stays [REASON_UNMAPPED] and the
+     * caller lets the host run its own path.
+     *
+     * The device-centre SDK's `melody_method_noise_reduction` carries a `modeType` too, but its host
+     * resolver (`L.n`) searches the top-level table **and** every entry's `childrenMode`, so that
+     * entrance needs [decideByModeTypeIncludingChildren] instead.
      */
     @Suppress("UNUSED_PARAMETER") // `mac` documents the scope of the decision; the caller logs it.
     fun decideByModeType(
@@ -99,12 +102,54 @@ object MelodyAncRedirectPolicy {
         managed: Boolean,
         anc: MelodyAncPolicy?,
         currentIndex: Int?,
+    ): Decision = decideByModeType(mac, modeType, managed, anc, currentIndex, includeChildren = false)
+
+    /**
+     * M5.3: the device-centre SDK's mapping (`EarphoneControlProvider.call`, method
+     * `melody_method_noise_reduction`).
+     *
+     * Its `extras.type` is the host `modeType` exactly like `setgate`, but 17.6.3 resolves it with
+     * `L.n(modeType, noiseReductionMode)` which walks the top-level entries and then each entry's
+     * `childrenMode` (`docs/melody-capability-map.md` §8.6). The provider therefore accepts a child
+     * 「降噪效果」`modeType` as the target as well, which is what makes "模式或强度档" both reachable
+     * (M5_PLAN §4 M5.3 step 1). Once the `modeType` is resolved to its `protocolIndex`, [decide] does
+     * the rest, so a child target still lands on `strength.action` and a parent target on
+     * `modeAction` — one truth, two keys.
+     */
+    @Suppress("UNUSED_PARAMETER") // `mac` documents the scope of the decision; the caller logs it.
+    fun decideByModeTypeIncludingChildren(
+        mac: String,
+        modeType: Int,
+        managed: Boolean,
+        anc: MelodyAncPolicy?,
+        currentIndex: Int?,
+    ): Decision = decideByModeType(mac, modeType, managed, anc, currentIndex, includeChildren = true)
+
+    private fun decideByModeType(
+        mac: String,
+        modeType: Int,
+        managed: Boolean,
+        anc: MelodyAncPolicy?,
+        currentIndex: Int?,
+        includeChildren: Boolean,
     ): Decision {
         if (!managed) return Decision.Skip(REASON_NOT_MANAGED)
         if (anc == null) return Decision.Skip(REASON_NO_ENVELOPE)
         if (anc.isEmpty && anc.strength == null) return Decision.Skip(REASON_NO_ANC)
-        val index = anc.modes.firstOrNull { it.modeType == modeType }?.protocolIndex
-            ?: return Decision.Skip(REASON_UNMAPPED)
+        val index = indexOfModeType(modeType, anc, includeChildren) ?: return Decision.Skip(REASON_UNMAPPED)
         return decide(mac, index, managed, anc, currentIndex)
+    }
+
+    /**
+     * The `protocolIndex` the host's `modeType` resolves to, searching the parent table first and -
+     * when [includeChildren] - each entry's「降噪效果」children after it. That order mirrors the host's
+     * own `L.n`, so a `modeType` that exists in both tables resolves exactly like it would on the
+     * official path. `null` when neither table carries it.
+     */
+    fun indexOfModeType(modeType: Int, anc: MelodyAncPolicy?, includeChildren: Boolean): Int? {
+        if (anc == null) return null
+        anc.modes.firstOrNull { it.modeType == modeType }?.let { return it.protocolIndex }
+        if (!includeChildren) return null
+        return anc.strength?.levels?.firstOrNull { it.modeType == modeType }?.protocolIndex
     }
 }

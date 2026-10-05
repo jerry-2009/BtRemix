@@ -66,6 +66,12 @@ internal class MelodyInjectionInstaller(
         // `melody.command.receive` observation is emitted by this same hook (one hook per method).
         runCatching { MelodySetgateRedirectInjection(module, log, loader).install() }
             .onFailure { log.warn("melody.injection.setgate_failed", it) }
+        // M5.3: the device-centre SDK (`EarphoneControlProvider.call`) is the third entrance. It maps
+        // its `extras.type` (`modeType`) through the injected table itself, like `setgate`, but its host
+        // resolver also searches each entry's「降噪效果」children, so a child target is taken over too.
+        // The M1 `melody.command.call` observation is emitted by this same hook (one hook per method).
+        runCatching { MelodyProviderCallRedirectInjection(module, log, loader).install() }
+            .onFailure { log.warn("melody.injection.provider_failed", it) }
         // M5.1 follow-up: the device-centre card's rows come from the SDK repository row, which the host
         // fills from its own (suppressed) session - and its own restore path even uses an *empty* noise
         // value, i.e. "关闭". Installed first so the snapshot refresh below can replay it after a write.
