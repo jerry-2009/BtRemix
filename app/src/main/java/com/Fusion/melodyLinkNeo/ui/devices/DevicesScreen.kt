@@ -34,7 +34,6 @@ import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import com.fusion.melodyLinkNeo.device.registry.DeviceConnectionState
 import com.fusion.melodyLinkNeo.device.registry.DeviceEntry
-import com.fusion.melodyLinkNeo.ui.components.DcBatteryBadge
 import com.fusion.melodyLinkNeo.ui.components.DcEmptyState
 import com.fusion.melodyLinkNeo.ui.components.DcErrorState
 import com.fusion.melodyLinkNeo.ui.components.DcFilterChips
@@ -91,7 +90,9 @@ fun DevicesScreen(
             )
         } else {
             LazyVerticalGrid(
-                columns = GridCells.Adaptive(minSize = 156.dp),
+                // Exactly two compact cards per row; a fixed count keeps the artwork small on
+                // wide phones instead of stretching each card to fill the screen.
+                columns = GridCells.Fixed(2),
                 modifier = Modifier.fillMaxSize(),
                 contentPadding = androidx.compose.foundation.layout.PaddingValues(
                     start = DcSpacing.screenPadding,
@@ -149,7 +150,7 @@ private fun DeviceCard(entry: DeviceEntry, artwork: ImageBitmap?, onClick: () ->
             Box(
                 Modifier
                     .fillMaxWidth()
-                    .aspectRatio(1f)
+                    .aspectRatio(1.5f)
                     .background(MaterialTheme.colorScheme.surfaceContainerHigh),
                 contentAlignment = Alignment.Center,
             ) {
@@ -159,10 +160,10 @@ private fun DeviceCard(entry: DeviceEntry, artwork: ImageBitmap?, onClick: () ->
                     Monogram(entry.packageDisplayName)
                 }
             }
-            Column(Modifier.padding(DcSpacing.sm), verticalArrangement = Arrangement.spacedBy(DcSpacing.xs)) {
+            Column(Modifier.padding(DcSpacing.sm), verticalArrangement = Arrangement.spacedBy(2.dp)) {
                 Text(
                     entry.name ?: entry.packageDisplayName,
-                    style = MaterialTheme.typography.titleMedium,
+                    style = MaterialTheme.typography.titleSmall,
                     maxLines = 1,
                     overflow = TextOverflow.Ellipsis,
                 )
@@ -173,14 +174,7 @@ private fun DeviceCard(entry: DeviceEntry, artwork: ImageBitmap?, onClick: () ->
                     maxLines = 1,
                     overflow = TextOverflow.Ellipsis,
                 )
-                Row(
-                    Modifier.fillMaxWidth(),
-                    horizontalArrangement = Arrangement.SpaceBetween,
-                    verticalAlignment = Alignment.CenterVertically,
-                ) {
-                    DcStatusDot(color = statusColor, label = statusLabel)
-                    DcBatteryBadge(percent = entry.batteryPercent)
-                }
+                DcStatusDot(color = statusColor, label = statusLabel)
             }
         }
     }
@@ -191,14 +185,14 @@ private fun Monogram(label: String) {
     val initial = label.trim().firstOrNull()?.uppercase() ?: "?"
     Box(
         Modifier
-            .size(64.dp)
+            .size(44.dp)
             .clip(CircleShape)
             .background(MaterialTheme.colorScheme.primaryContainer),
         contentAlignment = Alignment.Center,
     ) {
         Text(
             initial,
-            style = MaterialTheme.typography.headlineMedium,
+            style = MaterialTheme.typography.titleLarge,
             color = MaterialTheme.colorScheme.onPrimaryContainer,
         )
     }

@@ -20,12 +20,12 @@ object Routes {
     const val DEFINITIONS = "definitions/list"
     const val SETTINGS = "settings/main"
     const val LOGS = "settings/logs"
-    const val UPDATE_SOURCE = "settings/update-source"
     const val ABOUT = "settings/about"
     const val DEVELOPER = "settings/developer"
     const val EXPLORER = "settings/developer/explorer"
     const val STUDIO = "settings/developer/studio"
-    const val MELODY_DIAGNOSTICS = "settings/developer/melody"
+    // Melody Dex 定位 moved out of 开发者 into 设置, so the route no longer sits under developer/.
+    const val MELODY_DIAGNOSTICS = "settings/melody"
 
     const val DEVICE_SESSION_ARG = "mac"
     const val DEVICE_SESSION = "devices/session/{$DEVICE_SESSION_ARG}"
@@ -48,7 +48,6 @@ object Routes {
         DEVICE_SESSION,
         PACKAGE_DETAIL,
         LOGS,
-        UPDATE_SOURCE,
         ABOUT,
         DEVELOPER,
         EXPLORER,

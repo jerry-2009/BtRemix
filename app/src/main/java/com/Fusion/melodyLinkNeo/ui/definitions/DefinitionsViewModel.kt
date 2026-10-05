@@ -168,11 +168,6 @@ class DefinitionsViewModel(application: Application) : AndroidViewModel(applicat
 
     fun dismissError() = local.update { it.copy(error = null, stage = InstallStage.IDLE) }
 
-    /** Update sources are not implemented this milestone; make that explicit instead of a dead entry. */
-    fun checkUpdate() {
-        local.update { it.copy(message = "更新源未配置") }
-    }
-
     fun reload() {
         viewModelScope.launch { withContext(Dispatchers.IO) { bootstrap.load() } }
     }

@@ -19,7 +19,6 @@ import com.fusion.melodyLinkNeo.core.settings.AppSettings
 import com.fusion.melodyLinkNeo.core.settings.LogLevel
 import com.fusion.melodyLinkNeo.core.settings.LogRetention
 import com.fusion.melodyLinkNeo.core.settings.ThemeMode
-import com.fusion.melodyLinkNeo.core.settings.UpdateInterval
 import com.fusion.melodyLinkNeo.ui.components.DcDivider
 import com.fusion.melodyLinkNeo.ui.components.DcHGap
 import com.fusion.melodyLinkNeo.ui.components.DcListGroup
@@ -35,10 +34,7 @@ fun SettingsScreen(
     onToggleLogging: (Boolean) -> Unit,
     onLogLevel: (LogLevel) -> Unit,
     onLogRetention: (LogRetention) -> Unit,
-    onOpenLogs: () -> Unit,
-    onUpdateSource: () -> Unit,
-    onAutoUpdate: (UpdateInterval) -> Unit,
-    onCheckUpdate: () -> Unit,
+    onOpenMelodyDex: () -> Unit,
     onStartOnBoot: (Boolean) -> Unit,
     onAutoRestoreSession: (Boolean) -> Unit,
     onBackgroundRun: (Boolean) -> Unit,
@@ -66,19 +62,11 @@ fun SettingsScreen(
                 EnumRow("日志保存时间", settings.logRetention.label, LogRetention.entries.map { it.label }) { label ->
                     LogRetention.entries.firstOrNull { it.label == label }?.let(onLogRetention)
                 }
-                DcDivider()
-                NavRow("查看日志", onClick = onOpenLogs)
             }
 
-            DcSectionHeader(title = "锚点更新")
+            DcSectionHeader(title = "Melody")
             DcListGroup {
-                NavRow("更新源", subtitle = "未配置", onClick = onUpdateSource)
-                DcDivider()
-                EnumRow("自动更新", settings.autoUpdate.label, UpdateInterval.entries.map { it.label }) { label ->
-                    UpdateInterval.entries.firstOrNull { it.label == label }?.let(onAutoUpdate)
-                }
-                DcDivider()
-                NavRow("立即检查更新", onClick = onCheckUpdate)
+                NavRow("Melody Dex 定位", onClick = onOpenMelodyDex)
             }
 
             DcSectionHeader(title = "模块行为")
@@ -119,11 +107,9 @@ fun SettingsScreen(
 
             DcSectionHeader(title = "关于")
             DcListGroup {
-                InfoRow("Device Center", version)
+                DcListItem(title = version)
                 DcDivider()
-                NavRow("开源许可", onClick = onAbout)
-                DcDivider()
-                InfoRow("GitHub", "未配置")
+                NavRow("关于模块", onClick = onAbout)
                 DcDivider()
                 NavRow("开发者", onClick = onDeveloper)
             }
@@ -160,9 +146,4 @@ private fun EnumRow(title: String, value: String, options: List<String>, onSelec
 @Composable
 private fun NavRow(title: String, subtitle: String? = null, onClick: () -> Unit) {
     DcListItem(title = title, subtitle = subtitle, onClick = onClick, trailing = { Text("→") })
-}
-
-@Composable
-private fun InfoRow(title: String, value: String) {
-    DcListItem(title = title, trailing = { Text(value, style = MaterialTheme.typography.bodySmall) })
 }

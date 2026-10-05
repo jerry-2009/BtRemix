@@ -41,6 +41,21 @@ interface HookGateway {
     val state: StateFlow<HookGatewayState>
     val events: SharedFlow<HookEvent>
 
+    /** Mirrors the module's own `diagnostics_enabled` switch (Settings → 开发者). */
+    val diagnosticsEnabled: StateFlow<Boolean>
+
     /** Re-reads the host install / anchor report. Safe to call from the UI on refresh. */
     fun refresh()
+
+    /** Marks a pending host-update prompt as seen so the in-app banner stops showing it. */
+    fun acknowledgeUpdate()
+
+    /**
+     * Drops the persisted anchor cache so the next host start re-resolves every anchor with DexKit.
+     * The UI exposes this as the "Dex 适配" action.
+     */
+    fun requestDexRescan()
+
+    /** Writes the module's diagnostics switch; the host reads it at its next process start. */
+    fun setDiagnosticsEnabled(enabled: Boolean)
 }

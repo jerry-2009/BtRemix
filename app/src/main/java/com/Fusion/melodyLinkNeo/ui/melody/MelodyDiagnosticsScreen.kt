@@ -17,7 +17,6 @@ import androidx.compose.material3.Button
 import androidx.compose.material3.Divider
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedButton
-import androidx.compose.material3.Switch
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.collectAsState
@@ -25,7 +24,6 @@ import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
-import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.font.FontFamily
@@ -54,11 +52,6 @@ import java.util.Locale
 fun MelodyDiagnosticsScreen(modifier: Modifier = Modifier) {
     val context = LocalContext.current
     val app = context.applicationContext as? BtRemixApplication
-    // The module preferences are the module app's own SharedPreferences; the injected code reads them
-    // through the framework's remote-preference pipe (same file, so a plain write here is enough).
-    val prefs = remember { context.getSharedPreferences(MODULE_PREFS, Context.MODE_PRIVATE) }
-    // Default off (M5.4 D-29 revised): collecting is an explicit opt-in, off until someone asks.
-    var enabled by remember { mutableStateOf(prefs.getBoolean(KEY_DIAGNOSTICS_ENABLED, false)) }
     var message by remember { mutableStateOf<String?>(null) }
     // Re-read after every action; the store is a plain in-memory ring, so the count is cheap.
     var buffered by remember { mutableStateOf(MelodyDiagnosticStore.size()) }
@@ -73,7 +66,7 @@ fun MelodyDiagnosticsScreen(modifier: Modifier = Modifier) {
         Text("Melody 诊断", style = MaterialTheme.typography.titleLarge)
         Text(
             "从 com.oplus.melody 进程回传的结构化事件（重定向 / 锚点 / 版本门控）。" +
-                "默认关闭；打开后才开始采集，关掉会同时停掉宿主侧的日志格式化与回传，" +
+                "采集开关已移至 设置 → 开发者；打开后才会采集，关掉会同时停掉宿主侧的日志格式化与回传，" +
                 "把开销降到接近零。开关在宿主进程下次启动时生效。",
             style = MaterialTheme.typography.bodyMedium,
         )
@@ -85,25 +78,6 @@ fun MelodyDiagnosticsScreen(modifier: Modifier = Modifier) {
                 message = "已清除锚点缓存；下次打开 Melody 时重新定位"
             },
         )
-
-        Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
-            Column(Modifier.weight(1f)) {
-                Text("诊断采集", style = MaterialTheme.typography.titleMedium)
-                Text(
-                    if (enabled) "已开启" else "已关闭（默认）",
-                    style = MaterialTheme.typography.bodySmall,
-                )
-            }
-            Switch(
-                checked = enabled,
-                onCheckedChange = { checked ->
-                    enabled = checked
-                    prefs.edit().putBoolean(KEY_DIAGNOSTICS_ENABLED, checked).apply()
-                    MelodyDiagnosticStore.diagnosticsEnabled = checked
-                    message = "已写入模块偏好；宿主进程下次启动生效"
-                },
-            )
-        }
 
         Divider()
         KeyValue("宿主包", MelodyCallPolicy.HOST_PACKAGE)
@@ -246,7 +220,5 @@ private fun hostVersion(context: Context): String? = runCatching {
     context.packageManager.getPackageInfo(MelodyCallPolicy.HOST_PACKAGE, 0).versionName
 }.getOrNull()
 
-const val KEY_DIAGNOSTICS_ENABLED: String = "diagnostics_enabled"
 const val DUMP_FILE_NAME: String = "melody-diagnostics.jsonl"
-private const val MODULE_PREFS = "melody_bridge"
 private const val MAX_SHARE_CHARS = 200_000

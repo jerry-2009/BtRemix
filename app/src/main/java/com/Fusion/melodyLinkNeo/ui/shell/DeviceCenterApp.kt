@@ -3,9 +3,14 @@ package com.fusion.melodyLinkNeo.ui.shell
 import android.app.ActivityManager
 import android.content.Context
 import android.content.pm.PackageManager
+import android.widget.Toast
 import androidx.activity.compose.BackHandler
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.contract.ActivityResultContracts
+import androidx.compose.animation.AnimatedContentTransitionScope
+import androidx.compose.animation.core.tween
+import androidx.compose.animation.fadeIn
+import androidx.compose.animation.fadeOut
 import androidx.compose.foundation.background
 import androidx.compose.foundation.isSystemInDarkTheme
 import androidx.compose.foundation.layout.Arrangement
@@ -27,6 +32,7 @@ import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.saveable.rememberSaveableStateHolder
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
@@ -45,6 +51,7 @@ import androidx.navigation.compose.currentBackStackEntryAsState
 import androidx.navigation.compose.rememberNavController
 import androidx.navigation.navArgument
 import com.fusion.melodyLinkNeo.BtRemixApplication
+import com.fusion.melodyLinkNeo.core.hook.ScopeRestarter
 import com.fusion.melodyLinkNeo.core.hook.api.HookGatewayState
 import com.fusion.melodyLinkNeo.core.settings.AppSettings
 import com.fusion.melodyLinkNeo.core.settings.ThemeMode
@@ -66,12 +73,15 @@ import com.fusion.melodyLinkNeo.ui.settings.DeveloperScreen
 import com.fusion.melodyLinkNeo.ui.settings.LogsScreen
 import com.fusion.melodyLinkNeo.ui.settings.SettingsScreen
 import com.fusion.melodyLinkNeo.ui.settings.SettingsViewModel
-import com.fusion.melodyLinkNeo.ui.settings.UpdateSourceScreen
 import com.fusion.melodyLinkNeo.ui.studio.StudioViewModel
 import com.fusion.melodyLinkNeo.ui.theme.BtRemixTheme
+import com.fusion.melodyLinkNeo.ui.theme.DcMotion
 import com.kyant.backdrop.backdrops.LayerBackdrop
 import com.kyant.backdrop.backdrops.layerBackdrop
 import com.kyant.backdrop.backdrops.rememberLayerBackdrop
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.launch
+import kotlinx.coroutines.withContext
 
 /**
  * Root of the product UI (DEVICE_CENTER_UI_PLAN §6/§7).
@@ -114,6 +124,7 @@ private fun DeviceCenterShell(
     val navController = rememberNavController()
     val backdrop: LayerBackdrop = rememberLayerBackdrop()
     val stateHolder = rememberSaveableStateHolder()
+    val actionScope = rememberCoroutineScope()
     val hookState by app.hookGateway.state.collectAsState()
     val backStackEntry by navController.currentBackStackEntryAsState()
     val currentRoute = backStackEntry?.destination?.route
@@ -124,6 +135,9 @@ private fun DeviceCenterShell(
         manager?.isLowRamDevice == true
     }
     val glassEnabled = !settings.reduceTransparency && !lowRam
+    // D-UI-2 keeps the bar on second-level pages, but the device session is a full-screen
+    // control surface: it hides the bar so the capability controls get the whole height.
+    val showNavBar = currentRoute != Routes.DEVICE_SESSION
 
     fun selectTab(tab: AppTab) {
         navController.navigate(tab.route) {
@@ -140,23 +154,54 @@ private fun DeviceCenterShell(
         }
     }
 
-    Box(
+    Surface(
         Modifier
             .fillMaxSize()
             .background(MaterialTheme.colorScheme.surface),
+        color = MaterialTheme.colorScheme.surface,
     ) {
-        Column(Modifier.fillMaxSize().statusBarsPadding()) {
+        Box(Modifier.fillMaxSize()) {
+            Column(Modifier.fillMaxSize().statusBarsPadding()) {
             HostUpdateBanner(
                 state = hookState,
                 onOpen = {
-                    app.moduleStatus.refresh()
+                    // Acknowledge first so the yellow banner clears the moment 查看 is tapped.
+                    app.moduleStatus.acknowledgeUpdate()
                     navController.navigate(Routes.MELODY_DIAGNOSTICS)
                 },
             )
             NavHost(
                 navController = navController,
                 startDestination = Routes.HOME,
-                modifier = Modifier.fillMaxSize().layerBackdrop(backdrop),
+                modifier = Modifier
+                    .fillMaxSize()
+                    .layerBackdrop(backdrop)
+                    .then(if (showNavBar) Modifier else Modifier.navigationBarsPadding()),
+                // Native push/pop motion instead of the library default cross-fade (§4.7).
+                enterTransition = {
+                    slideIntoContainer(
+                        AnimatedContentTransitionScope.SlideDirection.Left,
+                        tween(DcMotion.PAGE_TRANSITION_MS, easing = DcMotion.fastOutSlowIn),
+                    ) + fadeIn(tween(DcMotion.PAGE_TRANSITION_MS))
+                },
+                exitTransition = {
+                    slideOutOfContainer(
+                        AnimatedContentTransitionScope.SlideDirection.Left,
+                        tween(DcMotion.PAGE_TRANSITION_MS, easing = DcMotion.fastOutSlowIn),
+                    ) + fadeOut(tween(DcMotion.PAGE_TRANSITION_MS))
+                },
+                popEnterTransition = {
+                    slideIntoContainer(
+                        AnimatedContentTransitionScope.SlideDirection.Right,
+                        tween(DcMotion.PAGE_TRANSITION_MS, easing = DcMotion.fastOutSlowIn),
+                    ) + fadeIn(tween(DcMotion.PAGE_TRANSITION_MS))
+                },
+                popExitTransition = {
+                    slideOutOfContainer(
+                        AnimatedContentTransitionScope.SlideDirection.Right,
+                        tween(DcMotion.PAGE_TRANSITION_MS, easing = DcMotion.fastOutSlowIn),
+                    ) + fadeOut(tween(DcMotion.PAGE_TRANSITION_MS))
+                },
             ) {
                 composable(Routes.HOME) {
                     stateHolder.SaveableStateProvider(Routes.HOME) {
@@ -165,6 +210,24 @@ private fun DeviceCenterShell(
                         HomeScreen(
                             state = homeState,
                             onRefresh = homeViewModel::refresh,
+                            onQuickRestartScope = {
+                                actionScope.launch {
+                                    val ok = withContext(Dispatchers.IO) { ScopeRestarter.restart() }
+                                    Toast.makeText(
+                                        context,
+                                        if (ok) "作用域已重启" else "重启失败：需要 root 权限",
+                                        Toast.LENGTH_SHORT,
+                                    ).show()
+                                }
+                            },
+                            onDexAdapt = {
+                                app.moduleStatus.requestDexRescan()
+                                Toast.makeText(
+                                    context,
+                                    "已清除锚点缓存，重启宿主后重新定位",
+                                    Toast.LENGTH_SHORT,
+                                ).show()
+                            },
                             onOpenDiagnostics = { navController.navigate(Routes.MELODY_DIAGNOSTICS) },
                             onOpenDevices = { selectTab(AppTab.DEVICES) },
                             onOpenDefinitions = { selectTab(AppTab.DEFINITIONS) },
@@ -246,7 +309,6 @@ private fun DeviceCenterShell(
                             onToggle = definitionsViewModel::setEnabled,
                             onOpenDetail = { packageId -> navController.navigate(Routes.packageDetail(packageId)) },
                             onUninstall = definitionsViewModel::uninstall,
-                            onCheckUpdate = definitionsViewModel::checkUpdate,
                             onConfirmInstall = definitionsViewModel::confirmInstall,
                             onConfirmReplace = definitionsViewModel::confirmReplace,
                             onDismissMessage = definitionsViewModel::dismissMessage,
@@ -272,7 +334,6 @@ private fun DeviceCenterShell(
                             definitionsViewModel.uninstall(packageId)
                             navController.popBackStack()
                         },
-                        onCheckUpdate = definitionsViewModel::checkUpdate,
                     )
                 }
 
@@ -286,10 +347,7 @@ private fun DeviceCenterShell(
                             onToggleLogging = settingsViewModel::setLoggingEnabled,
                             onLogLevel = settingsViewModel::setLogLevel,
                             onLogRetention = settingsViewModel::setLogRetention,
-                            onOpenLogs = { navController.navigate(Routes.LOGS) },
-                            onUpdateSource = { navController.navigate(Routes.UPDATE_SOURCE) },
-                            onAutoUpdate = settingsViewModel::setAutoUpdate,
-                            onCheckUpdate = settingsViewModel::checkUpdateNow,
+                            onOpenMelodyDex = { navController.navigate(Routes.MELODY_DIAGNOSTICS) },
                             onStartOnBoot = settingsViewModel::setStartOnBoot,
                             onAutoRestoreSession = settingsViewModel::setAutoRestoreSession,
                             onBackgroundRun = settingsViewModel::setBackgroundRun,
@@ -311,13 +369,8 @@ private fun DeviceCenterShell(
                     )
                 }
 
-                composable(Routes.UPDATE_SOURCE) {
-                    UpdateSourceScreen(onBack = { navController.popBackStack() })
-                }
-
                 composable(Routes.ABOUT) {
                     AboutScreen(
-                        appVersion = com.fusion.melodyLinkNeo.BuildConfig.VERSION_NAME,
                         onBack = { navController.popBackStack() },
                     )
                 }
@@ -325,12 +378,14 @@ private fun DeviceCenterShell(
                 composable(Routes.DEVELOPER) {
                     val settingsViewModel: SettingsViewModel = viewModel()
                     val current by settingsViewModel.settings.collectAsState()
+                    val diagnosticsEnabled by settingsViewModel.diagnosticsEnabled.collectAsState()
                     DeveloperScreen(
                         developerMode = current.developerMode,
                         onToggleDeveloperMode = settingsViewModel::setDeveloperMode,
+                        diagnosticsEnabled = diagnosticsEnabled,
+                        onToggleDiagnostics = settingsViewModel::setDiagnosticsEnabled,
                         onOpenExplorer = { navController.navigate(Routes.EXPLORER) },
                         onOpenStudio = { navController.navigate(Routes.STUDIO) },
-                        onOpenMelodyDiagnostics = { navController.navigate(Routes.MELODY_DIAGNOSTICS) },
                         onOpenLogs = { navController.navigate(Routes.LOGS) },
                         onBack = { navController.popBackStack() },
                     )
@@ -361,17 +416,20 @@ private fun DeviceCenterShell(
             }
         }
 
-        LiquidGlassNavBar(
-            backdrop = backdrop,
-            items = AppTab.entries,
-            selected = currentTab,
-            onSelect = ::selectTab,
-            glassEnabled = glassEnabled,
-            modifier = Modifier
-                .align(Alignment.BottomCenter)
-                .navigationBarsPadding()
-                .padding(bottom = 8.dp),
-        )
+            if (showNavBar) {
+                LiquidGlassNavBar(
+                    backdrop = backdrop,
+                    items = AppTab.entries,
+                    selected = currentTab,
+                    onSelect = ::selectTab,
+                    glassEnabled = glassEnabled,
+                    modifier = Modifier
+                        .align(Alignment.BottomCenter)
+                        .navigationBarsPadding()
+                        .padding(bottom = 8.dp),
+                )
+            }
+        }
     }
 }
 

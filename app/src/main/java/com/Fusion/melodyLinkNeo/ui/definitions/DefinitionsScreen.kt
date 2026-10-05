@@ -58,7 +58,6 @@ fun DefinitionsScreen(
     onToggle: (String, Boolean) -> Unit,
     onOpenDetail: (String) -> Unit,
     onUninstall: (String) -> Unit,
-    onCheckUpdate: () -> Unit,
     onConfirmInstall: () -> Unit,
     onConfirmReplace: () -> Unit,
     onDismissMessage: () -> Unit,
@@ -78,12 +77,9 @@ fun DefinitionsScreen(
             },
         )
         Column(Modifier.padding(horizontal = DcSpacing.screenPadding), verticalArrangement = Arrangement.spacedBy(DcSpacing.sm)) {
-            Row(horizontalArrangement = Arrangement.spacedBy(DcSpacing.sm)) {
-                FilledTonalButton(onClick = { picker.launch(arrayOf("*/*")) }) {
-                    Icon(Icons.Rounded.Add, contentDescription = null, modifier = Modifier.size(18.dp))
-                    Text("  安装设备包")
-                }
-                OutlinedButton(onClick = onCheckUpdate) { Text("更新源") }
+            FilledTonalButton(onClick = { picker.launch(arrayOf("*/*")) }) {
+                Icon(Icons.Rounded.Add, contentDescription = null, modifier = Modifier.size(18.dp))
+                Text("  安装设备包")
             }
             Text(
                 "已安装设备包 ${state.packages.size} 个 · ${state.packages.count { it.enabled }} 启用",
@@ -123,7 +119,6 @@ fun DefinitionsScreen(
                         onToggle = { enabled -> onToggle(pkg.packageId, enabled) },
                         onOpenDetail = { onOpenDetail(pkg.packageId) },
                         onUninstall = { onUninstall(pkg.packageId) },
-                        onCheckUpdate = onCheckUpdate,
                     )
                 }
             }
@@ -146,7 +141,6 @@ private fun PackageCard(
     onToggle: (Boolean) -> Unit,
     onOpenDetail: () -> Unit,
     onUninstall: () -> Unit,
-    onCheckUpdate: () -> Unit,
 ) {
     var menuOpen by remember { mutableStateOf(false) }
     DcCard(onClick = onOpenDetail) {
@@ -175,7 +169,6 @@ private fun PackageCard(
                     }
                     DropdownMenu(expanded = menuOpen, onDismissRequest = { menuOpen = false }) {
                         DropdownMenuItem(text = { Text("查看详情") }, onClick = { menuOpen = false; onOpenDetail() })
-                        DropdownMenuItem(text = { Text("检查更新") }, onClick = { menuOpen = false; onCheckUpdate() })
                         if (!pkg.isBuiltIn) {
                             DropdownMenuItem(text = { Text("卸载") }, onClick = { menuOpen = false; onUninstall() })
                         }

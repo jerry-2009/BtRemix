@@ -5,6 +5,8 @@ import androidx.compose.animation.core.animateFloat
 import androidx.compose.animation.core.infiniteRepeatable
 import androidx.compose.animation.core.rememberInfiniteTransition
 import androidx.compose.animation.core.tween
+import androidx.compose.animation.animateColorAsState
+import androidx.compose.foundation.BorderStroke
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
@@ -24,6 +26,7 @@ import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.automirrored.rounded.ArrowBack
 import androidx.compose.material.icons.rounded.BatteryAlert
 import androidx.compose.material.icons.rounded.BatteryChargingFull
 import androidx.compose.material.icons.rounded.BatteryFull
@@ -49,10 +52,17 @@ import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import com.fusion.melodyLinkNeo.ui.theme.DcSpacing
+import com.fusion.melodyLinkNeo.ui.theme.DcMotion
 import com.fusion.melodyLinkNeo.ui.theme.DcType
 import com.fusion.melodyLinkNeo.ui.theme.statusColors
 
-/** A card follows the plan's elevation rule: flat fill plus a 1dp outline, never a drop shadow. */
+/**
+ * A card follows the plan's elevation rule: flat fill plus a 1dp outline, never a drop shadow.
+ *
+ * The fill is passed to `Surface` itself (never `Color.Transparent`): `Surface` derives its content
+ * color from the background it is given, and a transparent background makes `contentColorFor()`
+ * return `Unspecified`, which falls back to the framework's black text - invisible in dark mode.
+ */
 @Composable
 fun DcCard(
     modifier: Modifier = Modifier,
@@ -61,16 +71,13 @@ fun DcCard(
     content: @Composable () -> Unit,
 ) {
     val shape = MaterialTheme.shapes.large
-    val base = modifier
-        .clip(shape)
-        .background(MaterialTheme.colorScheme.surfaceContainerLow)
-        .border(1.dp, MaterialTheme.colorScheme.outlineVariant, shape)
-    Surface(
-        modifier = if (onClick != null) base.clickable(onClick = onClick) else base,
-        color = Color.Transparent,
-        shape = shape,
-    ) {
-        Box(Modifier.padding(contentPadding)) { content() }
+    val color = MaterialTheme.colorScheme.surfaceContainerLow
+    val border = BorderStroke(1.dp, MaterialTheme.colorScheme.outlineVariant)
+    val body: @Composable () -> Unit = { Box(Modifier.padding(contentPadding)) { content() } }
+    if (onClick != null) {
+        Surface(onClick = onClick, modifier = modifier, shape = shape, color = color, border = border) { body() }
+    } else {
+        Surface(modifier = modifier, shape = shape, color = color, border = border) { body() }
     }
 }
 
@@ -102,15 +109,7 @@ fun DcStatTile(
     onClick: (() -> Unit)? = null,
 ) {
     val shape = MaterialTheme.shapes.large
-    Surface(
-        modifier = modifier
-            .clip(shape)
-            .then(if (onClick != null) Modifier.clickable(onClick = onClick) else Modifier)
-            .background(MaterialTheme.colorScheme.surfaceContainerLow)
-            .border(1.dp, MaterialTheme.colorScheme.outlineVariant, shape),
-        color = Color.Transparent,
-        shape = shape,
-    ) {
+    val content: @Composable () -> Unit = {
         Column(
             Modifier
                 .fillMaxWidth()
@@ -126,6 +125,23 @@ fun DcStatTile(
             )
         }
     }
+    val tint = if (onClick != null) MaterialTheme.colorScheme.surfaceContainerHigh else MaterialTheme.colorScheme.surfaceContainerLow
+    if (onClick != null) {
+        Surface(
+            onClick = onClick,
+            modifier = modifier,
+            shape = shape,
+            color = tint,
+            border = BorderStroke(1.dp, MaterialTheme.colorScheme.outlineVariant),
+        ) { content() }
+    } else {
+        Surface(
+            modifier = modifier,
+            shape = shape,
+            color = tint,
+            border = BorderStroke(1.dp, MaterialTheme.colorScheme.outlineVariant),
+        ) { content() }
+    }
 }
 
 /** 8dp status dot plus optional label. */
@@ -136,9 +152,10 @@ fun DcStatusDot(
     label: String? = null,
     labelStyle: androidx.compose.ui.text.TextStyle = MaterialTheme.typography.labelMedium,
 ) {
+    val animatedColor by animateColorAsState(color, tween(DcMotion.STATUS_COLOR_MS), label = "status-dot")
     Row(modifier, verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(DcSpacing.xs)) {
-        Box(Modifier.size(8.dp).clip(CircleShape).background(color))
-        if (label != null) Text(label, style = labelStyle, color = color)
+        Box(Modifier.size(8.dp).clip(CircleShape).background(animatedColor))
+        if (label != null) Text(label, style = labelStyle, color = animatedColor)
     }
 }
 
@@ -230,12 +247,10 @@ fun DcListItem(
 @Composable
 fun DcListGroup(modifier: Modifier = Modifier, content: @Composable () -> Unit) {
     Surface(
-        modifier = modifier
-            .fillMaxWidth()
-            .clip(MaterialTheme.shapes.large)
-            .border(1.dp, MaterialTheme.colorScheme.outlineVariant, MaterialTheme.shapes.large),
+        modifier = modifier.fillMaxWidth(),
         color = MaterialTheme.colorScheme.surfaceContainerLow,
         shape = MaterialTheme.shapes.large,
+        border = BorderStroke(1.dp, MaterialTheme.colorScheme.outlineVariant),
     ) {
         Column { content() }
     }
@@ -391,7 +406,7 @@ fun DcTopBar(
     ) {
         if (onBack != null) {
             IconButton(onClick = onBack) {
-                Icon(Icons.Rounded.Refresh, contentDescription = "返回")
+                Icon(Icons.AutoMirrored.Rounded.ArrowBack, contentDescription = "返回")
             }
         }
         Text(

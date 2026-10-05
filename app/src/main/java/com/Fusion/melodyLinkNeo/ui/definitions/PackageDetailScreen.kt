@@ -42,7 +42,6 @@ fun PackageDetailScreen(
     onBack: () -> Unit,
     onToggle: (Boolean) -> Unit,
     onUninstall: () -> Unit,
-    onCheckUpdate: () -> Unit,
     modifier: Modifier = Modifier,
 ) {
     val pkg = packages.firstOrNull { it.packageId == packageId }
@@ -63,7 +62,6 @@ fun PackageDetailScreen(
             MatcherSection(pkg)
             MetadataSection(pkg)
             Row(horizontalArrangement = Arrangement.spacedBy(DcSpacing.sm)) {
-                OutlinedButton(onClick = onCheckUpdate) { Text("检查更新") }
                 OutlinedButton(onClick = { onToggle(!pkg.enabled) }) { Text(if (pkg.enabled) "禁用" else "启用") }
                 if (!pkg.isBuiltIn) {
                     OutlinedButton(onClick = onUninstall) { Text("卸载") }
@@ -147,7 +145,6 @@ private fun MetadataSection(pkg: InstalledPackage) {
     DcCard {
         Column {
             DcMonoRow(label = "当前版本", value = "v${pkg.devicePackage.version}")
-            DcMonoRow(label = "更新源", value = "未配置")
             val manifest = pkg.devicePackage.definition.manifest
             manifest.minRuntime?.let { DcMonoRow(label = "最低运行时", value = it) }
             manifest.homepage?.let { DcMonoRow(label = "主页", value = it) }

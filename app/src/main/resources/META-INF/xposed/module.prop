@@ -1,7 +1,7 @@
 id=com.fusion.melodyLinkNeo.melody
-name=BtRemix Melody Bridge
+name=MelodyLinkNeo Melody Bridge
 author=FusionBT
-description=Projects BtRemix device definitions onto the ColorOS Melody control panel. The BtRemix process keeps the BLE/RFCOMM session; Melody only renders controls.
+description=Projects MelodyLinkNeo device definitions onto the ColorOS Melody control panel. The MelodyLinkNeo process keeps the BLE/RFCOMM session; Melody only renders controls.
 minApiVersion=101
 targetApiVersion=101
 staticScope=true

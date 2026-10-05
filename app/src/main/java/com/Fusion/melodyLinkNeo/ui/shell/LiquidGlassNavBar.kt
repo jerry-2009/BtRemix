@@ -1,6 +1,9 @@
 package com.fusion.melodyLinkNeo.ui.shell
 
 import android.os.Build
+import androidx.compose.animation.animateColorAsState
+import androidx.compose.animation.core.animateFloatAsState
+import androidx.compose.animation.core.tween
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
@@ -16,6 +19,7 @@ import androidx.compose.material3.Icon
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.getValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
@@ -23,6 +27,7 @@ import androidx.compose.ui.graphics.Shape
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import com.fusion.melodyLinkNeo.ui.theme.DcShapes
+import com.fusion.melodyLinkNeo.ui.theme.DcMotion
 import com.fusion.melodyLinkNeo.ui.theme.DcSpacing
 import com.kyant.backdrop.backdrops.LayerBackdrop
 import com.kyant.backdrop.drawBackdrop
@@ -101,30 +106,49 @@ private fun NavItem(
     modifier: Modifier = Modifier,
 ) {
     val pillShape: Shape = DcShapes.capsule
-    val tint = if (selected) {
-        MaterialTheme.colorScheme.primaryContainer.copy(alpha = 0.55f)
-    } else {
-        MaterialTheme.colorScheme.surfaceContainer.copy(alpha = 0.20f)
-    }
-    val contentColor = if (selected) {
-        MaterialTheme.colorScheme.primary
-    } else {
-        MaterialTheme.colorScheme.onSurfaceVariant
-    }
+    // Selection is animated rather than swapped (DEVICE_CENTER_UI_PLAN §4.7): the pill tint, the
+    // label/icon color and the lens refraction all interpolate over the same 300ms.
+    val tint by animateColorAsState(
+        targetValue = if (selected) {
+            MaterialTheme.colorScheme.primaryContainer.copy(alpha = 0.55f)
+        } else {
+            MaterialTheme.colorScheme.surfaceContainer.copy(alpha = 0.20f)
+        },
+        animationSpec = tween(DcMotion.STATUS_COLOR_MS),
+        label = "nav-pill-tint",
+    )
+    val contentColor by animateColorAsState(
+        targetValue = if (selected) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.onSurfaceVariant,
+        animationSpec = tween(DcMotion.STATUS_COLOR_MS),
+        label = "nav-item-color",
+    )
+    val lensHeight by animateFloatAsState(
+        targetValue = if (selected) 10f else 0f,
+        animationSpec = tween(DcMotion.STATUS_COLOR_MS),
+        label = "nav-lens-height",
+    )
+    val lensAmount by animateFloatAsState(
+        targetValue = if (selected) 14f else 0f,
+        animationSpec = tween(DcMotion.STATUS_COLOR_MS),
+        label = "nav-lens-amount",
+    )
+    // Keep the backdrop modifier attached while the lens is shrinking so the transition is visible,
+    // then drop it again: an always-attached pill would re-record the content layer every frame.
+    val lensAttached = selected || lensHeight > 0.01f
 
     val pill = modifier
         .height(56.dp)
         .clip(pillShape)
         .clickable(onClick = onClick)
         .then(
-            if (glassEnabled && selected && Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
+            if (glassEnabled && lensAttached && Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
                 Modifier.drawBackdrop(
                     backdrop = backdrop,
                     shape = { pillShape },
                     effects = {
                         lens(
-                            refractionHeight = 10.dp.toPx(),
-                            refractionAmount = 14.dp.toPx(),
+                            refractionHeight = lensHeight.dp.toPx(),
+                            refractionAmount = lensAmount.dp.toPx(),
                             chromaticAberration = true,
                         )
                     },
@@ -132,10 +156,8 @@ private fun NavItem(
                     shadow = null,
                     onDrawSurface = { drawRect(tint) },
                 )
-            } else if (selected) {
-                Modifier.background(tint)
             } else {
-                Modifier
+                Modifier.background(tint)
             },
         )
 

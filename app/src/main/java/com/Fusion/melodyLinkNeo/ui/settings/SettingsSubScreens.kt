@@ -23,7 +23,6 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.unit.dp
 import com.fusion.melodyLinkNeo.core.logging.LogCategory
 import com.fusion.melodyLinkNeo.core.logging.LogEntry
-import com.fusion.melodyLinkNeo.ui.components.DcCard
 import com.fusion.melodyLinkNeo.ui.components.DcEmptyState
 import com.fusion.melodyLinkNeo.ui.components.DcFilterChips
 import com.fusion.melodyLinkNeo.ui.components.DcListItem
@@ -101,48 +100,11 @@ private fun LogCategory.dotColor() = when (this) {
     else -> MaterialTheme.statusColors.idle
 }
 
+/** 关于模块: deliberately empty for now; the module-specific copy lands here later. */
 @Composable
-fun AboutScreen(appVersion: String, onBack: () -> Unit, modifier: Modifier = Modifier) {
+fun AboutScreen(onBack: () -> Unit, modifier: Modifier = Modifier) {
     Column(modifier.fillMaxWidth()) {
-        DcTopBar(title = "关于", onBack = onBack)
-        Column(Modifier.padding(horizontal = DcSpacing.screenPadding)) {
-            DcSectionHeader(title = "Device Center")
-            DcCard {
-                Column(verticalArrangement = Arrangement.spacedBy(DcSpacing.xs)) {
-                    Text("版本 $appVersion", style = DcType.mono)
-                    Text(
-                        "把声明式设备定义渲染成可操作的设备中心，并通过 ColorOS Melody 桥接模块把控制项投射到系统面板。",
-                        style = MaterialTheme.typography.bodyMedium,
-                    )
-                }
-            }
-            DcSectionHeader(title = "开源许可")
-            DcCard {
-                Text(
-                    "本应用基于 AndroidX / Jetpack Compose（Apache-2.0）构建，Liquid Glass 效果来自 io.github.kyant0:backdrop（Apache-2.0）。",
-                    style = MaterialTheme.typography.bodyMedium,
-                )
-            }
-        }
-    }
-}
-
-@Composable
-fun UpdateSourceScreen(onBack: () -> Unit, modifier: Modifier = Modifier) {
-    Column(modifier.fillMaxWidth()) {
-        DcTopBar(title = "更新源", onBack = onBack)
-        Column(Modifier.padding(horizontal = DcSpacing.screenPadding)) {
-            DcCard {
-                Column(verticalArrangement = Arrangement.spacedBy(DcSpacing.xs)) {
-                    Text("未配置更新源", style = MaterialTheme.typography.titleMedium)
-                    Text(
-                        "本期只支持本地安装 .dcpkg。配置更新源后可在这里填入索引地址，并在定义页检查更新。",
-                        style = MaterialTheme.typography.bodyMedium,
-                        color = MaterialTheme.colorScheme.onSurfaceVariant,
-                    )
-                }
-            }
-        }
+        DcTopBar(title = "关于模块", onBack = onBack)
     }
 }
 
@@ -151,9 +113,10 @@ fun UpdateSourceScreen(onBack: () -> Unit, modifier: Modifier = Modifier) {
 fun DeveloperScreen(
     developerMode: Boolean,
     onToggleDeveloperMode: (Boolean) -> Unit,
+    diagnosticsEnabled: Boolean,
+    onToggleDiagnostics: (Boolean) -> Unit,
     onOpenExplorer: () -> Unit,
     onOpenStudio: () -> Unit,
-    onOpenMelodyDiagnostics: () -> Unit,
     onOpenLogs: () -> Unit,
     onBack: () -> Unit,
     modifier: Modifier = Modifier,
@@ -174,13 +137,24 @@ fun DeveloperScreen(
                     },
                 )
             }
+            DcSectionHeader(title = "诊断")
+            com.fusion.melodyLinkNeo.ui.components.DcListGroup {
+                DcListItem(
+                    title = "诊断采集",
+                    subtitle = "记录宿主回传的结构化事件；宿主进程下次启动生效",
+                    trailing = {
+                        androidx.compose.material3.Switch(
+                            checked = diagnosticsEnabled,
+                            onCheckedChange = onToggleDiagnostics,
+                        )
+                    },
+                )
+            }
             DcSectionHeader(title = "工具")
             com.fusion.melodyLinkNeo.ui.components.DcListGroup {
                 DcListItem(title = "BLE Explorer", onClick = onOpenExplorer, trailing = { Text("→") })
                 com.fusion.melodyLinkNeo.ui.components.DcDivider()
                 DcListItem(title = "定义 Studio", onClick = onOpenStudio, trailing = { Text("→") })
-                com.fusion.melodyLinkNeo.ui.components.DcDivider()
-                DcListItem(title = "Melody 诊断", onClick = onOpenMelodyDiagnostics, trailing = { Text("→") })
                 com.fusion.melodyLinkNeo.ui.components.DcDivider()
                 DcListItem(title = "原始日志", onClick = onOpenLogs, trailing = { Text("→") })
             }

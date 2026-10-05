@@ -35,7 +35,12 @@ class MelodyHookGateway(
     private val mutableEvents = MutableSharedFlow<HookEvent>(extraBufferCapacity = 16)
     override val events: SharedFlow<HookEvent> = mutableEvents.asSharedFlow()
 
+    private val mutableDiagnostics = MutableStateFlow(MelodyDiagnosticsPrefs.read(context))
+    override val diagnosticsEnabled: StateFlow<Boolean> = mutableDiagnostics.asStateFlow()
+
     init {
+        // Keep the export header's in-memory mirror in step with the persisted switch on process start.
+        MelodyDiagnosticStore.diagnosticsEnabled = mutableDiagnostics.value
         scope.launch {
             MelodyHostUpdateTracker.state.collect { update -> publish(update) }
         }
@@ -43,6 +48,19 @@ class MelodyHookGateway(
 
     override fun refresh() {
         runCatching { MelodyHostUpdateTracker.refresh(context.applicationContext) }
+    }
+
+    override fun acknowledgeUpdate() {
+        runCatching { MelodyHostUpdateTracker.acknowledge(context.applicationContext) }
+    }
+
+    override fun requestDexRescan() {
+        runCatching { MelodyHostUpdateTracker.requestRescan(context.applicationContext) }
+    }
+
+    override fun setDiagnosticsEnabled(enabled: Boolean) {
+        MelodyDiagnosticsPrefs.write(context.applicationContext, enabled)
+        mutableDiagnostics.value = enabled
     }
 
     private fun publish(update: MelodyHostUpdateState?) {

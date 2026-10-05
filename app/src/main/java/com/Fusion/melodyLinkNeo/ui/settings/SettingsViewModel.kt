@@ -9,7 +9,6 @@ import com.fusion.melodyLinkNeo.core.settings.AppSettings
 import com.fusion.melodyLinkNeo.core.settings.LogLevel
 import com.fusion.melodyLinkNeo.core.settings.LogRetention
 import com.fusion.melodyLinkNeo.core.settings.ThemeMode
-import com.fusion.melodyLinkNeo.core.settings.UpdateInterval
 import kotlinx.coroutines.flow.SharingStarted
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.stateIn
@@ -27,6 +26,9 @@ class SettingsViewModel(application: Application) : AndroidViewModel(application
 
     val moduleStatus = app.moduleStatus.status
 
+    /** Host 诊断采集 switch (M5.4 D-29); moved here from the Melody Dex 定位 page. */
+    val diagnosticsEnabled: StateFlow<Boolean> = app.moduleStatus.diagnosticsEnabled
+
     fun setDynamicColor(value: Boolean) = update { app.settings.setDynamicColor(value) }
 
     fun setThemeMode(value: ThemeMode) = update { app.settings.setThemeMode(value) }
@@ -36,8 +38,6 @@ class SettingsViewModel(application: Application) : AndroidViewModel(application
     fun setLogLevel(value: LogLevel) = update { app.settings.setLogLevel(value) }
 
     fun setLogRetention(value: LogRetention) = update { app.settings.setLogRetention(value) }
-
-    fun setAutoUpdate(value: UpdateInterval) = update { app.settings.setAutoUpdate(value) }
 
     fun setStartOnBoot(value: Boolean) = update { app.settings.setStartOnBoot(value) }
 
@@ -54,16 +54,9 @@ class SettingsViewModel(application: Application) : AndroidViewModel(application
 
     fun setDeveloperMode(value: Boolean) = update { app.settings.setDeveloperMode(value) }
 
-    fun setReduceTransparency(value: Boolean) = update { app.settings.setReduceTransparency(value) }
+    fun setDiagnosticsEnabled(value: Boolean) = app.moduleStatus.setDiagnosticsEnabled(value)
 
-    fun checkUpdateNow() {
-        // Update sources are not implemented this milestone; keep the entry honest.
-        app.activity.record(
-            kind = com.fusion.melodyLinkNeo.core.activity.ActivityKind.PACKAGE,
-            title = "检查更新",
-            detail = "更新源未配置",
-        )
-    }
+    fun setReduceTransparency(value: Boolean) = update { app.settings.setReduceTransparency(value) }
 
     fun clearLogs() = app.logger.clear()
 

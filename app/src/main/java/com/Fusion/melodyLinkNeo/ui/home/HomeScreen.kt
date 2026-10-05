@@ -1,6 +1,7 @@
 package com.fusion.melodyLinkNeo.ui.home
 
 import androidx.compose.foundation.layout.Arrangement
+import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.fillMaxWidth
@@ -15,9 +16,15 @@ import androidx.compose.material.icons.rounded.ErrorOutline
 import androidx.compose.material.icons.rounded.RadioButtonUnchecked
 import androidx.compose.material3.Icon
 import androidx.compose.material3.MaterialTheme
+import androidx.compose.material3.DropdownMenu
+import androidx.compose.material3.DropdownMenuItem
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.remember
+import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Color
@@ -45,13 +52,37 @@ import java.time.format.DateTimeFormatter
 fun HomeScreen(
     state: HomeUiState,
     onRefresh: () -> Unit,
+    onQuickRestartScope: () -> Unit,
+    onDexAdapt: () -> Unit,
     onOpenDiagnostics: () -> Unit,
     onOpenDevices: () -> Unit,
     onOpenDefinitions: () -> Unit,
     modifier: Modifier = Modifier,
 ) {
+    var menuOpen by remember { mutableStateOf(false) }
     Column(modifier.fillMaxWidth()) {
-        DcTopBar(title = "Device Center", actions = { DcRefreshButton(onClick = onRefresh) })
+        DcTopBar(
+            title = "MelodyLinkNeo",
+            actions = {
+                Box {
+                    DcRefreshButton(onClick = { menuOpen = true })
+                    DropdownMenu(expanded = menuOpen, onDismissRequest = { menuOpen = false }) {
+                        DropdownMenuItem(
+                            text = { Text("刷新") },
+                            onClick = { menuOpen = false; onRefresh() },
+                        )
+                        DropdownMenuItem(
+                            text = { Text("快速重启作用域") },
+                            onClick = { menuOpen = false; onQuickRestartScope() },
+                        )
+                        DropdownMenuItem(
+                            text = { Text("Dex 适配") },
+                            onClick = { menuOpen = false; onDexAdapt() },
+                        )
+                    }
+                }
+            },
+        )
         when {
             state.loading -> DcLoadingState(rows = 3)
             else -> LazyColumn(

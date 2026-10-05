@@ -76,7 +76,9 @@ fun DeviceSessionScreen(
                 if (developerMode) {
                     DeveloperSection(state)
                 }
-                Spacer(Modifier.height(DcSpacing.contentBottomInset))
+                // The shell hides the bottom bar on this page and applies the navigation-bar inset,
+                // so the old "clear the glass bar" reserve is no longer needed.
+                Spacer(Modifier.height(DcSpacing.lg))
             }
         }
     }

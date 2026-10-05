@@ -47,6 +47,17 @@ class ModuleStatusRepository(
         .stateIn(scope, SharingStarted.Eagerly, policy.evaluate(gateway.state.value))
 
     fun refresh() = gateway.refresh()
+
+    /** Mirrors the module's `diagnostics_enabled` switch for Settings → 开发者. */
+    val diagnosticsEnabled: StateFlow<Boolean> = gateway.diagnosticsEnabled
+
+    /** Dismisses the "宿主已更新" prompt once the user has seen it. */
+    fun acknowledgeUpdate() = gateway.acknowledgeUpdate()
+
+    /** Clears the anchor cache so the next host start re-runs the full DexKit relocation pass. */
+    fun requestDexRescan() = gateway.requestDexRescan()
+
+    fun setDiagnosticsEnabled(value: Boolean) = gateway.setDiagnosticsEnabled(value)
 }
 
 /** Pure mapping, no side effects - covered by JVM tests. */
