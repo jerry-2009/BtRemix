@@ -10,6 +10,7 @@ import com.coui.appcompat.preference.COUISwitchPreference
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
 import org.junit.Assert.assertNotNull
+import org.junit.Assert.assertNull
 import org.junit.Assert.assertSame
 import org.junit.Assert.assertTrue
 import org.junit.Test
@@ -135,6 +136,44 @@ class MelodyPanelGroupApplierTest {
     }
 
     @Test
+    fun apply_onANonDetailPage_insertsNothing() {
+        // M4.5c: the OneSpace / device-card page must not grow a second「高级功能」block.
+        val screen = FakeScreen()
+        screen.addGroup("sound", order = 1)
+
+        val changed = apply(
+            screen,
+            policy(equalizerRow(), upscalingRow()),
+            stateText = { "Off" },
+            screenId = "OneSpaceDetailActivity",
+        )
+
+        assertFalse(changed)
+        assertNull(categoryOf(screen))
+        assertEquals(1, screen.children().size)
+    }
+
+    @Test
+    fun apply_onANonDetailPage_hidesACardLeftBehindByAnEarlierPass() {
+        val screen = FakeScreen()
+        screen.addGroup("sound", order = 1)
+        apply(screen, policy(equalizerRow()), stateText = { "Off" })
+        val stale = requireNotNull(categoryOf(screen))
+
+        val changed = apply(
+            screen,
+            policy(equalizerRow()),
+            stateText = { "Off" },
+            screenId = "OneSpaceDetailActivity",
+        )
+
+        assertTrue(changed)
+        assertFalse(stale.isVisible())
+        // The stale card is hidden, never removed and never duplicated.
+        assertEquals(1, screen.children().count { it === stale })
+    }
+
+    @Test
     fun interactiveRows_getTheClickBinderButReadOnlyRowsDoNot() {
         val screen = FakeScreen()
         screen.addGroup("sound", order = 1)
@@ -204,10 +243,11 @@ class MelodyPanelGroupApplierTest {
         screen: FakeScreen,
         policy: MelodyPanelPolicy,
         stateText: (String) -> String?,
+        screenId: String = "DetailMainActivity",
         loader: ClassLoader = requireNotNull(javaClass.classLoader),
         clickBinder: MelodyRowClickBinder? = null,
     ): Boolean = MelodyPanelGroupApplier.apply(
-        screenId = "DetailMainActivity",
+        screenId = screenId,
         screen = screen,
         context = null,
         policy = policy,

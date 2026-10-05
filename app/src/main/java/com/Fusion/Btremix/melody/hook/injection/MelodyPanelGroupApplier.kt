@@ -50,6 +50,11 @@ internal fun interface MelodyGroupLog {
  * that rebuilds the list is covered by M4.2's existing 1 Hz re-apply (the group is re-created when it
  * disappeared, updated in place otherwise). Row click handling is M4.4; this slice renders and
  * backfills only.
+ *
+ * Scope (M4.5c on-device finding): the group is inserted on the Melody **detail page only** - see
+ * [MelodyPanelGroup.allowsAdvancedGroup]. The card-style pages (OneSpace / device card) run the same
+ * applier through the shared panel hook, and an inserted COUI category there showed up as a stray
+ * "高级功能" block; those screens now insert nothing and get any previously inserted card hidden.
  */
 internal object MelodyPanelGroupApplier {
 
@@ -99,10 +104,24 @@ internal object MelodyPanelGroupApplier {
         log: MelodyGroupLog,
         clickBinder: MelodyRowClickBinder? = null,
     ): Boolean {
+        // M4.5c: the self-built card belongs to the detail page. On every other relevant page we take
+        // the same path as "the policy dropped the group": insert nothing, hide a card left behind by
+        // an earlier pass, and say why once per screen.
         val group = policy.group
         val roots = runCatching { PreferenceTree.childrenOf(screen) }.getOrDefault(emptyList())
         val existing = roots.firstOrNull { keyOf(it) == MelodyPanelGroup.ADVANCED_KEY }
             ?: groups[screen]?.takeIf { strictlyAttachedTo(it, screen) }
+
+        if (group != null && !MelodyPanelGroup.allowsAdvancedGroup(screenId)) {
+            if (existing != null && !isVisible(existing)) return false
+            if (existing != null) {
+                setVisible(existing, false)
+                rows.remove(existing)
+                groups.remove(screen)
+            }
+            noteFailure(screenId, "screen_not_allowed", log, mac)
+            return existing != null
+        }
 
         if (group == null || group.isEmpty) {
             // A policy that dropped its group (e.g. new dcpkg) must not leave a stale card behind; a

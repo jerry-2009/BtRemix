@@ -150,6 +150,16 @@ class MelodyPanelGroupTest {
         assertFalse(MelodyPanelGroup.isCustomKey("pref_more_setting"))
     }
 
+    @Test
+    fun advancedGroupIsOnlyAllowedOnTheDetailPage() {
+        // M4.5c on-device finding: the self-built card must not appear on the OneSpace / device-card
+        // pages, so the panel hook only inserts it on the Melody detail page.
+        assertTrue(MelodyPanelGroup.allowsAdvancedGroup("DetailMainActivity"))
+        assertFalse(MelodyPanelGroup.allowsAdvancedGroup("OneSpaceDetailActivity"))
+        assertFalse(MelodyPanelGroup.allowsAdvancedGroup(null))
+        assertFalse(MelodyPanelGroup.allowsAdvancedGroup(""))
+    }
+
     private fun envelope(member: String): String = """{ "version": 1, "mac": "AA:BB", $member }"""
 
     private companion object {

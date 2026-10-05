@@ -124,6 +124,21 @@ data class MelodyPanelGroup(
         /** The fixed key of the inserted group; node rows are prefixed with the same namespace. */
         const val ADVANCED_KEY: String = "melody_bridge_advanced"
 
+        /**
+         * The only page that may host [ADVANCED_KEY] (M4.5c on-device finding): the Melody detail
+         * page's activity label. The card-style pages (OneSpace / device card) render a different
+         * layout and must not grow a second「高级功能」block, so the panel hook inserts the group on
+         * this screen only and hides any copy left behind elsewhere.
+         */
+        const val HOST_SCREEN_LABEL: String = "DetailMainActivity"
+
+        /**
+         * `true` when the page label (see `MelodyPanelInjection.screenLabel`, i.e. the hosting
+         * activity's simple name) is allowed to receive the self-built card. `null`/unknown labels are
+         * rejected so a page we cannot positively identify is never given the group.
+         */
+        fun allowsAdvancedGroup(screenLabel: String?): Boolean = screenLabel == HOST_SCREEN_LABEL
+
         /** True when [key] is inside the BtRemix-only namespace the hide/grey rules must never match. */
         fun isCustomKey(key: String): Boolean = key.startsWith(MelodyPanelDefinition.CUSTOM_KEY_PREFIX)
     }
