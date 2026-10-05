@@ -12,6 +12,7 @@ import com.fusion.melodyLinkNeo.device.runtime.DeviceLifecycleState
 import com.fusion.melodyLinkNeo.device.runtime.ProtocolSession
 import com.fusion.melodyLinkNeo.device.runtime.StateEntry
 import com.fusion.melodyLinkNeo.device.session.DeviceSessionOpener
+import com.fusion.melodyLinkNeo.device.session.HoldReason
 import com.fusion.melodyLinkNeo.device.session.SessionRegistry
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.delay
@@ -141,7 +142,7 @@ class SessionViewModel(application: Application) : AndroidViewModel(application)
         cancelCollectors()
         val mac = currentMac ?: return
         if (backgroundRun) {
-            app.sessionManager.hold(mac)
+            app.sessionManager.hold(mac, HoldReason.BACKGROUND_RUN)
         } else {
             app.sessionManager.noteReleased(mac)
             app.sessions.releaseAsync(mac)

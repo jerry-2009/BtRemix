@@ -1,22 +1,30 @@
 package com.fusion.melodyLinkNeo.ui.settings
 
 import android.app.Application
+import android.content.pm.PackageManager
+import android.os.Build
+import androidx.core.content.ContextCompat
 import androidx.lifecycle.AndroidViewModel
 import androidx.lifecycle.viewModelScope
 import com.fusion.melodyLinkNeo.BtRemixApplication
 import com.fusion.melodyLinkNeo.core.logging.LogEntry
+import com.fusion.melodyLinkNeo.core.permissions.AndroidBluetoothPermissionManager
+import com.fusion.melodyLinkNeo.core.permissions.PermissionStatus
 import com.fusion.melodyLinkNeo.core.settings.AppSettings
 import com.fusion.melodyLinkNeo.core.settings.LogLevel
 import com.fusion.melodyLinkNeo.core.settings.LogRetention
 import com.fusion.melodyLinkNeo.core.settings.ThemeMode
+import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.SharingStarted
 import kotlinx.coroutines.flow.StateFlow
+import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.flow.stateIn
 import kotlinx.coroutines.launch
 
 /** Settings + Logs state (DEVICE_CENTER_UI_PLAN §5.6). */
 class SettingsViewModel(application: Application) : AndroidViewModel(application) {
     private val app = application as BtRemixApplication
+    private val permissionManager = AndroidBluetoothPermissionManager()
 
     val settings: StateFlow<AppSettings> = app.settings.settings
         .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5_000), AppSettings())
@@ -26,8 +34,13 @@ class SettingsViewModel(application: Application) : AndroidViewModel(application
 
     val moduleStatus = app.moduleStatus.status
 
-    /** Host 诊断采集 switch (M5.4 D-29); moved here from the Melody Dex 定位 page. */
-    val diagnosticsEnabled: StateFlow<Boolean> = app.moduleStatus.diagnosticsEnabled
+    /** Set when the switch was flipped on without [android.Manifest.permission.BLUETOOTH_CONNECT]. */
+    private val mutableAutoSessionPermissionRequest = MutableStateFlow(false)
+    val autoSessionPermissionRequest: StateFlow<Boolean> = mutableAutoSessionPermissionRequest.asStateFlow()
+
+    /** Set when the runtime permission dialog came back denied, so the shell can toast. */
+    private val mutableAutoSessionPermissionDenied = MutableStateFlow(false)
+    val autoSessionPermissionDenied: StateFlow<Boolean> = mutableAutoSessionPermissionDenied.asStateFlow()
 
     fun setDynamicColor(value: Boolean) = update { app.settings.setDynamicColor(value) }
 
@@ -41,7 +54,49 @@ class SettingsViewModel(application: Application) : AndroidViewModel(application
 
     fun setStartOnBoot(value: Boolean) = update { app.settings.setStartOnBoot(value) }
 
-    fun setAutoRestoreSession(value: Boolean) = update { app.settings.setAutoRestoreSession(value) }
+    fun requiredPermissions(): Array<String> =
+        permissionManager.requiredPermissions(Build.VERSION.SDK_INT).toTypedArray()
+
+    /**
+     * The switch is the only place the auto-session foreground service may be started from
+     * (HANDOFF_AUTO_SESSION.md §3): a Bluetooth broadcast is not a background-start exemption, so the
+     * service has to be launched while the user is looking at this screen.
+     *
+     * Without `BLUETOOTH_CONNECT` the setting is not persisted - the switch stays off ("回弹") and
+     * the shell is asked to run the runtime permission dialog first.
+     */
+    fun setAutoSessionOnBluetoothConnect(value: Boolean) = update {
+        if (!value) {
+            app.settings.setAutoSessionOnBluetoothConnect(false)
+            app.stopAutoSessionService()
+            return@update
+        }
+        if (hasBluetoothPermission()) {
+            app.settings.setAutoSessionOnBluetoothConnect(true)
+            app.startAutoSessionService()
+        } else {
+            app.settings.setAutoSessionOnBluetoothConnect(false)
+            mutableAutoSessionPermissionRequest.value = true
+        }
+    }
+
+    fun consumeAutoSessionPermissionRequest() {
+        mutableAutoSessionPermissionRequest.value = false
+    }
+
+    fun consumeAutoSessionPermissionDenied() {
+        mutableAutoSessionPermissionDenied.value = false
+    }
+
+    /** Result of the runtime permission dialog the shell launched for the switch. */
+    fun onAutoSessionPermissionResult(granted: Boolean) {
+        mutableAutoSessionPermissionRequest.value = false
+        if (granted) {
+            setAutoSessionOnBluetoothConnect(true)
+        } else {
+            mutableAutoSessionPermissionDenied.value = true
+        }
+    }
 
     /**
      * Turning "后台运行" off is the documented way to release a session that was kept alive after
@@ -54,13 +109,15 @@ class SettingsViewModel(application: Application) : AndroidViewModel(application
 
     fun setDeveloperMode(value: Boolean) = update { app.settings.setDeveloperMode(value) }
 
-    fun setDiagnosticsEnabled(value: Boolean) = app.moduleStatus.setDiagnosticsEnabled(value)
-
     fun setReduceTransparency(value: Boolean) = update { app.settings.setReduceTransparency(value) }
 
     fun clearLogs() = app.logger.clear()
 
     fun refreshModuleStatus() = app.moduleStatus.refresh()
+
+    private fun hasBluetoothPermission(): Boolean = permissionManager.status(Build.VERSION.SDK_INT) { permission ->
+        ContextCompat.checkSelfPermission(app, permission) == PackageManager.PERMISSION_GRANTED
+    } == PermissionStatus.Granted
 
     private fun update(block: suspend () -> Unit) {
         viewModelScope.launch { runCatching { block() } }

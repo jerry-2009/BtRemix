@@ -40,7 +40,7 @@ data class AppSettings(
     val logLevel: LogLevel = LogLevel.VERBOSE,
     val logRetention: LogRetention = LogRetention.DAYS_7,
     val startOnBoot: Boolean = true,
-    val autoRestoreSession: Boolean = false,
+    val autoSessionOnBluetoothConnect: Boolean = false,
     /** D-UI-3 exception: while on, leaving a device session keeps the connection alive. */
     val backgroundRun: Boolean = false,
     val developerMode: Boolean = false,
@@ -59,7 +59,8 @@ class SettingsRepository(private val dataStore: DataStore<Preferences>) {
     suspend fun setLogLevel(value: LogLevel) = putString(Keys.LOG_LEVEL, value.name)
     suspend fun setLogRetention(value: LogRetention) = putInt(Keys.LOG_RETENTION_DAYS, value.days)
     suspend fun setStartOnBoot(value: Boolean) = putBoolean(Keys.START_ON_BOOT, value)
-    suspend fun setAutoRestoreSession(value: Boolean) = putBoolean(Keys.AUTO_RESTORE_SESSION, value)
+    suspend fun setAutoSessionOnBluetoothConnect(value: Boolean) =
+        putBoolean(Keys.AUTO_SESSION_ON_BLUETOOTH_CONNECT, value)
     suspend fun setBackgroundRun(value: Boolean) = putBoolean(Keys.BACKGROUND_RUN, value)
     suspend fun setDeveloperMode(value: Boolean) = putBoolean(Keys.DEVELOPER_MODE, value)
     suspend fun setReduceTransparency(value: Boolean) = putBoolean(Keys.REDUCE_TRANSPARENCY, value)
@@ -80,7 +81,7 @@ class SettingsRepository(private val dataStore: DataStore<Preferences>) {
         logLevel = prefs[Keys.LOG_LEVEL]?.let { name -> LogLevel.entries.firstOrNull { it.name == name } } ?: LogLevel.VERBOSE,
         logRetention = prefs[Keys.LOG_RETENTION_DAYS]?.let { days -> LogRetention.entries.firstOrNull { it.days == days } } ?: LogRetention.DAYS_7,
         startOnBoot = prefs[Keys.START_ON_BOOT] ?: true,
-        autoRestoreSession = prefs[Keys.AUTO_RESTORE_SESSION] ?: false,
+        autoSessionOnBluetoothConnect = prefs[Keys.AUTO_SESSION_ON_BLUETOOTH_CONNECT] ?: false,
         backgroundRun = prefs[Keys.BACKGROUND_RUN] ?: false,
         developerMode = prefs[Keys.DEVELOPER_MODE] ?: false,
         reduceTransparency = prefs[Keys.REDUCE_TRANSPARENCY] ?: false,
@@ -93,7 +94,8 @@ class SettingsRepository(private val dataStore: DataStore<Preferences>) {
         val LOG_LEVEL = stringPreferencesKey("log_level")
         val LOG_RETENTION_DAYS = intPreferencesKey("log_retention_days")
         val START_ON_BOOT = booleanPreferencesKey("start_on_boot")
-        val AUTO_RESTORE_SESSION = booleanPreferencesKey("auto_restore_session")
+        // Historical key name kept on purpose: renaming it would drop the user's stored value.
+        val AUTO_SESSION_ON_BLUETOOTH_CONNECT = booleanPreferencesKey("auto_restore_session")
         val BACKGROUND_RUN = booleanPreferencesKey("background_run")
         val DEVELOPER_MODE = booleanPreferencesKey("developer_mode")
         val REDUCE_TRANSPARENCY = booleanPreferencesKey("reduce_transparency")

@@ -56,6 +56,17 @@
             android:foregroundServiceType="connectedDevice" />
 
         <!--
+          Auto-session host (HANDOFF_AUTO_SESSION.md §6 step 4): started only from the Settings
+          switch, kept alive while "蓝牙连接时自动建立会话" is on, and torn down (releasing its
+          session holds) when the switch is turned off. Not exported: nothing outside the app may
+          start or bind it.
+        -->
+        <service
+            android:name=".device.session.AutoSessionService"
+            android:exported="false"
+            android:foregroundServiceType="connectedDevice" />
+
+        <!--
           M5.4b: "the injected host process just came up" nudge. Disabled by default and only enabled
           by MelodySessionService while the bridge is running, so it can never cold-start BtRemix for
           nothing. The sender is com.oplus.melody, which cannot hold a BtRemix-declared permission;

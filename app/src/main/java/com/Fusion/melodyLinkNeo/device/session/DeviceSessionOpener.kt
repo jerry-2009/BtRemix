@@ -43,6 +43,21 @@ class DeviceSessionOpener(
         open(device, definition)
     }
 
+    /**
+     * Opens the session described by [mac]/[definition] **without** registering it in a
+     * [SessionRegistry].
+     *
+     * The auto-connect connector (HANDOFF_AUTO_SESSION.md §6 step 3) owns exactly one registry
+     * reference per device and takes it through [SessionManager.holdOrOpen], so it must not let this
+     * opener register a second one. Keeping the neutral `BleDevice` construction here means the
+     * connector stays free of `core.bluetooth` types, exactly like [acquire].
+     */
+    suspend fun openSession(
+        mac: String,
+        name: String?,
+        definition: LoadedDeviceDefinition?,
+    ): ProtocolSession = open(BleDevice(id = mac, name = name, address = mac), definition)
+
     private suspend fun open(device: BleDevice, definition: LoadedDeviceDefinition?): ProtocolSession {
         val transport = definition?.protocol?.transport
         if (transport != null && transport.type == TransportType.RFCOMM) {

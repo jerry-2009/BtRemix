@@ -12,15 +12,11 @@ import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Switch
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
-import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.unit.dp
 import com.fusion.melodyLinkNeo.core.settings.AppSettings
-import com.fusion.melodyLinkNeo.core.settings.LogLevel
-import com.fusion.melodyLinkNeo.core.settings.LogRetention
 import com.fusion.melodyLinkNeo.core.settings.ThemeMode
 import com.fusion.melodyLinkNeo.ui.components.DcDivider
-import com.fusion.melodyLinkNeo.ui.components.DcHGap
 import com.fusion.melodyLinkNeo.ui.components.DcListGroup
 import com.fusion.melodyLinkNeo.ui.components.DcListItem
 import com.fusion.melodyLinkNeo.ui.components.DcSectionHeader
@@ -31,12 +27,8 @@ import com.fusion.melodyLinkNeo.ui.theme.DcSpacing
 fun SettingsScreen(
     settings: AppSettings,
     version: String,
-    onToggleLogging: (Boolean) -> Unit,
-    onLogLevel: (LogLevel) -> Unit,
-    onLogRetention: (LogRetention) -> Unit,
-    onOpenMelodyDex: () -> Unit,
     onStartOnBoot: (Boolean) -> Unit,
-    onAutoRestoreSession: (Boolean) -> Unit,
+    onAutoSessionOnBluetoothConnect: (Boolean) -> Unit,
     onBackgroundRun: (Boolean) -> Unit,
     onDynamicColor: (Boolean) -> Unit,
     onThemeMode: (ThemeMode) -> Unit,
@@ -51,29 +43,15 @@ fun SettingsScreen(
                 .verticalScroll(rememberScrollState())
                 .padding(horizontal = DcSpacing.screenPadding),
         ) {
-            DcSectionHeader(title = "日志")
-            DcListGroup {
-                SwitchRow("启用日志", settings.loggingEnabled, onToggleLogging)
-                DcDivider()
-                EnumRow("日志级别", settings.logLevel.label, LogLevel.entries.map { it.label }) { label ->
-                    LogLevel.entries.firstOrNull { it.label == label }?.let(onLogLevel)
-                }
-                DcDivider()
-                EnumRow("日志保存时间", settings.logRetention.label, LogRetention.entries.map { it.label }) { label ->
-                    LogRetention.entries.firstOrNull { it.label == label }?.let(onLogRetention)
-                }
-            }
-
-            DcSectionHeader(title = "Melody")
-            DcListGroup {
-                NavRow("Melody Dex 定位", onClick = onOpenMelodyDex)
-            }
-
             DcSectionHeader(title = "模块行为")
             DcListGroup {
                 SwitchRow("开机启动", settings.startOnBoot, onStartOnBoot)
                 DcDivider()
-                SwitchRow("自动恢复会话", settings.autoRestoreSession, onAutoRestoreSession)
+                SwitchRow(
+                    "蓝牙连接时自动建立会话",
+                    settings.autoSessionOnBluetoothConnect,
+                    onAutoSessionOnBluetoothConnect,
+                )
                 DcDivider()
                 SwitchRow("后台运行", settings.backgroundRun, onBackgroundRun)
             }
@@ -124,23 +102,6 @@ private fun SwitchRow(title: String, checked: Boolean, onChange: (Boolean) -> Un
         title = title,
         trailing = { Switch(checked = checked, onCheckedChange = onChange) },
     )
-}
-
-@Composable
-private fun EnumRow(title: String, value: String, options: List<String>, onSelect: (String) -> Unit) {
-    Column {
-        DcListItem(
-            title = title,
-            subtitle = value,
-            trailing = {
-                Row {
-                    options.forEach { option ->
-                        androidx.compose.material3.TextButton(onClick = { onSelect(option) }) { Text(option) }
-                    }
-                }
-            },
-        )
-    }
 }
 
 @Composable

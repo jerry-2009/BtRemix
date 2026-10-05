@@ -24,8 +24,8 @@ object Routes {
     const val DEVELOPER = "settings/developer"
     const val EXPLORER = "settings/developer/explorer"
     const val STUDIO = "settings/developer/studio"
-    // Melody Dex 定位 moved out of 开发者 into 设置, so the route no longer sits under developer/.
-    const val MELODY_DIAGNOSTICS = "settings/melody"
+    // Melody 诊断 is a developer tool, so the route sits under developer/ with the other tools.
+    const val MELODY_DIAGNOSTICS = "settings/developer/melody"
 
     const val DEVICE_SESSION_ARG = "mac"
     const val DEVICE_SESSION = "devices/session/{$DEVICE_SESSION_ARG}"

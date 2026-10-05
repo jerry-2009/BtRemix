@@ -10,7 +10,9 @@ import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
 import androidx.compose.material3.IconButton
 import androidx.compose.material3.MaterialTheme
+import androidx.compose.material3.Switch
 import androidx.compose.material3.Text
+import androidx.compose.material3.TextButton
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.rounded.DeleteSweep
 import androidx.compose.material3.Icon
@@ -23,8 +25,13 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.unit.dp
 import com.fusion.melodyLinkNeo.core.logging.LogCategory
 import com.fusion.melodyLinkNeo.core.logging.LogEntry
+import com.fusion.melodyLinkNeo.core.settings.AppSettings
+import com.fusion.melodyLinkNeo.core.settings.LogLevel
+import com.fusion.melodyLinkNeo.core.settings.LogRetention
+import com.fusion.melodyLinkNeo.ui.components.DcDivider
 import com.fusion.melodyLinkNeo.ui.components.DcEmptyState
 import com.fusion.melodyLinkNeo.ui.components.DcFilterChips
+import com.fusion.melodyLinkNeo.ui.components.DcListGroup
 import com.fusion.melodyLinkNeo.ui.components.DcListItem
 import com.fusion.melodyLinkNeo.ui.components.DcSectionHeader
 import com.fusion.melodyLinkNeo.ui.components.DcStatusDot
@@ -38,22 +45,44 @@ import java.time.format.DateTimeFormatter
 @Composable
 fun LogsScreen(
     logs: List<LogEntry>,
+    settings: AppSettings,
+    onToggleLogging: (Boolean) -> Unit,
+    onLogLevel: (LogLevel) -> Unit,
+    onLogRetention: (LogRetention) -> Unit,
     onClear: () -> Unit,
     onBack: () -> Unit,
     modifier: Modifier = Modifier,
 ) {
-    var filter by remember { mutableStateOf("全部") }
-    val categories = listOf("全部") + LogCategory.entries.map { it.name }
-    val visible = if (filter == "全部") logs else logs.filter { it.category.name == filter }
+    var filter by remember { mutableStateOf(ALL_LOGS) }
+    val categories = listOf(ALL_LOGS) + LogCategory.entries.map { it.label }
+    val visible = if (filter == ALL_LOGS) logs else logs.filter { it.category.label == filter }
 
     Column(modifier.fillMaxWidth()) {
         DcTopBar(
-            title = "日志",
+            title = "原始日志",
             onBack = onBack,
             actions = {
                 IconButton(onClick = onClear) { Icon(Icons.Rounded.DeleteSweep, contentDescription = "清空") }
             },
         )
+        Column(Modifier.padding(horizontal = DcSpacing.screenPadding)) {
+            DcSectionHeader(title = "日志设置")
+            DcListGroup {
+                DcListItem(
+                    title = "启用日志",
+                    trailing = { Switch(checked = settings.loggingEnabled, onCheckedChange = onToggleLogging) },
+                )
+                DcDivider()
+                EnumRow("日志级别", settings.logLevel.label, LogLevel.entries.map { it.label }) { label ->
+                    LogLevel.entries.firstOrNull { it.label == label }?.let(onLogLevel)
+                }
+                DcDivider()
+                EnumRow("日志保存时间", settings.logRetention.label, LogRetention.entries.map { it.label }) { label ->
+                    LogRetention.entries.firstOrNull { it.label == label }?.let(onLogRetention)
+                }
+            }
+            DcSectionHeader(title = "运行记录")
+        }
         DcFilterChips(options = categories, selected = filter, onSelect = { filter = it })
         if (visible.isEmpty()) {
             DcEmptyState(title = "暂无日志", description = "启用日志并连接设备后，这里会显示运行记录")
@@ -76,7 +105,7 @@ fun LogsScreen(
                         Column(Modifier.weight(1f)) {
                             Text(entry.message, style = MaterialTheme.typography.bodyMedium)
                             Text(
-                                entry.category.name + (entry.deviceId?.let { " · $it" } ?: ""),
+                                entry.category.label + (entry.deviceId?.let { " · $it" } ?: ""),
                                 style = MaterialTheme.typography.bodySmall,
                                 color = MaterialTheme.colorScheme.onSurfaceVariant,
                             )
@@ -100,6 +129,33 @@ private fun LogCategory.dotColor() = when (this) {
     else -> MaterialTheme.statusColors.idle
 }
 
+private const val ALL_LOGS = "全部"
+
+/** Chinese labels for the log filter chips; the enum names are implementation detail. */
+private val LogCategory.label: String
+    get() = when (this) {
+        LogCategory.SCAN -> "扫描"
+        LogCategory.CONNECTION -> "连接"
+        LogCategory.GATT -> "GATT"
+        LogCategory.NOTIFICATION -> "通知"
+        LogCategory.ERROR -> "错误"
+    }
+
+@Composable
+private fun EnumRow(title: String, value: String, options: List<String>, onSelect: (String) -> Unit) {
+    DcListItem(
+        title = title,
+        subtitle = value,
+        trailing = {
+            Row {
+                options.forEach { option ->
+                    TextButton(onClick = { onSelect(option) }) { Text(option) }
+                }
+            }
+        },
+    )
+}
+
 /** 关于模块: deliberately empty for now; the module-specific copy lands here later. */
 @Composable
 fun AboutScreen(onBack: () -> Unit, modifier: Modifier = Modifier) {
@@ -113,8 +169,7 @@ fun AboutScreen(onBack: () -> Unit, modifier: Modifier = Modifier) {
 fun DeveloperScreen(
     developerMode: Boolean,
     onToggleDeveloperMode: (Boolean) -> Unit,
-    diagnosticsEnabled: Boolean,
-    onToggleDiagnostics: (Boolean) -> Unit,
+    onOpenMelodyDiagnostics: () -> Unit,
     onOpenExplorer: () -> Unit,
     onOpenStudio: () -> Unit,
     onOpenLogs: () -> Unit,
@@ -125,37 +180,21 @@ fun DeveloperScreen(
         DcTopBar(title = "开发者", onBack = onBack)
         Column(Modifier.padding(horizontal = DcSpacing.screenPadding)) {
             DcSectionHeader(title = "开发者模式")
-            com.fusion.melodyLinkNeo.ui.components.DcListGroup {
+            DcListGroup {
                 DcListItem(
                     title = "启用开发者模式",
                     subtitle = "在设备会话页显示原始状态与事件；入口保持可见",
-                    trailing = {
-                        androidx.compose.material3.Switch(
-                            checked = developerMode,
-                            onCheckedChange = onToggleDeveloperMode,
-                        )
-                    },
-                )
-            }
-            DcSectionHeader(title = "诊断")
-            com.fusion.melodyLinkNeo.ui.components.DcListGroup {
-                DcListItem(
-                    title = "诊断采集",
-                    subtitle = "记录宿主回传的结构化事件；宿主进程下次启动生效",
-                    trailing = {
-                        androidx.compose.material3.Switch(
-                            checked = diagnosticsEnabled,
-                            onCheckedChange = onToggleDiagnostics,
-                        )
-                    },
+                    trailing = { Switch(checked = developerMode, onCheckedChange = onToggleDeveloperMode) },
                 )
             }
             DcSectionHeader(title = "工具")
-            com.fusion.melodyLinkNeo.ui.components.DcListGroup {
+            DcListGroup {
+                DcListItem(title = "Melody 诊断", onClick = onOpenMelodyDiagnostics, trailing = { Text("→") })
+                DcDivider()
                 DcListItem(title = "BLE Explorer", onClick = onOpenExplorer, trailing = { Text("→") })
-                com.fusion.melodyLinkNeo.ui.components.DcDivider()
+                DcDivider()
                 DcListItem(title = "定义 Studio", onClick = onOpenStudio, trailing = { Text("→") })
-                com.fusion.melodyLinkNeo.ui.components.DcDivider()
+                DcDivider()
                 DcListItem(title = "原始日志", onClick = onOpenLogs, trailing = { Text("→") })
             }
             androidx.compose.foundation.layout.Spacer(Modifier.padding(bottom = DcSpacing.lg))

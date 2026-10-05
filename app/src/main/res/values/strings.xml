@@ -4,4 +4,8 @@
     <string name="melody_bridge_channel_description">Shown while a device session is active and MelodyLinkNeo shares it with the ColorOS Melody panel; the service stops when the session ends.</string>
     <string name="melody_bridge_notification_title">MelodyLinkNeo Melody bridge</string>
     <string name="melody_bridge_notification_text">Sharing the active device session with the Melody panel.</string>
+    <string name="auto_session_channel_name">Auto session</string>
+    <string name="auto_session_channel_description">Shown while "自动建立会话" is on; MelodyLinkNeo opens and keeps a session for a paired headset whenever the classic Bluetooth link comes up.</string>
+    <string name="auto_session_notification_title">MelodyLinkNeo auto session</string>
+    <string name="auto_session_notification_text">Keeping a device session alive while the Bluetooth link is up.</string>
 </resources>

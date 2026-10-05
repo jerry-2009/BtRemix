@@ -341,15 +341,37 @@ private fun DeviceCenterShell(
                     stateHolder.SaveableStateProvider(Routes.SETTINGS) {
                         val settingsViewModel: SettingsViewModel = viewModel()
                         val current by settingsViewModel.settings.collectAsState()
+                        val permissionRequested by settingsViewModel.autoSessionPermissionRequest.collectAsState()
+                        val permissionDenied by settingsViewModel.autoSessionPermissionDenied.collectAsState()
+                        // Same runtime-permission path as the Devices tab; the auto-session switch is
+                        // only persisted once BLUETOOTH_CONNECT is actually granted.
+                        val autoSessionPermissionLauncher = rememberLauncherForActivityResult(
+                            ActivityResultContracts.RequestMultiplePermissions(),
+                        ) { result ->
+                            settingsViewModel.onAutoSessionPermissionResult(result.values.all { it })
+                        }
+                        LaunchedEffect(permissionRequested) {
+                            if (permissionRequested) {
+                                settingsViewModel.consumeAutoSessionPermissionRequest()
+                                autoSessionPermissionLauncher.launch(settingsViewModel.requiredPermissions())
+                            }
+                        }
+                        LaunchedEffect(permissionDenied) {
+                            if (permissionDenied) {
+                                settingsViewModel.consumeAutoSessionPermissionDenied()
+                                Toast.makeText(
+                                    context,
+                                    "需要蓝牙权限才能自动建立会话",
+                                    Toast.LENGTH_SHORT,
+                                ).show()
+                            }
+                        }
                         SettingsScreen(
                             settings = current,
                             version = com.fusion.melodyLinkNeo.BuildConfig.VERSION_NAME,
-                            onToggleLogging = settingsViewModel::setLoggingEnabled,
-                            onLogLevel = settingsViewModel::setLogLevel,
-                            onLogRetention = settingsViewModel::setLogRetention,
-                            onOpenMelodyDex = { navController.navigate(Routes.MELODY_DIAGNOSTICS) },
                             onStartOnBoot = settingsViewModel::setStartOnBoot,
-                            onAutoRestoreSession = settingsViewModel::setAutoRestoreSession,
+                            onAutoSessionOnBluetoothConnect =
+                                settingsViewModel::setAutoSessionOnBluetoothConnect,
                             onBackgroundRun = settingsViewModel::setBackgroundRun,
                             onDynamicColor = settingsViewModel::setDynamicColor,
                             onThemeMode = settingsViewModel::setThemeMode,
@@ -362,8 +384,13 @@ private fun DeviceCenterShell(
                 composable(Routes.LOGS) {
                     val settingsViewModel: SettingsViewModel = viewModel()
                     val logs by settingsViewModel.logs.collectAsState()
+                    val current by settingsViewModel.settings.collectAsState()
                     LogsScreen(
                         logs = logs,
+                        settings = current,
+                        onToggleLogging = settingsViewModel::setLoggingEnabled,
+                        onLogLevel = settingsViewModel::setLogLevel,
+                        onLogRetention = settingsViewModel::setLogRetention,
                         onClear = settingsViewModel::clearLogs,
                         onBack = { navController.popBackStack() },
                     )
@@ -378,12 +405,10 @@ private fun DeviceCenterShell(
                 composable(Routes.DEVELOPER) {
                     val settingsViewModel: SettingsViewModel = viewModel()
                     val current by settingsViewModel.settings.collectAsState()
-                    val diagnosticsEnabled by settingsViewModel.diagnosticsEnabled.collectAsState()
                     DeveloperScreen(
                         developerMode = current.developerMode,
                         onToggleDeveloperMode = settingsViewModel::setDeveloperMode,
-                        diagnosticsEnabled = diagnosticsEnabled,
-                        onToggleDiagnostics = settingsViewModel::setDiagnosticsEnabled,
+                        onOpenMelodyDiagnostics = { navController.navigate(Routes.MELODY_DIAGNOSTICS) },
                         onOpenExplorer = { navController.navigate(Routes.EXPLORER) },
                         onOpenStudio = { navController.navigate(Routes.STUDIO) },
                         onOpenLogs = { navController.navigate(Routes.LOGS) },

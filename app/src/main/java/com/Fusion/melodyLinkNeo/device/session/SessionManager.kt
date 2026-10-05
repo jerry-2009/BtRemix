@@ -1,5 +1,6 @@
 package com.fusion.melodyLinkNeo.device.session
 
+import com.fusion.melodyLinkNeo.device.runtime.ProtocolSession
 import java.time.Clock
 import java.time.Instant
 import java.util.concurrent.ConcurrentHashMap
@@ -22,6 +23,21 @@ data class ManagedSession(
 )
 
 /**
+ * Why an app-scoped hold exists (HANDOFF_AUTO_SESSION.md §6 step 2).
+ *
+ * Holds are released per reason so turning one feature off can never tear down a session that a
+ * different feature is still keeping alive: switching "后台运行" off must not kill a session the
+ * "蓝牙连接时自动建立会话" switch owns, and vice versa.
+ */
+enum class HoldReason {
+    /** D-UI-3 exception: the session outlives the device session screen. */
+    BACKGROUND_RUN,
+
+    /** Event-driven session kept alive while the classic link is up (HANDOFF_AUTO_SESSION.md). */
+    AUTO_CONNECT,
+}
+
+/**
  * UI-facing wrapper around [SessionRegistry] (DEVICE_CENTER_UI_PLAN §3.2/D-UI-3).
  *
  * The registry owns reference counting; this class only adds presentation state: a polled snapshot
@@ -36,7 +52,14 @@ class SessionManager(
     private val pollIntervalMs: Long = 1_000L,
 ) {
     private val heldSince = ConcurrentHashMap<String, Instant>()
-    private val backgroundHolds = ConcurrentHashMap<String, Boolean>()
+
+    /**
+     * Normalised MAC → the reasons currently owning an app-scoped reference.
+     *
+     * Values are replaced as a whole under [ConcurrentHashMap.compute]/[computeIfPresent] so a
+     * concurrent hold/release for the same MAC can never observe a half-applied reason set.
+     */
+    private val holds = ConcurrentHashMap<String, Set<HoldReason>>()
 
     private val mutableSessions = MutableStateFlow<List<ManagedSession>>(emptyList())
     val sessions: StateFlow<List<ManagedSession>> = mutableSessions.asStateFlow()
@@ -77,27 +100,107 @@ class SessionManager(
         if (!enabled) refresh()
     }
 
+    /** Normalised MACs that currently hold an app-scoped reference for [reason]. */
+    fun heldMacs(reason: HoldReason): Set<String> =
+        holds.entries.asSequence()
+            .filter { reason in it.value }
+            .mapTo(linkedSetOf()) { it.key }
+
+    /** True when [mac] already holds an app-scoped reference for [reason]. */
+    fun isHeld(mac: String, reason: HoldReason): Boolean =
+        reason in (holds[SessionRegistry.normalize(mac)] ?: emptySet())
+
+    /**
+     * True when [mac] has a session whose lifecycle is currently live.
+     *
+     * A hold can outlive its session when a disconnect is never observed (for example the whole
+     * adapter is switched off): the registry slot stays with `Disconnected`/`Error`, so the hold has
+     * to be cleaned up before it can block the next rising edge as "already held".
+     */
+    fun isLive(mac: String): Boolean =
+        registry.snapshot(SessionRegistry.normalize(mac))?.lifecycle?.isLive() == true
+
     /**
      * Takes an app-scoped reference so the session survives the session screen (D-UI-3 exception).
      *
-     * The UI ViewModel still releases its own reference; this hold is what keeps the connection
-     * alive while "后台运行" is on. It is a no-op when the MAC has no live session.
+     * Callers keep their own reference: this acquires a second one and stays idempotent per
+     * `(mac, reason)`. It is a no-op when the MAC has no live session.
      */
-    fun hold(mac: String) {
+    fun hold(mac: String, reason: HoldReason) {
         val key = SessionRegistry.normalize(mac)
         if (registry.find(key) == null) return
-        if (backgroundHolds.putIfAbsent(key, true) != null) return
-        scope.launch {
-            runCatching { registry.acquire(key) { error("session disappeared before background hold") } }
-                .onFailure { backgroundHolds.remove(key) }
+        if (!record(key, reason)) return
+        scope.launch { acquireHold(key, reason) }
+    }
+
+    /**
+     * Suspending hold used by the auto-connect connector: opens the session through [open] when the
+     * MAC is unknown and becomes its single app-scoped owner. Returns true when the hold is in place.
+     *
+     * A registry slot whose session is already dead is replaced rather than adopted: a leaked
+     * reference elsewhere (or a double count) can keep such a slot alive after [releaseHold], and
+     * silently reusing it would report "opened" while the device stays disconnected.
+     */
+    suspend fun holdOrOpen(mac: String, reason: HoldReason, open: suspend () -> ProtocolSession): Boolean {
+        val key = SessionRegistry.normalize(mac)
+        if (!record(key, reason)) return true
+        val existing = registry.snapshot(key)
+        if (existing != null && !existing.lifecycle.isLive()) {
+            runCatching { registry.close(key) }
         }
+        return runCatching { registry.acquire(key, open) }
+            .fold(
+                onSuccess = { true },
+                onFailure = { unrecord(key, reason); false },
+            )
+    }
+
+    /** Drops the hold for [mac] under [reason], releasing its registry reference once. */
+    suspend fun releaseHold(mac: String, reason: HoldReason) {
+        val key = SessionRegistry.normalize(mac)
+        if (!unrecord(key, reason)) return
+        runCatching { registry.release(key) }
+    }
+
+    /** Drops every hold carrying [reason]. */
+    suspend fun releaseHolds(reason: HoldReason) {
+        heldMacs(reason).forEach { key -> releaseHold(key, reason) }
     }
 
     /** Drops every background hold; called when "后台运行" is switched off. */
-    fun releaseBackgroundHolds() {
-        val keys = backgroundHolds.keys.toList()
-        backgroundHolds.clear()
-        keys.forEach { key -> scope.launch { runCatching { registry.release(key) } } }
+    suspend fun releaseBackgroundHolds() = releaseHolds(HoldReason.BACKGROUND_RUN)
+
+    private suspend fun acquireHold(key: String, reason: HoldReason) {
+        runCatching { registry.acquire(key) { error("session disappeared before hold") } }
+            .onFailure { unrecord(key, reason) }
+    }
+
+    /** Records [reason] for [key]; returns true when this call added it. */
+    private fun record(key: String, reason: HoldReason): Boolean {
+        var added = false
+        holds.compute(key) { _, existing ->
+            val current = existing ?: emptySet()
+            if (reason in current) {
+                current
+            } else {
+                added = true
+                current + reason
+            }
+        }
+        return added
+    }
+
+    /** Removes [reason] for [key]; returns true when this call removed it. */
+    private fun unrecord(key: String, reason: HoldReason): Boolean {
+        var removed = false
+        holds.computeIfPresent(key) { _, current ->
+            when {
+                reason !in current -> current
+                current.size == 1 -> { removed = true; null }
+                else -> { removed = true; current - reason }
+            }
+        }
+        return removed
     }
 
     fun snapshot(mac: String): SessionSnapshot? = registry.snapshot(mac)

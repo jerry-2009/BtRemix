@@ -3,6 +3,8 @@ package com.fusion.melodyLinkNeo.definition.packages
 import com.fusion.melodyLinkNeo.definition.api.UiNode
 import com.fusion.melodyLinkNeo.definition.api.DefinitionSchema
 import com.fusion.melodyLinkNeo.definition.api.TransportType
+import com.fusion.melodyLinkNeo.device.runtime.StateValue
+import com.fusion.melodyLinkNeo.scripting.api.ScriptExpression
 import java.io.File
 import org.junit.Assert.assertArrayEquals
 import org.junit.Assert.assertEquals
@@ -155,6 +157,80 @@ class SamplePackageTest {
         assertEquals(listOf(3, 8, 4), strength.levels.map { it.modeType })
         assertEquals(listOf(10, 11, 12), strength.levels.map { it.protocolIndex })
         assertTrue("the native noise group must stay visible", "noise" !in melody.panel.hideSections)
+    }
+
+    /**
+     * The LinkBuds S package is the V2 sibling of the WF-1000XM3 one: same generic "framed" codec,
+     * but the unit advertises the V2 SPP service and answers the V2 command numbers (battery
+     * 0x22/0x23/0x25, ANC asmType 0x17, DSEE parameter id 0x01). Shapes come from
+     * extra/BudsLink-main/src/lib/devices/sony/sonySocketV2.js.
+     */
+    @Test
+    fun sonyLinkBudsSSample_isClassicSppV2FramingAsConfiguration() {
+        val file = samplePackageFiles().filter { it.name.startsWith("sony.linkbuds_s-") }.maxByOrNull { it.name }
+        assumeTrue("no Sony LinkBuds S sample device package found", file != null)
+        val definition = DevicePackageValidator().validate(DevicePackageReader().read(requireNotNull(file))).definition
+
+        assertEquals(DefinitionSchema.VERSION_MELODY, definition.manifest.schemaVersion)
+        assertEquals("索尼 LinkBuds S", definition.manifest.displayName)
+        val melody = requireNotNull(definition.melody)
+        assertEquals("索尼 LinkBuds S", melody.support.name)
+        assertEquals("索尼", melody.support.brand)
+        // 0x0DF4 is Sony's modalias product id for the unit (v054Cp0DF4), stored decimal.
+        assertEquals("3572", melody.support.productId)
+        // LinkBuds S is a V2 unit; BudsLink selects V2 whenever this UUID is in the SDP record.
+        assertEquals("956c7b26-d49a-4ba8-b03f-b17d393cb6e2", melody.support.uuid)
+        assertFalse("Melody must not open its own SPP channel", melody.support.supportSpp)
+
+        val transport = requireNotNull(definition.protocol.transport)
+        assertEquals(TransportType.RFCOMM, transport.type)
+        assertEquals("956c7b26-d49a-4ba8-b03f-b17d393cb6e2", transport.service)
+        assertEquals(null, transport.characteristic)
+
+        val framing = requireNotNull(definition.protocol.framing)
+        assertEquals("framed", framing.codec)
+        assertEquals(0x3E, requireNotNull(framing.header))
+        assertEquals(0x3C, requireNotNull(framing.trailer))
+        assertEquals("sum8", framing.checksum)
+        assertEquals(listOf(0x0C, 0x0E), framing.acknowledgeMessageTypes)
+        assertEquals(0x01, requireNotNull(framing.acknowledgeReplyMessageType))
+
+        // V2 battery: GET [0x22, type], RET/NTFY [0x23, 0x25].
+        assertEquals(setOf(0x23, 0x25), definition.states.getValue("battery.left").notify?.payloadTypes)
+        assertEquals(setOf(0x23, 0x25), definition.states.getValue("battery.case").notify?.payloadTypes)
+        assertArrayEquals(byteArrayOf(0x22, 0x01), definition.protocol.transactions.getValue("battery.dual.get").requestPayload)
+        assertArrayEquals(byteArrayOf(0x22, 0x02), definition.protocol.transactions.getValue("battery.case.get").requestPayload)
+
+        // V2 ANC: GET [0x66, 0x17]; the 7-byte SET starts 68 17 01.
+        val ancGet = definition.protocol.transactions.getValue("anc.get")
+        assertEquals(setOf(0x67, 0x69), ancGet.expectedPayloadTypes)
+        assertArrayEquals(byteArrayOf(0x66, 0x17), ancGet.requestPayload)
+        assertEquals(7, definition.protocol.messages.getValue("setAnc").fields.size)
+        val asmType = (definition.actions.getValue("anc.setMode").arguments.getValue("asmType") as ScriptExpression.Literal).value
+        assertEquals(StateValue.IntValue(23), asmType)
+        assertEquals(listOf("anc.get"), definition.actions.getValue("anc.setMode").refresh)
+        assertEquals(listOf("anc.get"), definition.actions.getValue("anc.setLevel").refresh)
+
+        // V2 DSEE: parameter id 0x01, 3-byte layout (0xE6 0x01 / 0xE8 0x01 v).
+        val audioGet = definition.protocol.transactions.getValue("audio.get")
+        assertArrayEquals(byteArrayOf(0xE6.toByte(), 0x01), audioGet.requestPayload)
+        assertEquals(3, definition.protocol.messages.getValue("setUpscaling").fields.size)
+        assertEquals(listOf("audio.get"), definition.actions.getValue("upscaling.set").refresh)
+
+        listOf("battery.dual.get", "battery.case.get", "anc.get").forEach { transaction ->
+            assertTrue("initialize should run $transaction", transaction in definition.protocol.initialize)
+        }
+
+        listOf("battery.left", "battery.right", "battery.case", "ancMode", "ancLevel", "eqPreset", "upscaling")
+            .forEach { assertTrue("missing state $it", it in definition.states) }
+        assertTrue("SPP definitions cannot use scripts", definition.actions.values.all { it.script == null })
+
+        // LinkBuds S has NC + ambient but no wind mode; the Melody table must not invent one.
+        assertEquals(listOf(5, 1, 2), melody.anc.modes.map { it.modeType })
+        assertEquals(listOf("anc", "off", "ambient"), melody.anc.modes.map { it.state })
+        val strength = requireNotNull(melody.anc.strength)
+        assertEquals("ancLevel", strength.state)
+        assertEquals(listOf(1, 10, 20), strength.levels.map { it.level })
     }
 
     private fun flatten(node: UiNode): List<UiNode> = listOf(node) +
