@@ -3,6 +3,18 @@
 // The service is exported but carries no android:permission (com.oplus.melody cannot request a
 // BtRemix-declared permission). Every method re-checks Binder.getCallingUid() against the packages
 // owned by that UID and rejects anything that is not com.oplus.melody (or BtRemix itself).
+//
+// !! NEVER INSERT OR REORDER METHODS - ALWAYS APPEND. !!
+//
+// AIDL numbers transactions by *declaration order* (`TRANSACTION_x = FIRST_CALL_TRANSACTION + n`), and
+// this interface is spread over two processes that can run two different module dex builds: LSPosed
+// reads the module APK when a process starts, so after installing a new module the *host* process
+// (com.oplus.melody) keeps the previous build's proxy until it is restarted, while the BtRemix process
+// (which owns the stub) is killed and restarted by the install itself. Inserting a method in the middle
+// therefore makes the stale side's `execute` land on the new method - and the visible symptom is not an
+// exception but "the device card's mode switch silently does nothing" (the first four calls still line
+// up, so the panel and the header keep looking healthy). Appending keeps every existing number, so a
+// skew only costs the new feature until the host is restarted.
 package com.Fusion.Btremix.melody.bridge;
 
 import android.os.Bundle;
@@ -49,4 +61,13 @@ interface IMelodyBridge {
      * other host process (`:fg`) does not have to wait for the 30 s keepalive.
      */
     oneway void requestDoorbell();
+
+    /**
+     * The managed Definition's own `assets/icon.png` for [mac], or null when the MAC is unmanaged or
+     * its package ships no icon. Used by the host-side detail / OneSpace artwork injection so Melody's
+     * generic placeholder picture can be replaced by the device package's own picture.
+     *
+     * Appended on purpose - see the ordering warning at the top of this file.
+     */
+    byte[] resolveIcon(in String mac);
 }

@@ -72,6 +72,11 @@ internal class MelodyInjectionInstaller(
         // so a mode the host's vocabulary renders as "Adaptive" shows the Definition's own wording.
         runCatching { MelodyAncLabelInjection(module, log, loader).install() }
             .onFailure { log.warn("melody.injection.anc_label_failed", it) }
+        // M7: the detail / OneSpace headers paint the host's generic placeholder picture (and spin until
+        // they do). Replace it with the DevicePackage's own `assets/icon.png` - the same file the
+        // Devices page shows - and drop the spinner as soon as that picture is in hand.
+        runCatching { MelodyDetailImageInjection(module, log, loader).install() }
+            .onFailure { log.warn("melody.injection.artwork_failed", it) }
         // M5.1: redirect every official ANC write (the single `earphone/b;->v0` collection point) into
         // `IMelodyBridge.execute`, so system/device-centre initiated controls also run through BtRemix.
         runCatching { MelodyAncRedirectInjection(module, log, loader, hostApkPath).install() }

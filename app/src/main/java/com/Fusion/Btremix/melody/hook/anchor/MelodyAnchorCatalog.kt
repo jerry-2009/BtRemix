@@ -5,6 +5,7 @@ import android.content.ContentProvider
 import android.content.Context
 import android.content.Intent
 import android.os.Bundle
+import android.widget.ImageView
 import java.util.UUID
 import java.util.concurrent.CompletableFuture
 
@@ -69,6 +70,12 @@ internal object MelodyAnchorCatalog {
     const val ANC_REFRESH_ONE_SPACE = "anc.refresh_one_space"
     const val ANC_REFRESH_VO = "anc.refresh_vo"
     const val EARPHONE_REPOSITORY = "repo.earphone"
+
+    // --- header artwork (M7) -----------------------------------------------------------------------
+
+    const val DETAIL_IMAGE_PLACEHOLDER = "detail.image_placeholder"
+    const val ONESPACE_IMAGE_PLACEHOLDER = "onespace.image_placeholder"
+    const val DETAIL_HEADER_BIND = "detail.header_bind"
 
     // --- wirelesssettings branch (M3.4c) -----------------------------------------------------------
 
@@ -414,6 +421,58 @@ internal object MelodyAnchorCatalog {
             packages = listOf(EARPHONE_PKG),
             query = MelodyAnchorQuery.BaselineOnly,
         ),
+        /**
+         * M7 header artwork. `MelodyDetailModelView.e()` is the detail page's "no product image" branch:
+         * it is reached from `d(detailSource)` when the source is empty and from the load-timeout
+         * CountDownTimer, and it is the only place `melody_ui_detail_default_img` is painted. The class
+         * name is kept because it is inflated from `res/OZ1.xml`; the method name is a recorded baseline,
+         * so a renamed release degrades to "the placeholder stays" instead of painting something wrong.
+         */
+        MelodyAnchorSpec(
+            id = DETAIL_IMAGE_PLACEHOLDER,
+            host = MelodyAnchorHost.Melody,
+            feature = "detail.artwork",
+            baselineClasses = listOf("com.oplus.melody.ui.widget.MelodyDetailModelView"),
+            packages = listOf("com.oplus.melody.ui.widget"),
+            query = MelodyAnchorQuery.MethodSignature("e", emptyList(), of(Void.TYPE)),
+            methodAnchor = true,
+        ),
+        /**
+         * M7 header artwork for the OneSpace (负一屏) page. `OneSpaceHeaderPreference.j(ImageView)` is
+         * the branch that paints `melody_ui_detail_default_img_*` when the control resource zip carries
+         * no detail image; `i(ControlSourceDO)` calls it with the same view when the file is missing.
+         * The class name survives R8 because the preference is instantiated by name, so the anchor only
+         * depends on the recorded method name.
+         */
+        MelodyAnchorSpec(
+            id = ONESPACE_IMAGE_PLACEHOLDER,
+            host = MelodyAnchorHost.Melody,
+            feature = "onespace.artwork",
+            baselineClasses = listOf("com.oplus.melody.onespace.items.OneSpaceHeaderPreference"),
+            packages = listOf("com.oplus.melody.onespace.items"),
+            query = MelodyAnchorQuery.MethodSignature("j", listOf(of(ImageView::class.java)), of(Void.TYPE)),
+            methodAnchor = true,
+        ),
+        /**
+         * M7 header artwork, early half. The header view is bound right after it is inflated, and that
+         * is the first moment both the device view-model (`g`) and the loading animation (`e`, the
+         * `LottieAnimationView` the header plays until the product picture resolves) are reachable.
+         * Hooking it lets a managed device show its package picture immediately instead of waiting out
+         * the 5 s load timer, and lets the spinner be cancelled as soon as the picture is in hand.
+         */
+        MelodyAnchorSpec(
+            id = DETAIL_HEADER_BIND,
+            host = MelodyAnchorHost.Melody,
+            feature = "detail.artwork.bind",
+            baselineClasses = listOf("com.oplus.melody.ui.widget.MelodyDetailModelView"),
+            packages = listOf("com.oplus.melody.ui.widget"),
+            query = MelodyAnchorQuery.MethodSignature(
+                "setViewModel",
+                listOf(named("com.oplus.melody.ui.component.detail.DetailMainViewModel")),
+                of(Void.TYPE),
+            ),
+            methodAnchor = true,
+        ),
         MelodyAnchorSpec(
             id = SETTINGS_PODS_DATA_MANAGER,
             host = MelodyAnchorHost.Settings,
@@ -468,6 +527,9 @@ internal object MelodyAnchorCatalog {
         ANC_REFRESH_ONE_SPACE to "ANC 状态重刷·OneSpace",
         ANC_REFRESH_VO to "ANC 状态重刷·VO",
         EARPHONE_REPOSITORY to "耳机仓库基类",
+        DETAIL_IMAGE_PLACEHOLDER to "详情页占位图",
+        ONESPACE_IMAGE_PLACEHOLDER to "OneSpace 占位图",
+        DETAIL_HEADER_BIND to "详情页头图绑定",
         SETTINGS_PODS_DATA_MANAGER to "蓝牙设置页“耳机功能”入口",
     )
 

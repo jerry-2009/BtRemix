@@ -87,6 +87,9 @@ class MelodyAnchorCatalogTest {
             MelodyAnchorCatalog.ANC_REFRESH_ONE_SPACE,
             MelodyAnchorCatalog.ANC_REFRESH_VO,
             MelodyAnchorCatalog.EARPHONE_REPOSITORY,
+            MelodyAnchorCatalog.DETAIL_IMAGE_PLACEHOLDER,
+            MelodyAnchorCatalog.ONESPACE_IMAGE_PLACEHOLDER,
+            MelodyAnchorCatalog.DETAIL_HEADER_BIND,
             MelodyAnchorCatalog.SETTINGS_PODS_DATA_MANAGER,
         )) {
             assertTrue("catalog is missing $id", ids.contains(id))

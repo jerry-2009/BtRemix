@@ -38,6 +38,7 @@ import com.Fusion.Btremix.melody.projection.MelodyProjectionBuilder
 import java.util.concurrent.Callable
 import java.util.concurrent.ConcurrentHashMap
 import java.util.concurrent.CountDownLatch
+import java.util.concurrent.ExecutorService
 import java.util.concurrent.Executors
 import java.util.concurrent.TimeUnit
 import java.util.concurrent.TimeoutException
@@ -107,6 +108,13 @@ internal class MelodyBridgeClient(
     /** Last "header cache was cold" diagnostic per MAC, so a cold cache logs once, not per getter call. */
     private val headerSkips = ConcurrentHashMap<String, String>()
 
+    /**
+     * M7: the Definition's `assets/icon.png` per MAC, fetched once per host process. The header artwork
+     * hook only runs when the host is about to draw its own placeholder, so a positive entry is stable;
+     * `onSupportChanged` drops the map because a re-installed dcpkg may ship a different picture.
+     */
+    private val icons = ConcurrentHashMap<String, ByteArray>()
+
     /** Last on-demand snapshot pull per MAC; the header getters must never turn into a poll loop. */
     private val snapshotPulls = ConcurrentHashMap<String, Long>()
 
@@ -162,6 +170,19 @@ internal class MelodyBridgeClient(
      */
     private val link = Executors.newSingleThreadExecutor { runnable ->
         Thread(runnable, "BtRemixMelodyLink").apply { isDaemon = true }
+    }
+
+    /**
+     * M7: the artwork fetch gets its own worker instead of sharing [calls].
+     *
+     * It is the only call that returns a blob, and the control lane is shared by every `execute` /
+     * `snapshot`. A slow or wedged `resolveIcon` on that lane would stop ANC writes from ever reaching
+     * BtRemix - which shows up as "the device card's mode switch does nothing", not as an error. One
+     * extra idle thread is cheaper than that failure mode; the call is also capped by
+     * [ICON_CALL_TIMEOUT_MS].
+     */
+    private val artwork = Executors.newSingleThreadExecutor { runnable ->
+        Thread(runnable, "BtRemixMelodyArtwork").apply { isDaemon = true }
     }
 
     private val receiver = MelodyDoorbellReceiver(log) { binder, generation, protocol, sender ->
@@ -233,6 +254,7 @@ internal class MelodyBridgeClient(
             panels.clear()
             ancs.clear()
             earphones.clear()
+            icons.clear()
             headerSkips.clear()
             firstSnapshotPulled.clear()
             // A re-installed dcpkg may declare a different host version range (M5.4 D-21).
@@ -456,6 +478,26 @@ internal class MelodyBridgeClient(
         val key = MelodyMac.normalize(mac)
         val snapshot = call("snapshot", PROVIDER_CALL_TIMEOUT_MS) { bridge -> bridge.snapshot(key) } ?: return null
         return wearOf(snapshot)
+    }
+
+    /**
+     * M7 header artwork: the managed Definition's own `assets/icon.png`, or `null` when this MAC is not
+     * managed (or its package ships no icon).
+     *
+     * Called from the host's detail / OneSpace placeholder path, so the payload is small (the authoring
+     * guide asks for <= 80 KB) and a positive answer is memoized for the process lifetime. A miss is
+     * deliberately **not** cached: the usual reason is "the binder is not up yet", and the next page
+     * open should be able to succeed.
+     */
+    fun icon(mac: String): ByteArray? {
+        val key = MelodyMac.normalize(mac)
+        icons[key]?.let { return it }
+        // Never on [calls]: see the [artwork] worker.
+        val bytes = call("resolveIcon", ICON_CALL_TIMEOUT_MS, on = artwork) { bridge -> bridge.resolveIcon(key) }
+            ?.takeIf { it.isNotEmpty() }
+            ?: return null
+        icons[key] = bytes
+        return bytes
     }
 
     /**
@@ -827,10 +869,15 @@ internal class MelodyBridgeClient(
      * Runs one binder call with a hard timeout. `null` means "no live answer" - the caller decides whether
      * that is a cached value (list/snapshot) or an error code (execute), and the panel never sees a throw.
      */
-    private fun <T> call(name: String, timeoutMs: Long = CALL_TIMEOUT_MS, block: (IMelodyBridge) -> T): T? {
+    private fun <T> call(
+        name: String,
+        timeoutMs: Long = CALL_TIMEOUT_MS,
+        on: ExecutorService = calls,
+        block: (IMelodyBridge) -> T,
+    ): T? {
         val bridge = service ?: return null
         return try {
-            calls.submit(Callable { block(bridge) }).get(timeoutMs, TimeUnit.MILLISECONDS)
+            on.submit(Callable { block(bridge) }).get(timeoutMs, TimeUnit.MILLISECONDS)
         } catch (e: TimeoutException) {
             log.event(
                 "melody.bridge.call_timeout",
@@ -883,6 +930,12 @@ internal class MelodyBridgeClient(
 
         /** Floor between two on-demand snapshot pulls triggered by a cold M4.3a header cache. */
         const val SNAPSHOT_PULL_INTERVAL_MS = 3_000L
+
+        /**
+         * Header artwork budget: the caller runs on the host's main thread while the detail page builds,
+         * and a cold binder costs milliseconds. A slower answer degrades to "the placeholder stays".
+         */
+        const val ICON_CALL_TIMEOUT_MS = 400L
 
         /** Session state keys a Definition may use for "both earbuds are in"; none exist for XM3 (M3). */
         val WEAR_KEYS = listOf("bothInEar", "inEar")
