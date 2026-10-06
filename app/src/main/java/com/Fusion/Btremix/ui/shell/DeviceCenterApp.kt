@@ -341,6 +341,31 @@ private fun DeviceCenterShell(
                     stateHolder.SaveableStateProvider(Routes.SETTINGS) {
                         val settingsViewModel: SettingsViewModel = viewModel()
                         val current by settingsViewModel.settings.collectAsState()
+                        val permissionRequested by settingsViewModel.autoSessionPermissionRequest.collectAsState()
+                        val permissionDenied by settingsViewModel.autoSessionPermissionDenied.collectAsState()
+                        // Same runtime-permission path as the Devices tab; the auto-session switch is
+                        // only persisted once BLUETOOTH_CONNECT is actually granted.
+                        val autoSessionPermissionLauncher = rememberLauncherForActivityResult(
+                            ActivityResultContracts.RequestMultiplePermissions(),
+                        ) { result ->
+                            settingsViewModel.onAutoSessionPermissionResult(result.values.all { it })
+                        }
+                        LaunchedEffect(permissionRequested) {
+                            if (permissionRequested) {
+                                settingsViewModel.consumeAutoSessionPermissionRequest()
+                                autoSessionPermissionLauncher.launch(settingsViewModel.requiredPermissions())
+                            }
+                        }
+                        LaunchedEffect(permissionDenied) {
+                            if (permissionDenied) {
+                                settingsViewModel.consumeAutoSessionPermissionDenied()
+                                Toast.makeText(
+                                    context,
+                                    "需要蓝牙权限才能自动建立会话",
+                                    Toast.LENGTH_SHORT,
+                                ).show()
+                            }
+                        }
                         SettingsScreen(
                             settings = current,
                             version = com.Fusion.Btremix.BuildConfig.VERSION_NAME,

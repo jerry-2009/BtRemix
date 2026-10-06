@@ -2,10 +2,13 @@ package com.Fusion.Btremix
 
 import android.app.Application
 import android.content.Intent
+import com.Fusion.Btremix.core.activity.ActivityKind
 import com.Fusion.Btremix.core.activity.ActivityRepository
 import com.Fusion.Btremix.core.bluetooth.BleRepository
 import com.Fusion.Btremix.core.bluetooth.android.AndroidBleManager
+import com.Fusion.Btremix.core.classic.android.AndroidClassicConnectionMonitor
 import com.Fusion.Btremix.core.classic.android.AndroidRfcommManager
+import com.Fusion.Btremix.core.classic.api.ClassicConnectionMonitor
 import com.Fusion.Btremix.core.classic.api.RfcommManager
 import com.Fusion.Btremix.core.hook.ModuleStatusRepository
 import com.Fusion.Btremix.core.logging.InMemoryLogger
@@ -26,6 +29,11 @@ import com.Fusion.Btremix.device.registry.DeviceRegistry
 import com.Fusion.Btremix.device.registry.batteryPercentOf
 import com.Fusion.Btremix.device.runtime.DefaultDeviceRuntime
 import com.Fusion.Btremix.device.runtime.DeviceRuntime
+import com.Fusion.Btremix.device.session.AutoSessionConnector
+import com.Fusion.Btremix.device.session.AutoSessionEvent
+import com.Fusion.Btremix.device.session.AutoSessionService
+import com.Fusion.Btremix.device.session.DeviceSessionOpener
+import com.Fusion.Btremix.device.session.HoldReason
 import com.Fusion.Btremix.device.session.SessionManager
 import com.Fusion.Btremix.device.session.SessionRegistry
 import com.Fusion.Btremix.melody.api.MelodyCallPolicy
@@ -43,6 +51,8 @@ import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.flow.collect
 import kotlinx.coroutines.flow.combine
+import kotlinx.coroutines.flow.StateFlow
+import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.launch
 
 /**
@@ -124,6 +134,26 @@ class BtRemixApplication : Application() {
     /** UI-facing session view: polled snapshots plus the "会话时间" anchor (D-UI-3). */
     val sessionManager: SessionManager by lazy { SessionManager(sessions, scope) }
 
+    /**
+     * Classic Bluetooth link monitor used as the auto-session trigger source
+     * (HANDOFF_AUTO_SESSION.md §6 step 1). Process-scoped so the service can start/stop it.
+     */
+    val classicConnections: ClassicConnectionMonitor by lazy { AndroidClassicConnectionMonitor(this) }
+
+    /**
+     * Opens a session without registering it, so the auto-connect hold can own the single registry
+     * reference (HANDOFF_AUTO_SESSION.md §6 step 3).
+     */
+    private val autoSessionOpener: DeviceSessionOpener by lazy {
+        DeviceSessionOpener(
+            ble = bleRepository,
+            rfcomm = rfcomm,
+            runtime = deviceRuntime,
+            sessionFactory = sessionFactory,
+            packages = packages.registry,
+        )
+    }
+
     /** Bonded classic + optional BLE scan discovery feeding the Devices page. */
     val deviceDiscovery: DeviceDiscoverySource by lazy { AndroidDeviceDiscoverySource(rfcomm, bleRepository, scope) }
 
@@ -204,8 +234,96 @@ class BtRemixApplication : Application() {
         scope.launch { packageBootstrap.load() }
         melodySupport.start()
         watchSessionsForMelodyBridge()
+        // The switch is persisted, so a process that starts in the foreground has to bring the
+        // auto-session foreground service back up (HANDOFF_AUTO_SESSION.md §6 step 4). A background
+        // start is refused by the platform; that is logged and retried on the next visible start.
+        scope.launch {
+            val autoSessionOn = runCatching {
+                settings.settings.first().autoSessionOnBluetoothConnect
+            }.getOrDefault(false)
+            if (autoSessionOn) startAutoSessionService()
+        }
         // M6: detect a Melody update (install fingerprint changed) and arm the in-app/system prompt.
         runCatching { MelodyHostUpdateTracker.refresh(this) }
+    }
+
+    /**
+     * Builds the auto-session connector for [AutoSessionService]
+     * (HANDOFF_AUTO_SESSION.md §5). Kept here so the service stays a thin Android shell and the
+     * connector can be exercised from JVM tests with fakes.
+     */
+    fun createAutoSessionConnector(
+        scope: CoroutineScope,
+        monitor: ClassicConnectionMonitor,
+        enabled: StateFlow<Boolean>,
+    ): AutoSessionConnector = AutoSessionConnector(
+        monitor = monitor,
+        devices = deviceRegistry.devices,
+        sessions = sessionManager,
+        packageRegistry = packages.registry,
+        enabled = enabled,
+        open = { mac, name, definition -> autoSessionOpener.openSession(mac, name, definition) },
+        scope = scope,
+        onEvent = ::logAutoSessionEvent,
+    )
+
+    /** Starts the auto-session foreground service; called from the Settings switch and app start. */
+    fun startAutoSessionService() {
+        val result = runCatching { startForegroundService(Intent(this, AutoSessionService::class.java)) }
+        if (result.isSuccess) {
+            bridgeLog.event("auto.session.service_start_requested")
+        } else {
+            bridgeLog.warn("auto.session.service_start_denied", result.exceptionOrNull())
+        }
+    }
+
+    /** Stops the service; its `onDestroy` releases every auto hold. */
+    fun stopAutoSessionService() {
+        runCatching { stopService(Intent(this, AutoSessionService::class.java)) }
+            .onFailure { bridgeLog.warn("auto.session.service_stop_failed", it) }
+    }
+
+    /** Releases auto-connect holds outside the service lifecycle (e.g. service death races). */
+    fun releaseAutoSessionHolds() {
+        scope.launch { runCatching { sessionManager.releaseHolds(HoldReason.AUTO_CONNECT) } }
+    }
+
+    private fun logAutoSessionEvent(event: AutoSessionEvent) {
+        when (event) {
+            is AutoSessionEvent.Opened -> {
+                bridgeLog.event(
+                    "auto.session.opened",
+                    "mac" to event.mac,
+                    "package" to event.packageId,
+                )
+                activity.record(
+                    kind = ActivityKind.CONNECTION,
+                    title = "自动建立会话",
+                    detail = event.packageId,
+                    deviceId = event.mac,
+                    packageId = event.packageId,
+                )
+            }
+            is AutoSessionEvent.Failed -> bridgeLog.warn("auto.session.failed", event.error)
+
+            is AutoSessionEvent.Released -> bridgeLog.event(
+                "auto.session.released",
+                "mac" to event.mac,
+                "reason" to event.reason,
+            )
+
+            is AutoSessionEvent.Skipped -> bridgeLog.event(
+                "auto.session.skipped",
+                "mac" to event.mac,
+                "reason" to event.reason,
+            )
+
+            is AutoSessionEvent.Link -> bridgeLog.event(
+                "auto.session.link",
+                "mac" to event.mac,
+                "connected" to event.connected,
+            )
+        }
     }
 
     /**
