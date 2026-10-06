@@ -30,6 +30,13 @@ interface IMelodyBridge {
     /** Current lifecycle + state for [mac]; a degraded snapshot when nothing is managed yet. */
     MelodySnapshot snapshot(in String mac);
 
+    /**
+     * The managed Definition's own `assets/icon.png` for [mac], or null when the MAC is unmanaged or
+     * its package ships no icon. Used by the host-side header artwork injection so the Melody detail /
+     * OneSpace placeholder can be replaced by the device package's picture.
+     */
+    byte[] resolveIcon(in String mac);
+
     /** Executes one action through the shared session. Returns a MelodyBridgeResult code. */
     int execute(in String mac, in String actionId, in Bundle args);
 

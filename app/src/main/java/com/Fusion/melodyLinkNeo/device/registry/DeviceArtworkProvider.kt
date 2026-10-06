@@ -15,9 +15,15 @@ import java.util.zip.ZipInputStream
  * The path is a fixed convention - `assets/icon.png` inside the package - and is deliberately not
  * declared in `manifest`, so no package can point the app at an arbitrary file or a network URL.
  * Returns `null` when the package has no icon; the UI then draws a monogram placeholder.
+ *
+ * [iconBytes] is the same fixed entry, raw, for the callers that are not Compose: the Melody bridge
+ * hands the bytes to the host process so its detail / OneSpace header can show the package picture.
  */
 interface DeviceArtworkProvider {
     fun artworkFor(packageId: String): ImageBitmap?
+
+    /** Raw `assets/icon.png` of [packageId], or `null` when the package is unknown or has no icon. */
+    fun iconBytes(packageId: String): ByteArray?
 }
 
 /** Android implementation: APK assets for built-ins, the `.dcpkg` zip for installed packages. */
@@ -27,23 +33,35 @@ class AndroidDeviceArtworkProvider(
     private val packages: () -> List<DevicePackage>,
 ) : DeviceArtworkProvider {
 
-    private val cache = HashMap<String, ImageBitmap?>()
+    private val bitmaps = HashMap<String, ImageBitmap?>()
+    private val bytes = HashMap<String, ByteArray?>()
 
-    override fun artworkFor(packageId: String): ImageBitmap? = synchronized(cache) {
-        if (cache.containsKey(packageId)) return cache[packageId]
-        val bitmap = runCatching { load(packageId) }.getOrNull()
-        cache[packageId] = bitmap
+    override fun artworkFor(packageId: String): ImageBitmap? = synchronized(bitmaps) {
+        if (bitmaps.containsKey(packageId)) return bitmaps[packageId]
+        val bitmap = iconBytes(packageId)?.let { decode(it) }
+        bitmaps[packageId] = bitmap
         bitmap
     }
 
-    fun invalidate() = synchronized(cache) { cache.clear() }
-
-    private fun load(packageId: String): ImageBitmap? {
-        val devicePackage = packages().firstOrNull { it.packageId == packageId } ?: return null
-        val bytes = (if (devicePackage.isBuiltIn) builtInIcon(devicePackage) else installedIcon(packageId))
-            ?: return null
-        return BitmapFactory.decodeByteArray(bytes, 0, bytes.size)?.asImageBitmap()
+    override fun iconBytes(packageId: String): ByteArray? = synchronized(bytes) {
+        if (bytes.containsKey(packageId)) return bytes[packageId]
+        val value = runCatching { loadBytes(packageId) }.getOrNull()
+        bytes[packageId] = value
+        value
     }
+
+    fun invalidate() {
+        synchronized(bitmaps) { bitmaps.clear() }
+        synchronized(bytes) { bytes.clear() }
+    }
+
+    private fun loadBytes(packageId: String): ByteArray? {
+        val devicePackage = packages().firstOrNull { it.packageId == packageId } ?: return null
+        return if (devicePackage.isBuiltIn) builtInIcon(devicePackage) else installedIcon(packageId)
+    }
+
+    private fun decode(bytes: ByteArray): ImageBitmap? =
+        runCatching { BitmapFactory.decodeByteArray(bytes, 0, bytes.size)?.asImageBitmap() }.getOrNull()
 
     /**
      * Built-in definitions live at `assets/<dir>/<name>.json`; their artwork is looked up at

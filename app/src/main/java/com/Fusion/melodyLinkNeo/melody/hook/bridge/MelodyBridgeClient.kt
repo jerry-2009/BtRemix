@@ -107,6 +107,13 @@ internal class MelodyBridgeClient(
     /** Last "header cache was cold" diagnostic per MAC, so a cold cache logs once, not per getter call. */
     private val headerSkips = ConcurrentHashMap<String, String>()
 
+    /**
+     * M7: the Definition's `assets/icon.png` per MAC, fetched once per host process. The header artwork
+     * hook only runs when the host is about to draw its own placeholder, so a positive entry is stable;
+     * `onSupportChanged` drops the map because a re-installed dcpkg may ship a different picture.
+     */
+    private val icons = ConcurrentHashMap<String, ByteArray>()
+
     /** Last on-demand snapshot pull per MAC; the header getters must never turn into a poll loop. */
     private val snapshotPulls = ConcurrentHashMap<String, Long>()
 
@@ -233,6 +240,7 @@ internal class MelodyBridgeClient(
             panels.clear()
             ancs.clear()
             earphones.clear()
+            icons.clear()
             headerSkips.clear()
             firstSnapshotPulled.clear()
             // A re-installed dcpkg may declare a different host version range (M5.4 D-21).
@@ -456,6 +464,25 @@ internal class MelodyBridgeClient(
         val key = MelodyMac.normalize(mac)
         val snapshot = call("snapshot", PROVIDER_CALL_TIMEOUT_MS) { bridge -> bridge.snapshot(key) } ?: return null
         return wearOf(snapshot)
+    }
+
+    /**
+     * M7 header artwork: the managed Definition's own `assets/icon.png`, or `null` when this MAC is not
+     * managed (or its package ships no icon).
+     *
+     * Called from the host's detail / OneSpace placeholder path, so the payload is small (the authoring
+     * guide asks for <= 80 KB) and a positive answer is memoized for the process lifetime. A miss is
+     * deliberately **not** cached: the usual reason is "the binder is not up yet", and the next page
+     * open should be able to succeed.
+     */
+    fun icon(mac: String): ByteArray? {
+        val key = MelodyMac.normalize(mac)
+        icons[key]?.let { return it }
+        val bytes = call("resolveIcon", ICON_CALL_TIMEOUT_MS) { bridge -> bridge.resolveIcon(key) }
+            ?.takeIf { it.isNotEmpty() }
+            ?: return null
+        icons[key] = bytes
+        return bytes
     }
 
     /**
@@ -883,6 +910,12 @@ internal class MelodyBridgeClient(
 
         /** Floor between two on-demand snapshot pulls triggered by a cold M4.3a header cache. */
         const val SNAPSHOT_PULL_INTERVAL_MS = 3_000L
+
+        /**
+         * Header artwork budget: the caller runs on the host's main thread while the detail page builds,
+         * and a cold binder costs milliseconds. A slower answer degrades to "the placeholder stays".
+         */
+        const val ICON_CALL_TIMEOUT_MS = 400L
 
         /** Session state keys a Definition may use for "both earbuds are in"; none exist for XM3 (M3). */
         val WEAR_KEYS = listOf("bothInEar", "inEar")

@@ -173,6 +173,9 @@ class MelodySessionService : Service() {
             sessions = sessions(),
             registry = app.melodySupport,
             projection = app.melodyProjection,
+            // M7: the host paints its detail / OneSpace placeholder from the same `assets/icon.png`
+            // the Devices page uses, so both front-ends show the same picture (D-UI-5).
+            iconBytes = { packageId -> app.artwork.iconBytes(packageId) },
             log = log,
             scope = scope,
             // M5.4 D-31: a host process that just attached asks for one extra doorbell so the sibling

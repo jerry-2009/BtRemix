@@ -146,9 +146,11 @@ class SamplePackageTest {
         // M4.3b: the shipped package carries the native ANC contract - the host mode table, the
         // three-position strength mapping and a `noise` group that must stay visible.
         assertEquals(1, melody.anc.uiVersion)
-        assertEquals(listOf(5, 1, 2, 10), melody.anc.modes.map { it.modeType })
-        assertEquals(listOf(0, 1, 2, 3), melody.anc.modes.map { it.protocolIndex })
-        assertEquals("Wind noise reduction", melody.anc.modes.last().label)
+        // 1.4.2 drops the `wind` row so the host renders its ui=1 three-cell shape (ANC / Off /
+        // Ambient) - the same table the LinkBuds S package declares.
+        assertEquals(listOf(5, 1, 2), melody.anc.modes.map { it.modeType })
+        assertEquals(listOf(0, 1, 2), melody.anc.modes.map { it.protocolIndex })
+        assertEquals("Ambient sound", melody.anc.modes.last().label)
         val strength = requireNotNull(melody.anc.strength)
         assertEquals("ancLevel", strength.state)
         assertEquals("anc.setLevel", strength.action)
@@ -157,6 +159,19 @@ class SamplePackageTest {
         assertEquals(listOf(3, 8, 4), strength.levels.map { it.modeType })
         assertEquals(listOf(10, 11, 12), strength.levels.map { it.protocolIndex })
         assertTrue("the native noise group must stay visible", "noise" !in melody.panel.hideSections)
+
+        // M5.1: the host ANC redirect only exists when an interactive `ui` row reads the ANC mode
+        // state (`MelodyCapabilityMap.uiNodeForState`) - a button-only section leaves
+        // `melody.anc.modeAction`/`modeParam` empty, and all 14 host ANC entry points then degrade to
+        // `MelodyAncRedirectPolicy.Skip(unmapped)` instead of writing `anc.setMode`.
+        val ancRow = definition.ui.children.flatMap(::flatten)
+            .filterIsInstance<UiNode.Segmented>()
+            .firstOrNull { it.state == "ancMode" }
+        val segmented = requireNotNull(ancRow) {
+            "the ANC row must stay segmented so anc.setMode stays projected for the host redirect"
+        }
+        assertEquals("anc.setMode", segmented.action)
+        assertEquals(listOf("off", "anc", "ambient"), segmented.options)
     }
 
     /**

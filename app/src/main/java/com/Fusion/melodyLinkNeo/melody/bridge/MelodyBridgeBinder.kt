@@ -50,6 +50,11 @@ internal class MelodyBridgeBinder(
     private val sessions: SessionRegistry,
     private val registry: MelodySupportRegistry,
     private val projection: MelodyProjectionBuilder,
+    /**
+     * Fixed `assets/icon.png` reader, keyed by **Definition id**. The host asks for it by MAC when it is
+     * about to draw the device's placeholder picture on the detail / OneSpace header.
+     */
+    private val iconBytes: (String) -> ByteArray? = { null },
     private val log: MelodyBridgeLog = MelodyBridgeLog(),
     private val scope: CoroutineScope,
     private val selfUid: Int = Process.myUid(),
@@ -182,6 +187,27 @@ internal class MelodyBridgeBinder(
             "keys" to payload.state.size(),
         )
         return payload
+    }
+
+    /**
+     * M7 header artwork: the managed Definition's own `assets/icon.png`.
+     *
+     * Only the Definition id is resolved here - the bytes are the very same file the Devices page shows
+     * (D-UI-5), so the two front-ends cannot disagree about the picture either. A MAC that is not
+     * managed by a `melody` Definition answers `null`, which the host turns into "keep the placeholder".
+     */
+    override fun resolveIcon(mac: String?): ByteArray? {
+        if (!authorize("resolveIcon")) return null
+        val key = mac?.let(MelodyMac::normalize) ?: return null
+        val packageId = registry.support(key)?.packageId
+        val bytes = packageId?.let { id -> runCatching { iconBytes(id) }.getOrNull() }
+        log.event(
+            "melody.bridge.icon",
+            "mac" to key,
+            "definition" to packageId,
+            "bytes" to (bytes?.size ?: 0),
+        )
+        return bytes?.takeIf { it.isNotEmpty() }
     }
 
     override fun execute(mac: String?, actionId: String?, args: Bundle?): Int {
