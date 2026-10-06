@@ -1,0 +1,4 @@
+# The Melody whitelist template is injected into the host byte-for-byte (key order and the exact
+# line endings are part of the contract), so it must stay LF-only in every checkout. Without this,
+# `core.autocrlf=true` rewrites it to CRLF and MelodyWhitelistTemplateTest fails on a clean clone.
+app/src/main/assets/melody/whitelist-template.json text eol=lf

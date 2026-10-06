@@ -4,13 +4,18 @@ coreKtx = "1.10.1"
 junit = "4.13.2"
 junitVersion = "1.1.5"
 espressoCore = "3.5.1"
-lifecycleRuntimeKtx = "2.6.1"
-activityCompose = "1.8.0"
-kotlin = "2.2.10"
+lifecycleRuntimeKtx = "2.10.0"
+activityCompose = "1.12.4"
+# Device Center UI (DEVICE_CENTER_UI_PLAN §10): `io.github.kyant0:backdrop:1.0.6` is compiled
+# against Kotlin 2.3.10 metadata, which a 2.2.x compiler cannot read.
+kotlin = "2.3.10"
 composeBom = "2026.02.01"
 coroutines = "1.10.2"
 libxposed = "101.0.1"
 dexkit = "2.2.0"
+backdrop = "1.0.6"
+navigationCompose = "2.9.8"
+datastore = "1.2.1"
 
 [libraries]
 androidx-core-ktx = { group = "androidx.core", name = "core-ktx", version.ref = "coreKtx" }
@@ -28,6 +33,12 @@ androidx-compose-ui-test-manifest = { group = "androidx.compose.ui", name = "ui-
 androidx-compose-ui-test-junit4 = { group = "androidx.compose.ui", name = "ui-test-junit4" }
 androidx-compose-material3 = { group = "androidx.compose.material3", name = "material3" }
 kotlinx-coroutines-android = { group = "org.jetbrains.kotlinx", name = "kotlinx-coroutines-android", version.ref = "coroutines" }
+# Device Center UI shell + persistence (DEVICE_CENTER_UI_PLAN §10.2).
+androidx-navigation-compose = { group = "androidx.navigation", name = "navigation-compose", version.ref = "navigationCompose" }
+androidx-lifecycle-viewmodel-compose = { group = "androidx.lifecycle", name = "lifecycle-viewmodel-compose", version.ref = "lifecycleRuntimeKtx" }
+androidx-datastore-preferences = { group = "androidx.datastore", name = "datastore-preferences", version.ref = "datastore" }
+androidx-compose-material-icons-extended = { group = "androidx.compose.material", name = "material-icons-extended" }
+kyant-backdrop = { group = "io.github.kyant0", name = "backdrop", version.ref = "backdrop" }
 # Melody bridge (MELODY_BRIDGE_SPEC §11.1). libxposed is provided by LSPosed at runtime.
 libxposed-api = { group = "io.github.libxposed", name = "api", version.ref = "libxposed" }
 dexkit = { group = "org.luckypray", name = "dexkit", version.ref = "dexkit" }

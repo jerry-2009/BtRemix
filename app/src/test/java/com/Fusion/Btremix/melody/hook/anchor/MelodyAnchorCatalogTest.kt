@@ -79,6 +79,7 @@ class MelodyAnchorCatalogTest {
             MelodyAnchorCatalog.PROVIDER_MY_DEVICE,
             MelodyAnchorCatalog.WHITELIST_REPO_MAPPER,
             MelodyAnchorCatalog.WHITELIST_REPO_IMPL,
+            MelodyAnchorCatalog.WHITELIST_UTILS,
             MelodyAnchorCatalog.CARD_SENDER,
             MelodyAnchorCatalog.CARD_VO,
             MelodyAnchorCatalog.CARD_MENU_BUILDER,

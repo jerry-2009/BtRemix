@@ -144,9 +144,12 @@ class SamplePackageTest {
         // M4.3b: the shipped package carries the native ANC contract - the host mode table, the
         // three-position strength mapping and a `noise` group that must stay visible.
         assertEquals(1, melody.anc.uiVersion)
-        assertEquals(listOf(5, 1, 2, 10), melody.anc.modes.map { it.modeType })
-        assertEquals(listOf(0, 1, 2, 3), melody.anc.modes.map { it.protocolIndex })
-        assertEquals("Wind noise reduction", melody.anc.modes.last().label)
+        // 1.4.2 dropped the `wind` row again: a `uiVersion = 1` host renders exactly three cells
+        // (降噪 / 关闭 / 通透), so a fourth mode has no cell to land in. The generator
+        // (`tools/build-sony-wf1000xm3-package.ps1`) and the shipped 1.4.3 sample both carry three.
+        assertEquals(listOf(5, 1, 2), melody.anc.modes.map { it.modeType })
+        assertEquals(listOf(0, 1, 2), melody.anc.modes.map { it.protocolIndex })
+        assertEquals("Ambient sound", melody.anc.modes.last().label)
         val strength = requireNotNull(melody.anc.strength)
         assertEquals("ancLevel", strength.state)
         assertEquals("anc.setLevel", strength.action)

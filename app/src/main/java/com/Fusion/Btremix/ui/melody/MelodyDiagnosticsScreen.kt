@@ -6,15 +6,14 @@ import android.os.Build
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
-import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
-import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material3.Button
 import androidx.compose.material3.Divider
+import androidx.compose.material3.FilterChip
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedButton
 import androidx.compose.material3.Switch
@@ -25,7 +24,6 @@ import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
-import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.font.FontFamily
@@ -37,112 +35,153 @@ import com.Fusion.Btremix.melody.bridge.MelodyDiagnosticStore
 import com.Fusion.Btremix.melody.bridge.MelodyHostUpdateState
 import com.Fusion.Btremix.melody.bridge.MelodyHostUpdateTracker
 import com.Fusion.Btremix.melody.hook.anchor.MelodyAnchorCatalog
+import com.Fusion.Btremix.ui.components.DcListGroup
+import com.Fusion.Btremix.ui.components.DcListItem
+import com.Fusion.Btremix.ui.components.DcSectionHeader
 import java.io.File
 import java.text.SimpleDateFormat
 import java.util.Date
 import java.util.Locale
 
+private enum class DiagTab(val label: String) {
+    HOST_UPDATE("宿主更新"),
+    LOG("日志"),
+}
+
 /**
  * "Melody 诊断" (M5.4 D-28/D-29).
  *
- * Two jobs, both deliberately small: flip the host-side diagnostics switch (written into the module's
- * own preference file, read by the injected code at the next host process start), and export the
- * forwarded events through the system share sheet. The dump is plain `evt=` lines, so it is the same
- * text `adb logcat -s BtRemixMelody` would show.
+ * The page is split into two tabs so the M6 host-update/anchor report and the forwarded diagnostic
+ * events no longer share one scroll: [DiagTab.HOST_UPDATE] carries the anchor report and rescan
+ * action, [DiagTab.LOG] carries the host-side capture switch plus the event buffer and its
+ * share/clear actions - the dump is plain `evt=` lines, the same text `adb logcat -s BtRemixMelody`
+ * would show. App-side log settings live with the 原始日志 viewer instead.
  */
 @Composable
 fun MelodyDiagnosticsScreen(modifier: Modifier = Modifier) {
     val context = LocalContext.current
     val app = context.applicationContext as? BtRemixApplication
-    // The module preferences are the module app's own SharedPreferences; the injected code reads them
-    // through the framework's remote-preference pipe (same file, so a plain write here is enough).
-    val prefs = remember { context.getSharedPreferences(MODULE_PREFS, Context.MODE_PRIVATE) }
-    // Default off (M5.4 D-29 revised): collecting is an explicit opt-in, off until someone asks.
-    var enabled by remember { mutableStateOf(prefs.getBoolean(KEY_DIAGNOSTICS_ENABLED, false)) }
+    var tab by remember { mutableStateOf(DiagTab.HOST_UPDATE) }
     var message by remember { mutableStateOf<String?>(null) }
     // Re-read after every action; the store is a plain in-memory ring, so the count is cheap.
     var buffered by remember { mutableStateOf(MelodyDiagnosticStore.size()) }
     var dropped by remember { mutableStateOf(MelodyDiagnosticStore.dropped()) }
     val managedMacs = app?.melodySupport?.managedMacsFlow?.collectAsState()?.value ?: emptyList()
+    val diagnosticsEnabled = app?.moduleStatus?.diagnosticsEnabled?.collectAsState()?.value ?: false
     val hostUpdate by MelodyHostUpdateTracker.state.collectAsState()
 
-    Column(
-        modifier = modifier.fillMaxSize().verticalScroll(rememberScrollState()).padding(20.dp),
-        verticalArrangement = Arrangement.spacedBy(12.dp),
-    ) {
-        Text("Melody 诊断", style = MaterialTheme.typography.titleLarge)
-        Text(
-            "从 com.oplus.melody 进程回传的结构化事件（重定向 / 锚点 / 版本门控）。" +
-                "默认关闭；打开后才开始采集，关掉会同时停掉宿主侧的日志格式化与回传，" +
-                "把开销降到接近零。开关在宿主进程下次启动时生效。",
-            style = MaterialTheme.typography.bodyMedium,
-        )
-
-        HostUpdateSection(
-            state = hostUpdate,
-            onRescan = {
-                MelodyHostUpdateTracker.requestRescan(context)
-                message = "已清除锚点缓存；下次打开 Melody 时重新定位"
-            },
-        )
-
-        Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
-            Column(Modifier.weight(1f)) {
-                Text("诊断采集", style = MaterialTheme.typography.titleMedium)
-                Text(
-                    if (enabled) "已开启" else "已关闭（默认）",
-                    style = MaterialTheme.typography.bodySmall,
+    Column(modifier.fillMaxSize()) {
+        Row(
+            Modifier.fillMaxWidth().padding(horizontal = 20.dp, vertical = 4.dp),
+            horizontalArrangement = Arrangement.spacedBy(8.dp),
+        ) {
+            DiagTab.entries.forEach { entry ->
+                FilterChip(
+                    selected = tab == entry,
+                    onClick = { tab = entry },
+                    label = { Text(entry.label) },
                 )
             }
-            Switch(
-                checked = enabled,
-                onCheckedChange = { checked ->
-                    enabled = checked
-                    prefs.edit().putBoolean(KEY_DIAGNOSTICS_ENABLED, checked).apply()
-                    MelodyDiagnosticStore.diagnosticsEnabled = checked
-                    message = "已写入模块偏好；宿主进程下次启动生效"
-                },
-            )
         }
+        Column(
+            Modifier
+                .fillMaxSize()
+                .verticalScroll(rememberScrollState())
+                .padding(start = 20.dp, end = 20.dp, top = 4.dp, bottom = 24.dp),
+            verticalArrangement = Arrangement.spacedBy(12.dp),
+        ) {
+            when (tab) {
+                DiagTab.HOST_UPDATE -> HostUpdatePage(
+                    state = hostUpdate,
+                    managedMacs = managedMacs,
+                    onRescan = {
+                        MelodyHostUpdateTracker.requestRescan(context)
+                        message = "已清除锚点缓存；下次打开 Melody 时重新定位"
+                    },
+                    message = message,
+                )
 
-        Divider()
-        KeyValue("宿主包", MelodyCallPolicy.HOST_PACKAGE)
-        KeyValue("宿主版本", hostVersion(context) ?: "未安装 / 读不到")
-        KeyValue("托管设备", if (managedMacs.isEmpty()) "无" else managedMacs.joinToString(", "))
-        KeyValue("缓冲事件", "$buffered 条（已丢弃 $dropped 条）")
-        message?.let { Text(it, style = MaterialTheme.typography.bodySmall) }
-
-        Divider()
-        Row(horizontalArrangement = Arrangement.spacedBy(12.dp)) {
-            Button(
-                onClick = {
-                    val content = buildExport(context, managedMacs)
-                    MelodyDiagnosticStore.write(File(context.filesDir, DUMP_FILE_NAME), content)
-                    share(context, content)
-                    buffered = MelodyDiagnosticStore.size()
-                    dropped = MelodyDiagnosticStore.dropped()
-                    message = "已生成 ${buffered} 条事件；文件：${DUMP_FILE_NAME}"
-                },
-            ) { Text("导出并分享") }
-            OutlinedButton(
-                onClick = {
-                    MelodyDiagnosticStore.clear()
-                    buffered = 0
-                    dropped = 0
-                    message = "已清空缓冲"
-                },
-            ) { Text("清空") }
+                DiagTab.LOG -> LogPage(
+                    diagnosticsEnabled = diagnosticsEnabled,
+                    onToggleDiagnostics = { app?.moduleStatus?.setDiagnosticsEnabled(it) },
+                    buffered = buffered,
+                    dropped = dropped,
+                    message = message,
+                    onExport = {
+                        val content = buildExport(context, managedMacs)
+                        MelodyDiagnosticStore.write(File(context.filesDir, DUMP_FILE_NAME), content)
+                        share(context, content)
+                        buffered = MelodyDiagnosticStore.size()
+                        dropped = MelodyDiagnosticStore.dropped()
+                        message = "已生成 ${buffered} 条事件；文件：${DUMP_FILE_NAME}"
+                    },
+                    onClear = {
+                        MelodyDiagnosticStore.clear()
+                        buffered = 0
+                        dropped = 0
+                        message = "已清空缓冲"
+                    },
+                )
+            }
         }
+    }
+}
 
-        Text(
-            "导出内容与 `adb logcat -s BtRemixMelody` 同格式；同时写入 files/$DUMP_FILE_NAME。",
-            style = MaterialTheme.typography.bodySmall,
-        )
-        Text(
-            "注意：未开启“诊断采集”时宿主不产生这些事件，导出只会包含空缓冲与版本信息。",
-            style = MaterialTheme.typography.bodySmall,
+/** 宿主更新 / 锚点: which Melody build was seen, whether the anchors re-located, and a rescan action. */
+@Composable
+private fun HostUpdatePage(
+    state: MelodyHostUpdateState?,
+    managedMacs: List<String>,
+    onRescan: () -> Unit,
+    message: String?,
+) {
+    HostUpdateSection(state = state, onRescan = onRescan)
+    Divider()
+    KeyValue("宿主包", MelodyCallPolicy.HOST_PACKAGE)
+    KeyValue("托管设备", if (managedMacs.isEmpty()) "无" else managedMacs.joinToString(", "))
+    message?.let { Text(it, style = MaterialTheme.typography.bodySmall) }
+}
+
+/** 日志: the host-side capture switch, the forwarded-event buffer, and the share/clear actions. */
+@Composable
+private fun LogPage(
+    diagnosticsEnabled: Boolean,
+    onToggleDiagnostics: (Boolean) -> Unit,
+    buffered: Int,
+    dropped: Int,
+    message: String?,
+    onExport: () -> Unit,
+    onClear: () -> Unit,
+) {
+    DcSectionHeader(title = "诊断")
+    DcListGroup {
+        DcListItem(
+            title = "诊断采集",
+            subtitle = "记录宿主回传的结构化事件；宿主进程下次启动生效",
+            trailing = { Switch(checked = diagnosticsEnabled, onCheckedChange = onToggleDiagnostics) },
         )
     }
+
+    DcSectionHeader(title = "事件缓冲")
+    Text(
+        "从 com.oplus.melody 进程回传的结构化事件（重定向 / 锚点 / 版本门控）。" +
+            "需先打开“诊断采集”才会采集，开关在宿主进程下次启动时生效。",
+        style = MaterialTheme.typography.bodySmall,
+    )
+    KeyValue("缓冲事件", "$buffered 条（已丢弃 $dropped 条）")
+    message?.let { Text(it, style = MaterialTheme.typography.bodySmall) }
+    Row(horizontalArrangement = Arrangement.spacedBy(12.dp)) {
+        Button(onClick = onExport) { Text("导出并分享") }
+        OutlinedButton(onClick = onClear) { Text("清空") }
+    }
+    Text(
+        "导出内容与 `adb logcat -s BtRemixMelody` 同格式；同时写入 files/$DUMP_FILE_NAME。",
+        style = MaterialTheme.typography.bodySmall,
+    )
+    Text(
+        "注意：未开启“诊断采集”时宿主不产生这些事件，导出只会包含空缓冲与版本信息。",
+        style = MaterialTheme.typography.bodySmall,
+    )
 }
 
 @Composable
@@ -246,7 +285,5 @@ private fun hostVersion(context: Context): String? = runCatching {
     context.packageManager.getPackageInfo(MelodyCallPolicy.HOST_PACKAGE, 0).versionName
 }.getOrNull()
 
-const val KEY_DIAGNOSTICS_ENABLED: String = "diagnostics_enabled"
 const val DUMP_FILE_NAME: String = "melody-diagnostics.jsonl"
-private const val MODULE_PREFS = "melody_bridge"
 private const val MAX_SHARE_CHARS = 200_000

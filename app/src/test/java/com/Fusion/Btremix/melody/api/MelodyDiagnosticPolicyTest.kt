@@ -30,5 +30,21 @@ class MelodyDiagnosticPolicyTest {
         // ...while "is the module installed in this process?" stays answerable.
         assertFalse(MelodyDiagnosticPolicy.suppressedWhenDisabled("melody.injection.install"))
         assertFalse(MelodyDiagnosticPolicy.suppressedWhenDisabled("melody.scope.loaded"))
+        // ...and the whitelist / card injections stay observable: their answer lines are the only way
+        // to tell "the hook ran" apart from "the hook was never installed" (2026-10-06 card debug).
+        assertFalse(MelodyDiagnosticPolicy.suppressedWhenDisabled("melody.inject.whitelist_repo"))
+        assertFalse(MelodyDiagnosticPolicy.suppressedWhenDisabled("melody.inject.whitelist_lookup"))
+        // ...and the desktop-card chain itself: "row re-published?", "which step fail-opened?" and "did
+        // the host receive a push at all?" must be answerable with the switch in whatever state the
+        // framework cached.
+        assertFalse(MelodyDiagnosticPolicy.suppressedWhenDisabled("melody.anc.card.show"))
+        assertFalse(MelodyDiagnosticPolicy.suppressedWhenDisabled("melody.anc.card.skip"))
+        assertFalse(MelodyDiagnosticPolicy.suppressedWhenDisabled("melody.anc.card.publish"))
+        assertFalse(MelodyDiagnosticPolicy.suppressedWhenDisabled("melody.anc.refresh.armed"))
+        assertFalse(MelodyDiagnosticPolicy.suppressedWhenDisabled("melody.anc.refresh.pass"))
+        // The noisy detail-page / panel evidence stays behind the switch (2026-10-06 noise trim).
+        assertTrue(MelodyDiagnosticPolicy.suppressedWhenDisabled("melody.anc.refreshed"))
+        assertTrue(MelodyDiagnosticPolicy.suppressedWhenDisabled("melody.anc.noiseinfo"))
+        assertTrue(MelodyDiagnosticPolicy.suppressedWhenDisabled("melody.devicecard.call4"))
     }
 }

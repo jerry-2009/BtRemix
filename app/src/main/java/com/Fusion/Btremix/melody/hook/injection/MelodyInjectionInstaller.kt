@@ -41,9 +41,25 @@ internal class MelodyInjectionInstaller(
         runCatching { MelodyTransportInjection(module, log, loader, hostApkPath).install() }
             .onFailure { log.warn("melody.injection.transport_failed", it) }
         // M3.4b: the in-memory whitelist repository the device-centre card code asks (the Provider
-        // injection alone cannot reach it, see MelodyWhitelistRepositoryInjection).
-        runCatching { MelodyWhitelistRepositoryInjection(module, log, loader).install() }
-            .onFailure { log.warn("melody.injection.whitelist_repo_failed", it) }
+        // injection alone cannot reach it, see MelodyWhitelistRepositoryInjection). The instance is
+        // kept because the collection-lookup injection below answers from the same DTO.
+        val whitelistRepo = runCatching { MelodyWhitelistRepositoryInjection(module, log, loader) }.getOrNull()
+        whitelistRepo?.let { repo ->
+            runCatching { repo.install() }
+                .onFailure { log.warn("melody.injection.whitelist_repo_failed", it) }
+        }
+        // 2026-10-06 card debug: `WhitelistUtils.a/b` search a *caller-supplied* collection, which our
+        // repository hooks never see - they are what prints `findWhitelistConfig failed … 404` when the
+        // device-centre card is rebuilt. Answer them from the same repository answer.
+        runCatching {
+            MelodyWhitelistLookupInjection(
+                module = module,
+                log = log,
+                loader = loader,
+                answerByProduct = { productId, name -> whitelistRepo?.answerByProduct(productId, name) },
+                answerByMac = { mac -> whitelistRepo?.answerByMac(mac) },
+            ).install()
+        }.onFailure { log.warn("melody.injection.whitelist_lookup_failed", it) }
         // M4.2: hide/grey the official detail-page rows the Definition asked to remove. Read-only with
         // respect to the official data - it only flips `setVisible`/`setEnabled` from the envelope policy.
         runCatching { MelodyPanelInjection(module, log, loader).install() }

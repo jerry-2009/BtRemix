@@ -151,17 +151,17 @@ internal class MelodyWhitelistRepositoryInjection(
         val method = Reflect.findMethod(cls, "a", arrayOf(String::class.java)) ?: return false
         if (method.returnType.name != DTO_CLASS) return false
         module.hook(method).intercept(XposedInterface.Hooker { chain ->
-            val official = chain.proceed()
-            if (official != null) {
-                official
-            } else {
-                answer(
-                    via = "byMac",
-                    key = chain.args.getOrNull(0) as? String,
-                    selection = null,
-                    owner = cls.simpleName,
-                ) ?: official
-            }
+            // 2026-10-06: answer *first*. The official implementation logs its own
+            // `findWhitelistConfig failed … 404` (WhitelistUtils.a) before returning null, so a
+            // post-proceed fallback always leaves that line in the host log even when we do answer -
+            // which is exactly what made the desktop card look broken. Answering first also keeps the
+            // host from walking its own (empty) whitelist for a device we manage.
+            answer(
+                via = "byMac",
+                key = chain.args.getOrNull(0) as? String,
+                selection = null,
+                owner = cls.simpleName,
+            ) ?: chain.proceed()
         })
         log.event("melody.anchor.hooked", "hook" to "whitelist_repo.byMac", "class" to cls.name, "method" to method.name)
         return true
@@ -173,14 +173,15 @@ internal class MelodyWhitelistRepositoryInjection(
         val method = Reflect.findMethod(cls, "c", params) ?: return false
         if (method.returnType.name != DTO_CLASS) return false
         module.hook(method).intercept(XposedInterface.Hooker { chain ->
-            val official = chain.proceed()
-            if (official != null) {
-                official
-            } else {
-                val productId = chain.args.getOrNull(0) as? String
-                val name = chain.args.getOrNull(1) as? String
-                answer(via = "byProduct", key = productId, selection = name, owner = cls.simpleName) ?: official
-            }
+            // Answer first, for the same reason as [hookByMac]: this is the call the device-centre card
+            // rebuild (`i9/c.d` -> `c9.a.b` -> `c`) makes, and its own 404 line is the signal the card
+            // debug recorded.
+            answer(
+                via = "byProduct",
+                key = chain.args.getOrNull(0) as? String,
+                selection = chain.args.getOrNull(1) as? String,
+                owner = cls.simpleName,
+            ) ?: chain.proceed()
         })
         log.event(
             "melody.anchor.hooked",
@@ -190,6 +191,19 @@ internal class MelodyWhitelistRepositoryInjection(
         )
         return true
     }
+
+    /**
+     * Answers a `WhitelistUtils.a(Collection, productId, name)` lookup (the host's *collection* search,
+     * which our repository hooks never see) on behalf of [MelodyWhitelistLookupInjection].
+     *
+     * Returns `null` for anything this process does not manage, so the caller falls back to the host.
+     */
+    internal fun answerByProduct(productId: String?, deviceName: String?): Any? =
+        answer(via = "byLookupProduct", key = productId, selection = deviceName, owner = LOOKUP_OWNER)
+
+    /** Answers a `WhitelistUtils.b(BluetoothDevice, Collection)` lookup; `null` when unmanaged. */
+    internal fun answerByMac(mac: String?): Any? =
+        answer(via = "byLookupMac", key = mac, selection = null, owner = LOOKUP_OWNER)
 
     /**
      * The whole-list view (`g()`/`i()`), used by the panel and by `EarDeviceCardRepository` when it
@@ -323,5 +337,8 @@ internal class MelodyWhitelistRepositoryInjection(
 
         /** Shorter names are too ambiguous for a contains-match (`Buds`, `XM3`, ...). */
         const val MIN_NAME_CHARS = 5
+
+        /** `owner` used by [MelodyWhitelistLookupInjection]'s answers, so the log tells them apart. */
+        const val LOOKUP_OWNER = "whitelist_lookup"
     }
 }

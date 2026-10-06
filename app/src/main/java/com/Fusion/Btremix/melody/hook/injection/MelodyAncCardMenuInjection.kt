@@ -1,6 +1,9 @@
 package com.Fusion.Btremix.melody.hook.injection
 
 import android.app.Application
+import android.content.ContentProvider
+import android.os.Bundle
+import android.os.SystemClock
 import com.Fusion.Btremix.melody.api.MelodyMac
 import com.Fusion.Btremix.melody.hook.MelodyLog
 import com.Fusion.Btremix.melody.hook.MelodyAnchorSession
@@ -53,8 +56,13 @@ internal class MelodyAncCardMenuInjection(
     @Volatile
     private var application: Application? = null
 
+    /** Last `card_show` sweep, so a launcher burst does not re-publish the row dozens of times. */
+    @Volatile
+    private var lastCardShowAt: Long = 0L
+
     fun install() {
         hookApplication()
+        hookProviderCardShow()
         val cls = MelodyAnchorSession.classOrNull(MelodyAnchorCatalog.CARD_MENU_BUILDER, loader)
         if (cls == null) {
             log.event("melody.anchor.missing", "hook" to HOOK, "class" to UTILS_CLASS)
@@ -89,6 +97,70 @@ internal class MelodyAncCardMenuInjection(
             }
             result
         })
+    }
+
+    /**
+     * 2026-10-06 card debug: the device centre calls `MyDeviceProvider.call(authority, "card_show", …)`
+     * every time the launcher card becomes visible.
+     *
+     * That is the moment the host rebuilds the row from its own (suppressed) session - and its restore
+     * path fills the noise menus from an *empty* `CurrentNoiseModeInfo`, i.e. 关闭. Because our projected
+     * index did not change, the index-driven refresh never fires again, so without this sweep a card that
+     * was re-written after a host restart stays on 关闭 until the user changes the mode. Re-publishing
+     * the projected index on `card_show` closes that window.
+     *
+     * Read-only with respect to the host's call: the original result is returned untouched and every
+     * failure is swallowed (fail-open).
+     */
+    private fun hookProviderCardShow() {
+        val provider = MelodyAnchorSession.classOrNull(MelodyAnchorCatalog.PROVIDER_MY_DEVICE, loader) ?: run {
+            log.event("melody.anchor.missing", "hook" to "$HOOK.card_show", "class" to PROVIDER_CLASS)
+            return
+        }
+        val params = arrayOf(String::class.java, String::class.java, String::class.java, Bundle::class.java)
+        val method = Reflect.findMethod(provider, "call", params) ?: run {
+            log.event("melody.anchor.missing", "hook" to "$HOOK.card_show", "class" to provider.name)
+            return
+        }
+        module.hook(method).intercept(XposedInterface.Hooker { chain ->
+            val result = chain.proceed()
+            if (chain.args.getOrNull(1) == CARD_SHOW) {
+                captureApplication(chain.thisObject)
+                runCatching { republishManaged() }
+                    .onFailure { log.warn("melody.injection.anc_card_show_failed", it) }
+            }
+            result
+        })
+        log.event("melody.anchor.hooked", "hook" to "$HOOK.card_show", "class" to provider.name, "method" to method.name)
+    }
+
+    /**
+     * Late-but-reliable host `Application` source: the provider instance was constructed before the
+     * launcher could call `card_show`, so its `Context` always exists.
+     *
+     * Without this, every [republish] would bail out with `reason=app` whenever the
+     * `Application.onCreate` hook was installed after the host had already run it - which is one of the
+     * ways the card silently keeps showing the host's own 关闭 row.
+     */
+    private fun captureApplication(holder: Any?) {
+        if (application != null) return
+        val app = runCatching {
+            (holder as? ContentProvider)?.context?.applicationContext as? Application
+        }.getOrNull() ?: return
+        application = app
+        log.event("melody.anc.card.application", "class" to app.javaClass.name)
+    }
+
+    /** Re-publishes every managed MAC's row, at most once per throttle window. */
+    private fun republishManaged() {
+        val now = SystemClock.elapsedRealtime()
+        if (now - lastCardShowAt < CARD_SHOW_THROTTLE_MS) return
+        lastCardShowAt = now
+        val client = MelodyBridgeClients.existing() ?: return
+        val macs = runCatching { client.managedMacsFast() }.getOrDefault(emptyList())
+        if (macs.isEmpty()) return
+        log.event("melody.anc.card.show", "count" to macs.size)
+        macs.forEach { mac -> runCatching { republish(mac) } }
     }
 
     /**
@@ -219,6 +291,11 @@ internal class MelodyAncCardMenuInjection(
         const val METHOD = "e"
         const val PARAMS = 6
         const val SET_VALUE = "setCurrentNoiseReductionModeValue"
+        const val PROVIDER_CLASS = "com.oplus.melody.mydevices.devicecard.MyDeviceProvider"
+
+        /** `MyDeviceProvider.call(authority, "card_show", arg, extras)` - "the launcher card opened". */
+        const val CARD_SHOW = "card_show"
+        const val CARD_SHOW_THROTTLE_MS = 2_000L
 
         /** Marker telling the hook the re-dispatch already ran (the method is `void`, so any non-null works). */
         val REDISPATCHED = Any()

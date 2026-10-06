@@ -141,6 +141,19 @@ data class DefinitionManifest(
     val matchers: List<DeviceMatchRule> = emptyList(),
     val capabilities: Set<String> = emptySet(),
     val runtime: String? = null,
+    /**
+     * Optional product metadata (DEVICE_CENTER_UI_PLAN §3.5A).
+     *
+     * These keys are additive and optional: the JSON codec already ignores unknown keys, so no
+     * `schemaVersion` bump is needed and packages written before them keep loading unchanged. The
+     * device artwork is *not* declared here - it is fixed to `assets/icon.png` inside the package
+     * (D-UI-5).
+     */
+    val author: String? = null,
+    val description: String? = null,
+    val homepage: String? = null,
+    val deviceType: String? = null,
+    val minRuntime: String? = null,
 ) : DeviceDefinition
 
 sealed interface DeviceMatchRule {

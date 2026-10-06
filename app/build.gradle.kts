@@ -55,7 +55,13 @@ dependencies {
     implementation(libs.androidx.compose.ui.tooling.preview)
     implementation(libs.androidx.core.ktx)
     implementation(libs.androidx.lifecycle.runtime.ktx)
+    implementation(libs.androidx.lifecycle.viewmodel.compose)
+    implementation(libs.androidx.navigation.compose)
+    implementation(libs.androidx.datastore.preferences)
+    implementation(libs.androidx.compose.material.icons.extended)
     implementation(libs.kotlinx.coroutines.android)
+    // Liquid Glass bottom navigation (DEVICE_CENTER_UI_PLAN §4.9 / §10).
+    implementation(libs.kyant.backdrop)
     // libxposed API 101 entry point; the framework supplies the implementation at runtime.
     compileOnly(libs.libxposed.api)
     // Host (com.oplus.melody) class lookup for R8-renamed anchors; used from M1 onwards.

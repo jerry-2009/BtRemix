@@ -57,6 +57,12 @@ object DefinitionJsonCodec {
         version = obj.requiredString("version"),
         schemaVersion = obj.optionalInt("schemaVersion") ?: DefinitionSchema.VERSION_SCRIPT_ONLY,
         runtime = obj.optionalString("runtime"),
+        // Optional product metadata (§3.5A); absent keys fall back to null and never fail a load.
+        author = obj.optionalString("author"),
+        description = obj.optionalString("description"),
+        homepage = obj.optionalString("homepage"),
+        deviceType = obj.optionalString("deviceType"),
+        minRuntime = obj.optionalString("minRuntime"),
         capabilities = obj.optionalArray("capabilities")?.values?.mapIndexed { index, value -> value.string("manifest.capabilities[$index]") }?.toSet() ?: emptySet(),
         matchers = obj.optionalArray("matchers")?.values?.mapIndexed { index, value -> parseMatcher(value.obj("manifest.matchers[$index]"), index) } ?: emptyList(),
     )

@@ -56,6 +56,7 @@ internal object MelodyAnchorCatalog {
     const val DTO_WHITELIST_CONTENT = "dto.whitelist_content"
     const val WHITELIST_REPO_MAPPER = "whitelist.repo_mapper"
     const val WHITELIST_REPO_IMPL = "whitelist.repo_impl"
+    const val WHITELIST_UTILS = "whitelist.utils"
 
     // --- device card / refresh (M5.1 follow-up) ----------------------------------------------------
 
@@ -78,6 +79,7 @@ internal object MelodyAnchorCatalog {
     private const val BTSDK_DATA_PKG = "com.oplus.melody.btsdk.api.data"
     private const val MY_DEVICES_PKG = "com.oplus.melody.mydevices.devicecard"
     private const val WHITELIST_PKG = "com.oplus.melody.common.data"
+    private const val WHITELIST_UTIL_PKG = "com.oplus.melody.common.util"
     private const val SETGATE_PKG = "com.oplus.melody.mydevices.devicecard.noisereduction"
     private const val PROVIDER_PKG = "com.oplus.melody.provider"
     private const val DEVICE_CONTROL_PKG = "com.oplus.melody.ui.widget.devicecontrol"
@@ -302,6 +304,28 @@ internal object MelodyAnchorCatalog {
             query = MelodyAnchorQuery.MethodName("a", 1),
             allowMultiple = true,
         ),
+        /**
+         * `com.oplus.melody.common.util.T` (`WhitelistUtils`): the host's *collection* lookup
+         * (`a(Collection, productId, name)` / `b(BluetoothDevice, Collection)`) that the device-centre
+         * card rebuild falls back to when the repository answers nothing. It never asks the repository,
+         * which is where the `findWhitelistConfig failed … 404` line in the card debug came from.
+         *
+         * The class name survives (`com.oplus.melody.common.util` is kept), so the baseline is the
+         * normal path; the `(Collection, String, String) -> WhitelistConfigDTO` shape is the fallback
+         * for a release that renames `T`.
+         */
+        MelodyAnchorSpec(
+            id = WHITELIST_UTILS,
+            host = MelodyAnchorHost.Melody,
+            feature = "whitelist.lookup",
+            baselineClasses = listOf("$WHITELIST_UTIL_PKG.T"),
+            packages = listOf(WHITELIST_UTIL_PKG),
+            query = MelodyAnchorQuery.MethodSignature(
+                "a",
+                listOf(of(Collection::class.java), of(String::class.java), of(String::class.java)),
+                anchor(DTO_WHITELIST_CONFIG),
+            ),
+        ),
         MelodyAnchorSpec(
             id = CARD_SENDER,
             host = MelodyAnchorHost.Melody,
@@ -434,6 +458,7 @@ internal object MelodyAnchorCatalog {
         DTO_WHITELIST_CONTENT to "白名单内容对象",
         WHITELIST_REPO_MAPPER to "详情页能力表数据源",
         WHITELIST_REPO_IMPL to "白名单仓库注入",
+        WHITELIST_UTILS to "白名单集合查找兜底",
         CARD_SENDER to "桌面卡片数据推送",
         CARD_VO to "桌面卡片数据对象",
         CARD_MENU_BUILDER to "设备卡片菜单构建",

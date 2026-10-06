@@ -204,6 +204,10 @@ internal class MelodyAncRefreshInjection(
         listenerRegistered = true
         client.addSnapshotListener { scheduleRefresh() }
         log.event("melody.anchor.hooked", "hook" to HOOK, "target" to "snapshot_listener")
+        // Also under the always-on `melody.anc.refresh.*` prefix: without the listener the whole refresh
+        // chain (and therefore the device-centre card re-publish) never runs, and that has to be visible
+        // even when the host's diagnostics switch reads stale.
+        log.event("melody.anc.refresh.armed", "pid" to android.os.Process.myPid())
     }
 
     /** Runs on the main thread; re-emits the host's own DTO LiveData and nudges each live surface. */
@@ -213,6 +217,9 @@ internal class MelodyAncRefreshInjection(
         stampedThisPass = 0
         val managed = runCatching { client.managedMacsFast() }.getOrDefault(emptyList())
         if (managed.isEmpty()) return
+        // One line per pass: "the host received a push and reached the refresh" is otherwise
+        // indistinguishable from "the push never arrived", and the card row only moves through here.
+        log.event("melody.anc.refresh.pass", "managed" to managed.size)
         val managedSet = managed.map(MelodyMac::normalize).toSet()
         var activeReposted = false
         for (mac in managedSet) {
