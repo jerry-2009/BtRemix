@@ -24,7 +24,6 @@ import androidx.compose.runtime.getValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.platform.LocalContext
-import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import androidx.core.content.ContextCompat
 import androidx.lifecycle.Lifecycle
@@ -37,6 +36,7 @@ import com.Fusion.Btremix.ui.explorer.LogPanel
 import com.Fusion.Btremix.ui.melody.MelodyDiagnosticsScreen
 import com.Fusion.Btremix.ui.studio.DefinitionStudioScreen
 import com.Fusion.Btremix.ui.studio.StudioViewModel
+import com.Fusion.Btremix.ui.theme.DcSpacing
 
 /**
  * Developer tools (D-UI-1): Explorer, Studio and Melody diagnostics, reached from
@@ -67,20 +67,19 @@ fun ExplorerScreen(viewModel: ExplorerViewModel, modifier: Modifier = Modifier) 
         onDispose { lifecycleOwner.lifecycle.removeObserver(observer) }
     }
 
-    Column(modifier.fillMaxSize().padding(horizontal = 20.dp)) {
+    Column(modifier.fillMaxSize().padding(horizontal = DcSpacing.screenPadding)) {
         Row(
-            modifier = Modifier.fillMaxWidth().padding(top = 6.dp, bottom = 12.dp),
+            modifier = Modifier.fillMaxWidth().padding(top = DcSpacing.sm, bottom = DcSpacing.md),
             verticalAlignment = Alignment.CenterVertically,
             horizontalArrangement = Arrangement.SpaceBetween,
         ) {
-            Column {
-                Text("BLE Explorer", style = MaterialTheme.typography.headlineSmall, fontWeight = FontWeight.SemiBold)
-                Text(
-                    "Raw Bluetooth Low Energy tools",
-                    style = MaterialTheme.typography.bodySmall,
-                    color = MaterialTheme.colorScheme.onSurfaceVariant,
-                )
-            }
+            // The page title lives in the shell's top bar; this row only carries the scan action.
+            Text(
+                "Raw Bluetooth Low Energy tools",
+                modifier = Modifier.weight(1f),
+                style = MaterialTheme.typography.bodySmall,
+                color = MaterialTheme.colorScheme.onSurfaceVariant,
+            )
             if (state.connectedDevice == null) {
                 Button(onClick = {
                     if (state.permissionGranted) viewModel.toggleScan()
@@ -91,7 +90,7 @@ fun ExplorerScreen(viewModel: ExplorerViewModel, modifier: Modifier = Modifier) 
             }
         }
         state.error?.let { message ->
-            Surface(color = MaterialTheme.colorScheme.errorContainer, shape = MaterialTheme.shapes.small) {
+            Surface(color = MaterialTheme.colorScheme.errorContainer, shape = MaterialTheme.shapes.large) {
                 Row(Modifier.fillMaxWidth().padding(10.dp), verticalAlignment = Alignment.CenterVertically) {
                     Text(message, Modifier.weight(1f), color = MaterialTheme.colorScheme.onErrorContainer)
                     TextButton(onClick = viewModel::clearError) { Text("Dismiss") }

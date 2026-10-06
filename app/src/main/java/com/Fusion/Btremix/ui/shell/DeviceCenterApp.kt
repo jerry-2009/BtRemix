@@ -76,6 +76,7 @@ import com.Fusion.Btremix.ui.settings.SettingsViewModel
 import com.Fusion.Btremix.ui.studio.StudioViewModel
 import com.Fusion.Btremix.ui.theme.BtRemixTheme
 import com.Fusion.Btremix.ui.theme.DcMotion
+import com.Fusion.Btremix.ui.theme.DcSpacing
 import com.kyant.backdrop.backdrops.LayerBackdrop
 import com.kyant.backdrop.backdrops.layerBackdrop
 import com.kyant.backdrop.backdrops.rememberLayerBackdrop
@@ -374,6 +375,7 @@ private fun DeviceCenterShell(
                                 settingsViewModel::setAutoSessionOnBluetoothConnect,
                             onBackgroundRun = settingsViewModel::setBackgroundRun,
                             onDynamicColor = settingsViewModel::setDynamicColor,
+                            onReduceTransparency = settingsViewModel::setReduceTransparency,
                             onThemeMode = settingsViewModel::setThemeMode,
                             onAbout = { navController.navigate(Routes.ABOUT) },
                             onDeveloper = { navController.navigate(Routes.DEVELOPER) },
@@ -451,7 +453,7 @@ private fun DeviceCenterShell(
                     modifier = Modifier
                         .align(Alignment.BottomCenter)
                         .navigationBarsPadding()
-                        .padding(bottom = 8.dp),
+                        .padding(bottom = DcSpacing.sm),
                 )
             }
         }

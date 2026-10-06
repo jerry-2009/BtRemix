@@ -3,7 +3,6 @@ package com.Fusion.Btremix.ui.packages
 import android.net.Uri
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.contract.ActivityResultContracts
-import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Column
@@ -16,11 +15,11 @@ import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.rememberScrollState
-import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Button
-import androidx.compose.material3.Divider
+import androidx.compose.material3.HorizontalDivider
+import androidx.compose.material3.FilledTonalButton
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedButton
 import androidx.compose.material3.Surface
@@ -37,6 +36,8 @@ import androidx.compose.ui.window.Dialog
 import androidx.compose.ui.window.DialogProperties
 import com.Fusion.Btremix.definition.api.initialState
 import com.Fusion.Btremix.ui.renderer.DefinitionDevicePage
+import com.Fusion.Btremix.ui.theme.DcShapes
+import com.Fusion.Btremix.ui.theme.DcSpacing
 
 private val PACKAGE_MIME_TYPES = arrayOf("application/zip", "application/octet-stream", "*/*")
 
@@ -72,7 +73,7 @@ fun DefinitionPackagesScreen(
             horizontalArrangement = Arrangement.SpaceBetween,
         ) {
             Column(Modifier.weight(1f)) {
-                Text("Definition packages", style = MaterialTheme.typography.headlineSmall, fontWeight = FontWeight.SemiBold)
+                Text("Definition packages", style = MaterialTheme.typography.headlineSmall)
                 Text(
                     "${state.packages.size} registered · ${state.packages.count { !it.isBuiltIn }} installed",
                     style = MaterialTheme.typography.bodySmall,
@@ -150,7 +151,7 @@ private fun PackagePreviewDialog(preview: PackageUiPreview, onDismiss: () -> Uni
                     verticalAlignment = Alignment.CenterVertically,
                 ) {
                     Column(Modifier.weight(1f)) {
-                        Text("UI preview", style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.SemiBold)
+                        Text("UI preview", style = MaterialTheme.typography.titleMedium)
                         Text(
                             "${preview.packageId} v${preview.version} · rendered from the ui section",
                             style = MaterialTheme.typography.bodySmall,
@@ -179,7 +180,7 @@ private fun PackagePreviewDialog(preview: PackageUiPreview, onDismiss: () -> Uni
 
 @Composable
 private fun MessageBanner(message: String, onDismiss: () -> Unit) {
-    Surface(color = MaterialTheme.colorScheme.secondaryContainer, shape = MaterialTheme.shapes.small) {
+    Surface(color = MaterialTheme.colorScheme.secondaryContainer, shape = MaterialTheme.shapes.large) {
         Row(Modifier.fillMaxWidth().padding(10.dp), verticalAlignment = Alignment.CenterVertically) {
             Text(message, Modifier.weight(1f), color = MaterialTheme.colorScheme.onSecondaryContainer)
             TextButton(onClick = onDismiss) { Text("Dismiss") }
@@ -189,7 +190,7 @@ private fun MessageBanner(message: String, onDismiss: () -> Unit) {
 
 @Composable
 private fun PackageErrors(errors: List<PackageErrorItem>, onClearErrors: () -> Unit) {
-    Surface(color = MaterialTheme.colorScheme.errorContainer, shape = MaterialTheme.shapes.small) {
+    Surface(color = MaterialTheme.colorScheme.errorContainer, shape = MaterialTheme.shapes.large) {
         Column(Modifier.fillMaxWidth().padding(10.dp)) {
             Row(verticalAlignment = Alignment.CenterVertically) {
                 Text("Package errors", Modifier.weight(1f), color = MaterialTheme.colorScheme.onErrorContainer, fontWeight = FontWeight.Medium)
@@ -217,10 +218,10 @@ private fun PackageRow(
 ) {
     Surface(
         modifier = Modifier.fillMaxWidth().clickable(onClick = onSelect),
-        shape = RoundedCornerShape(10.dp),
-        color = if (selected) MaterialTheme.colorScheme.secondaryContainer else MaterialTheme.colorScheme.surfaceVariant,
+        shape = MaterialTheme.shapes.large,
+        color = if (selected) MaterialTheme.colorScheme.secondaryContainer else MaterialTheme.colorScheme.surfaceContainerHigh,
     ) {
-        Column(Modifier.fillMaxWidth().padding(12.dp)) {
+        Column(Modifier.fillMaxWidth().padding(16.dp)) {
             Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
                 Text(item.displayName, Modifier.weight(1f), fontWeight = FontWeight.Medium)
                 Text("v${item.version}", style = MaterialTheme.typography.bodySmall)
@@ -241,13 +242,15 @@ private fun PackageRow(
                 )
             }
             if (selected) {
-                Divider(Modifier.padding(vertical = 6.dp))
+                HorizontalDivider(Modifier.padding(vertical = 6.dp), color = MaterialTheme.colorScheme.outlineVariant)
                 Text("Source: ${item.sourceName}", style = MaterialTheme.typography.labelSmall)
-                TextButton(onClick = onPreview) { Text("Preview UI") }
-                if (!item.isBuiltIn) {
-                    TextButton(onClick = onDelete) { Text("Delete package") }
-                } else {
-                    Text("Built-in packages cannot be deleted", style = MaterialTheme.typography.labelSmall)
+                Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(DcSpacing.sm)) {
+                    FilledTonalButton(onClick = onPreview) { Text("Preview UI") }
+                    if (!item.isBuiltIn) {
+                        TextButton(onClick = onDelete) { Text("Delete package") }
+                    } else {
+                        Text("Built-in packages cannot be deleted", style = MaterialTheme.typography.labelSmall)
+                    }
                 }
             }
         }
@@ -256,14 +259,14 @@ private fun PackageRow(
 
 @Composable
 private fun SourceBadge(label: String) {
-    Text(
-        label,
-        style = MaterialTheme.typography.labelSmall,
-        color = MaterialTheme.colorScheme.onPrimary,
-        modifier = Modifier
-            .background(MaterialTheme.colorScheme.primary, RoundedCornerShape(50))
-            .padding(horizontal = 8.dp, vertical = 2.dp),
-    )
+    Surface(shape = DcShapes.pill, color = MaterialTheme.colorScheme.primary) {
+        Text(
+            label,
+            style = MaterialTheme.typography.labelSmall,
+            color = MaterialTheme.colorScheme.onPrimary,
+            modifier = Modifier.padding(horizontal = 10.dp, vertical = 3.dp),
+        )
+    }
 }
 
 private fun buildPackageError(item: PackageErrorItem): String {

@@ -23,7 +23,7 @@ import com.Fusion.Btremix.ui.components.DcErrorState
 import com.Fusion.Btremix.ui.components.DcLoadingState
 import com.Fusion.Btremix.ui.components.DcMonoRow
 import com.Fusion.Btremix.ui.components.DcSectionHeader
-import com.Fusion.Btremix.ui.components.DcStatusDot
+import com.Fusion.Btremix.ui.components.DcStatusChip
 import com.Fusion.Btremix.ui.components.DcTopBar
 import com.Fusion.Btremix.ui.renderer.DefinitionDevicePage
 import com.Fusion.Btremix.ui.theme.DcSpacing
@@ -101,12 +101,20 @@ private fun SessionHeaderCard(state: SessionUiState) {
     }
     DcCard {
         Column(verticalArrangement = Arrangement.spacedBy(DcSpacing.sm)) {
-            Text(
-                state.name ?: state.packageDisplayName ?: state.mac,
-                style = MaterialTheme.typography.titleLarge,
-                maxLines = 1,
-                overflow = TextOverflow.Ellipsis,
-            )
+            Row(
+                Modifier.fillMaxWidth(),
+                verticalAlignment = Alignment.CenterVertically,
+                horizontalArrangement = Arrangement.spacedBy(DcSpacing.sm),
+            ) {
+                Text(
+                    state.name ?: state.packageDisplayName ?: state.mac,
+                    modifier = Modifier.weight(1f),
+                    style = MaterialTheme.typography.headlineSmall,
+                    maxLines = 1,
+                    overflow = TextOverflow.Ellipsis,
+                )
+                DcStatusChip(text = statusLabel, color = statusColor)
+            }
             listOfNotNull(state.author, state.deviceType).takeIf { it.isNotEmpty() }?.let { parts ->
                 Text(
                     parts.joinToString(" · "),
@@ -114,7 +122,6 @@ private fun SessionHeaderCard(state: SessionUiState) {
                     color = MaterialTheme.colorScheme.onSurfaceVariant,
                 )
             }
-            DcStatusDot(color = statusColor, label = statusLabel)
             Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween) {
                 Column {
                     Text("会话时间", style = MaterialTheme.typography.labelMedium, color = MaterialTheme.colorScheme.onSurfaceVariant)

@@ -27,6 +27,8 @@ import com.Fusion.Btremix.definition.api.UiNode
 import com.Fusion.Btremix.device.runtime.DeviceAction
 import com.Fusion.Btremix.device.runtime.StateEntry
 import com.Fusion.Btremix.device.runtime.StateValue
+import com.Fusion.Btremix.ui.theme.DcShapes
+import com.Fusion.Btremix.ui.theme.DcSpacing
 
 /** Renders a validated definition without knowing BLE, packets, or Android GATT. */
 @Composable
@@ -36,8 +38,8 @@ fun DefinitionDevicePage(
     onAction: (DeviceAction) -> Unit,
     modifier: Modifier = Modifier,
 ) {
-    Column(modifier.padding(vertical = 12.dp), verticalArrangement = Arrangement.spacedBy(16.dp)) {
-        Text(definition.ui.title ?: definition.displayName, style = MaterialTheme.typography.headlineSmall)
+    Column(modifier.padding(vertical = 12.dp), verticalArrangement = Arrangement.spacedBy(DcSpacing.md)) {
+        Text(definition.ui.title ?: definition.displayName, style = MaterialTheme.typography.headlineMedium)
         definition.ui.children.forEach { node -> DefinitionNode(node, definition, state, onAction) }
     }
 }
@@ -45,9 +47,12 @@ fun DefinitionDevicePage(
 @Composable
 private fun DefinitionNode(node: UiNode, definition: LoadedDeviceDefinition, state: Map<String, StateEntry>, onAction: (DeviceAction) -> Unit) {
     when (node) {
-        is UiNode.Column -> Column(verticalArrangement = Arrangement.spacedBy(12.dp)) { node.children.forEach { DefinitionNode(it, definition, state, onAction) } }
-        is UiNode.Section -> Surface(color = MaterialTheme.colorScheme.surfaceContainer, shape = MaterialTheme.shapes.medium) {
-            Column(Modifier.padding(16.dp), verticalArrangement = Arrangement.spacedBy(12.dp)) {
+        is UiNode.Column -> Column(verticalArrangement = Arrangement.spacedBy(DcSpacing.sm)) { node.children.forEach { DefinitionNode(it, definition, state, onAction) } }
+        is UiNode.Section -> Surface(
+            color = MaterialTheme.colorScheme.surfaceContainerHigh,
+            shape = MaterialTheme.shapes.large,
+        ) {
+            Column(Modifier.padding(DcSpacing.md), verticalArrangement = Arrangement.spacedBy(DcSpacing.md)) {
                 Text(node.title, style = MaterialTheme.typography.titleMedium)
                 node.children.forEach { DefinitionNode(it, definition, state, onAction) }
             }
@@ -57,8 +62,15 @@ private fun DefinitionNode(node: UiNode, definition: LoadedDeviceDefinition, sta
             val entry = state[node.state]
             val definitionState = definition.states[node.state]
             Column {
-                Text(definitionState?.displayName ?: node.state, style = MaterialTheme.typography.labelLarge)
-                Text(displayValue(entry?.value) + (definitionState?.unit?.let { " $it" } ?: ""), style = MaterialTheme.typography.titleMedium)
+                Text(
+                    definitionState?.displayName ?: node.state,
+                    style = MaterialTheme.typography.labelMedium,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                )
+                Text(
+                    displayValue(entry?.value) + (definitionState?.unit?.let { " $it" } ?: ""),
+                    style = MaterialTheme.typography.headlineSmall,
+                )
             }
         }
         is UiNode.Switch -> {
@@ -78,7 +90,7 @@ private fun DefinitionNode(node: UiNode, definition: LoadedDeviceDefinition, sta
             Column {
                 Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween) {
                     Text(model?.displayName ?: node.state)
-                    Text(displayValue(state[node.state]?.value))
+                    Text(displayValue(state[node.state]?.value), color = MaterialTheme.colorScheme.onSurfaceVariant)
                 }
                 Slider(
                     value = local.coerceIn(range.start, range.endInclusive),
@@ -98,13 +110,22 @@ private fun DefinitionNode(node: UiNode, definition: LoadedDeviceDefinition, sta
             }
         }
         is UiNode.Button -> Button(onClick = { onAction(DeviceAction(node.action, node.args)) }, modifier = Modifier.fillMaxWidth()) { Text(node.label) }
-        is UiNode.Segmented -> Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
-            Text(definition.states[node.state]?.displayName ?: node.state, style = MaterialTheme.typography.labelLarge)
-            Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+        is UiNode.Segmented -> Column(verticalArrangement = Arrangement.spacedBy(DcSpacing.sm)) {
+            Text(
+                definition.states[node.state]?.displayName ?: node.state,
+                style = MaterialTheme.typography.labelMedium,
+                color = MaterialTheme.colorScheme.onSurfaceVariant,
+            )
+            Row(horizontalArrangement = Arrangement.spacedBy(DcSpacing.sm)) {
                 node.options.forEach { option ->
                     val selected = (state[node.state]?.value as? StateValue.StringValue)?.value == option
-                    Surface(onClick = { onAction(DeviceAction(node.action, mapOf(actionParameter(definition, node.action) to StateValue.StringValue(option)))) }, color = if (selected) MaterialTheme.colorScheme.secondaryContainer else MaterialTheme.colorScheme.surfaceVariant, shape = MaterialTheme.shapes.small) {
-                        Text(option, Modifier.padding(horizontal = 14.dp, vertical = 10.dp))
+                    Surface(
+                        onClick = { onAction(DeviceAction(node.action, mapOf(actionParameter(definition, node.action) to StateValue.StringValue(option)))) },
+                        color = if (selected) MaterialTheme.colorScheme.secondaryContainer else MaterialTheme.colorScheme.surfaceContainerHighest,
+                        contentColor = if (selected) MaterialTheme.colorScheme.onSecondaryContainer else MaterialTheme.colorScheme.onSurfaceVariant,
+                        shape = DcShapes.pill,
+                    ) {
+                        Text(option, Modifier.padding(horizontal = 18.dp, vertical = 10.dp))
                     }
                 }
             }

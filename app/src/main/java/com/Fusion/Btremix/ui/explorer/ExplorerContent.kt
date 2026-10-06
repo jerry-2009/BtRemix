@@ -12,8 +12,8 @@ import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.rememberScrollState
-import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.verticalScroll
+import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.material3.Divider
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedButton
@@ -43,7 +43,10 @@ import com.Fusion.Btremix.core.bluetooth.api.ConnectionState
 import com.Fusion.Btremix.core.logging.LogEntry
 import com.Fusion.Btremix.definition.api.LoadedDeviceDefinition
 import com.Fusion.Btremix.device.runtime.DeviceAction
+import com.Fusion.Btremix.ui.components.DcCard
 import com.Fusion.Btremix.ui.renderer.DefinitionDevicePage
+import com.Fusion.Btremix.ui.theme.DcShapes
+import com.Fusion.Btremix.ui.theme.DcSpacing
 import java.time.ZoneId
 import java.time.format.DateTimeFormatter
 
@@ -61,7 +64,11 @@ fun DeviceList(
 ) {
     // One scrollable list for the whole screen. Anything emitted outside it (as the paired-device
     // section used to be) is laid out at fixed height and pushes the scan results off screen.
-    LazyColumn(modifier, verticalArrangement = Arrangement.spacedBy(1.dp)) {
+    LazyColumn(
+        modifier,
+        contentPadding = PaddingValues(bottom = DcSpacing.md),
+        verticalArrangement = Arrangement.spacedBy(DcSpacing.sm),
+    ) {
         item(key = "nearby-header") {
             SectionHeader(
                 title = if (state.scanning) "Nearby devices · scanning" else "Nearby devices",
@@ -90,9 +97,20 @@ fun DeviceList(
 
 @Composable
 private fun SectionHeader(title: String, count: Int) {
-    Row(Modifier.fillMaxWidth().padding(vertical = 8.dp), horizontalArrangement = Arrangement.SpaceBetween) {
+    Row(
+        Modifier.fillMaxWidth().padding(top = DcSpacing.md, bottom = DcSpacing.xs),
+        horizontalArrangement = Arrangement.SpaceBetween,
+        verticalAlignment = Alignment.CenterVertically,
+    ) {
         Text(title, style = MaterialTheme.typography.titleMedium)
-        Text("$count", color = MaterialTheme.colorScheme.onSurfaceVariant)
+        Surface(shape = DcShapes.pill, color = MaterialTheme.colorScheme.secondaryContainer) {
+            Text(
+                "$count",
+                modifier = Modifier.padding(horizontal = 10.dp, vertical = 2.dp),
+                style = MaterialTheme.typography.labelMedium,
+                color = MaterialTheme.colorScheme.onSecondaryContainer,
+            )
+        }
     }
 }
 
@@ -102,8 +120,8 @@ private fun ScanResultRow(
     match: DeviceDefinitionMatch?,
     onConnect: (BleDevice) -> Unit,
 ) {
-    Surface(modifier = Modifier.clickable { onConnect(result.device) }, color = MaterialTheme.colorScheme.surface) {
-        Column(Modifier.fillMaxWidth().padding(vertical = 10.dp)) {
+    DcCard(modifier = Modifier.fillMaxWidth(), onClick = { onConnect(result.device) }) {
+        Column(Modifier.fillMaxWidth(), verticalArrangement = Arrangement.spacedBy(2.dp)) {
             Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween) {
                 Text(result.device.name ?: "Unknown device", fontWeight = FontWeight.Medium)
                 Text("${result.rssi} dBm", color = MaterialTheme.colorScheme.onSurfaceVariant)
@@ -118,7 +136,6 @@ private fun ScanResultRow(
             }
         }
     }
-    Divider()
 }
 
 @Composable
@@ -127,13 +144,11 @@ private fun PairedDeviceRow(
     match: DeviceDefinitionMatch?,
     onConnect: (BleDevice) -> Unit,
 ) {
-    Surface(
-        modifier = Modifier
-            .fillMaxWidth()
-            .clickable { onConnect(BleDevice(id = pair.address, name = pair.name, address = pair.address)) },
-        color = MaterialTheme.colorScheme.surface,
+    DcCard(
+        modifier = Modifier.fillMaxWidth(),
+        onClick = { onConnect(BleDevice(id = pair.address, name = pair.name, address = pair.address)) },
     ) {
-        Column(Modifier.fillMaxWidth().padding(vertical = 10.dp)) {
+        Column(Modifier.fillMaxWidth(), verticalArrangement = Arrangement.spacedBy(2.dp)) {
             Text(pair.name ?: "Paired device", fontWeight = FontWeight.Medium)
             Text(pair.address, style = MaterialTheme.typography.bodySmall, fontFamily = FontFamily.Monospace)
             if (match != null) {
@@ -147,17 +162,16 @@ private fun PairedDeviceRow(
             }
         }
     }
-    Divider()
 }
 
 @Composable
 private fun MatchBadge(match: DeviceDefinitionMatch) {
     Surface(
         color = MaterialTheme.colorScheme.secondaryContainer,
-        shape = RoundedCornerShape(6.dp),
+        shape = DcShapes.pill,
         modifier = Modifier.padding(top = 4.dp),
     ) {
-        Column(Modifier.padding(horizontal = 8.dp, vertical = 4.dp)) {
+        Column(Modifier.padding(horizontal = 12.dp, vertical = 6.dp)) {
             Text(
                 "Matched ${match.displayName} v${match.version}" +
                     when (match.matchedBy) {
@@ -200,7 +214,7 @@ fun ConnectionDetails(
     val device = state.connectedDevice ?: return
     val definition = state.connectedDefinition
     Column(modifier.verticalScroll(rememberScrollState())) {
-        Text(device.name ?: "Unknown device", style = MaterialTheme.typography.titleLarge, fontWeight = FontWeight.Medium)
+        Text(device.name ?: "Unknown device", style = MaterialTheme.typography.headlineSmall)
         Text("${device.address} · ${state.connectionState.label()}", style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
         if (definition != null) {
             Text(
@@ -332,10 +346,10 @@ private fun MonitorEntry.describe(debugger: ProtocolDebugger): String {
 private fun ViewTab(label: String, selected: Boolean, modifier: Modifier, onSelect: () -> Unit) {
     Surface(
         modifier = modifier.clickable(onClick = onSelect),
-        shape = RoundedCornerShape(8.dp),
-        color = if (selected) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.surfaceVariant,
+        shape = DcShapes.pill,
+        color = if (selected) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.surfaceContainerHighest,
     ) {
-        Box(Modifier.padding(vertical = 6.dp), contentAlignment = Alignment.Center) {
+        Box(Modifier.padding(vertical = 10.dp), contentAlignment = Alignment.Center) {
             Text(
                 label,
                 style = MaterialTheme.typography.labelLarge,
@@ -347,8 +361,8 @@ private fun ViewTab(label: String, selected: Boolean, modifier: Modifier, onSele
 
 @Composable
 private fun ActionErrorBanner(error: DefinitionActionError, onDismiss: () -> Unit) {
-    Surface(color = MaterialTheme.colorScheme.errorContainer, shape = MaterialTheme.shapes.small) {
-        Row(Modifier.fillMaxWidth().padding(10.dp), verticalAlignment = Alignment.CenterVertically) {
+    Surface(color = MaterialTheme.colorScheme.errorContainer, shape = MaterialTheme.shapes.large) {
+        Row(Modifier.fillMaxWidth().padding(DcSpacing.md), verticalAlignment = Alignment.CenterVertically) {
             Text(
                 "${error.code}: ${error.message}",
                 Modifier.weight(1f),
@@ -371,13 +385,13 @@ private fun RawGattView(
         Text("${state.connectionState.label()}…", color = MaterialTheme.colorScheme.onSurfaceVariant)
     }
     state.services.forEach { service ->
-        Text(if (service.isPrimary) "Primary service" else "Secondary service", style = MaterialTheme.typography.labelMedium, color = MaterialTheme.colorScheme.primary)
-        Text(service.uuid.toString(), fontFamily = FontFamily.Monospace, style = MaterialTheme.typography.bodyMedium)
+        Column(Modifier.fillMaxWidth().padding(top = DcSpacing.md, bottom = DcSpacing.xs)) {
+            Text(if (service.isPrimary) "Primary service" else "Secondary service", style = MaterialTheme.typography.labelMedium, color = MaterialTheme.colorScheme.primary)
+            Text(service.uuid.toString(), fontFamily = FontFamily.Monospace, style = MaterialTheme.typography.bodyMedium)
+        }
         service.characteristics.forEach { characteristic ->
             CharacteristicRow(state, characteristic, onRead, onWrite, onToggleNotifications)
-            Divider()
         }
-        Spacer(Modifier.height(10.dp))
     }
 }
 
@@ -392,34 +406,36 @@ private fun CharacteristicRow(
     val key = "${characteristic.serviceUuid}/${characteristic.uuid}"
     val properties = characteristic.properties
     var hex by rememberSaveable(key) { mutableStateOf("") }
-    Column(Modifier.fillMaxWidth().padding(vertical = 10.dp)) {
-        Text(characteristic.uuid.toString(), fontFamily = FontFamily.Monospace, style = MaterialTheme.typography.bodyMedium)
-        Text(properties.joinToString(" · ") { it.name }, style = MaterialTheme.typography.labelSmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
-        val value = state.values[key]
-        if (value != null) Text("Value: ${value.toHex()}", fontFamily = FontFamily.Monospace, style = MaterialTheme.typography.bodySmall)
-        Row(horizontalArrangement = Arrangement.spacedBy(8.dp), modifier = Modifier.padding(top = 6.dp)) {
-            if (BleCharacteristicProperty.READ in properties) OutlinedButton(onClick = { onRead(characteristic) }, enabled = !state.busy) { Text("Read") }
-            if (BleCharacteristicProperty.NOTIFY in properties || BleCharacteristicProperty.INDICATE in properties) {
-                OutlinedButton(onClick = { onToggleNotifications(characteristic) }) {
-                    Text(if (key in state.notifying) "Unsubscribe" else "Subscribe")
+    DcCard(modifier = Modifier.fillMaxWidth()) {
+        Column(Modifier.fillMaxWidth(), verticalArrangement = Arrangement.spacedBy(2.dp)) {
+            Text(characteristic.uuid.toString(), fontFamily = FontFamily.Monospace, style = MaterialTheme.typography.bodyMedium)
+            Text(properties.joinToString(" · ") { it.name }, style = MaterialTheme.typography.labelSmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+            val value = state.values[key]
+            if (value != null) Text("Value: ${value.toHex()}", fontFamily = FontFamily.Monospace, style = MaterialTheme.typography.bodySmall)
+            Row(horizontalArrangement = Arrangement.spacedBy(DcSpacing.sm), modifier = Modifier.padding(top = DcSpacing.sm)) {
+                if (BleCharacteristicProperty.READ in properties) OutlinedButton(onClick = { onRead(characteristic) }, enabled = !state.busy) { Text("Read") }
+                if (BleCharacteristicProperty.NOTIFY in properties || BleCharacteristicProperty.INDICATE in properties) {
+                    OutlinedButton(onClick = { onToggleNotifications(characteristic) }) {
+                        Text(if (key in state.notifying) "Unsubscribe" else "Subscribe")
+                    }
                 }
             }
-        }
-        if (BleCharacteristicProperty.WRITE in properties || BleCharacteristicProperty.WRITE_WITHOUT_RESPONSE in properties) {
-            Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                OutlinedTextField(
-                    value = hex,
-                    onValueChange = { hex = it },
-                    modifier = Modifier.weight(1f),
-                    label = { Text("Write HEX") },
-                    placeholder = { Text("01 A0 FF") },
-                    singleLine = true,
-                )
-                if (BleCharacteristicProperty.WRITE in properties) {
-                    OutlinedButton(onClick = { onWrite(characteristic, hex, true) }, enabled = !state.busy) { Text("Write") }
-                }
-                if (BleCharacteristicProperty.WRITE_WITHOUT_RESPONSE in properties) {
-                    OutlinedButton(onClick = { onWrite(characteristic, hex, false) }, enabled = !state.busy) { Text("No response") }
+            if (BleCharacteristicProperty.WRITE in properties || BleCharacteristicProperty.WRITE_WITHOUT_RESPONSE in properties) {
+                Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(DcSpacing.sm)) {
+                    OutlinedTextField(
+                        value = hex,
+                        onValueChange = { hex = it },
+                        modifier = Modifier.weight(1f),
+                        label = { Text("Write HEX") },
+                        placeholder = { Text("01 A0 FF") },
+                        singleLine = true,
+                    )
+                    if (BleCharacteristicProperty.WRITE in properties) {
+                        OutlinedButton(onClick = { onWrite(characteristic, hex, true) }, enabled = !state.busy) { Text("Write") }
+                    }
+                    if (BleCharacteristicProperty.WRITE_WITHOUT_RESPONSE in properties) {
+                        OutlinedButton(onClick = { onWrite(characteristic, hex, false) }, enabled = !state.busy) { Text("No response") }
+                    }
                 }
             }
         }

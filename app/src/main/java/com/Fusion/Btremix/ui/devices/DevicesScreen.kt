@@ -5,7 +5,7 @@ import androidx.compose.foundation.background
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
-import androidx.compose.foundation.layout.Row
+import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.aspectRatio
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
@@ -15,13 +15,10 @@ import androidx.compose.foundation.lazy.grid.GridCells
 import androidx.compose.foundation.lazy.grid.LazyVerticalGrid
 import androidx.compose.foundation.lazy.grid.items
 import androidx.compose.foundation.shape.CircleShape
-import androidx.compose.material.icons.Icons
-import androidx.compose.material.icons.rounded.Bluetooth
-import androidx.compose.material.icons.rounded.BluetoothSearching
-import androidx.compose.material3.Icon
+import androidx.compose.material3.Button
 import androidx.compose.material3.MaterialTheme
+import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
-import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.produceState
@@ -34,12 +31,14 @@ import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import com.Fusion.Btremix.device.registry.DeviceConnectionState
 import com.Fusion.Btremix.device.registry.DeviceEntry
+import com.Fusion.Btremix.ui.components.DcCard
 import com.Fusion.Btremix.ui.components.DcEmptyState
 import com.Fusion.Btremix.ui.components.DcErrorState
 import com.Fusion.Btremix.ui.components.DcFilterChips
 import com.Fusion.Btremix.ui.components.DcRefreshButton
 import com.Fusion.Btremix.ui.components.DcStatusDot
 import com.Fusion.Btremix.ui.components.DcTopBar
+import com.Fusion.Btremix.ui.theme.DcShapes
 import com.Fusion.Btremix.ui.theme.DcSpacing
 import com.Fusion.Btremix.ui.theme.statusColors
 import kotlinx.coroutines.Dispatchers
@@ -60,6 +59,7 @@ fun DevicesScreen(
     Column(modifier.fillMaxSize()) {
         DcTopBar(
             title = "设备",
+            subtitle = "已安装设备包匹配到的附近与已配对设备",
             actions = {
                 DcRefreshButton(onClick = onRefresh)
             },
@@ -94,7 +94,7 @@ fun DevicesScreen(
                 // wide phones instead of stretching each card to fill the screen.
                 columns = GridCells.Fixed(2),
                 modifier = Modifier.fillMaxSize(),
-                contentPadding = androidx.compose.foundation.layout.PaddingValues(
+                contentPadding = PaddingValues(
                     start = DcSpacing.screenPadding,
                     end = DcSpacing.screenPadding,
                     top = DcSpacing.md,
@@ -117,17 +117,23 @@ fun DevicesScreen(
 
 @Composable
 private fun PermissionCard(onRequestPermission: () -> Unit) {
-    Column(
-        Modifier.fillMaxWidth().padding(horizontal = DcSpacing.screenPadding, vertical = DcSpacing.sm),
-        verticalArrangement = Arrangement.spacedBy(DcSpacing.xs),
+    DcCard(
+        modifier = Modifier.padding(horizontal = DcSpacing.screenPadding, vertical = DcSpacing.sm),
+        containerColor = MaterialTheme.colorScheme.secondaryContainer,
     ) {
-        Text("需要蓝牙权限", style = MaterialTheme.typography.titleMedium)
-        Text(
-            "扫描与连接设备需要 BLUETOOTH_SCAN 与 BLUETOOTH_CONNECT；已安装的设备包列表仍然可见。",
-            style = MaterialTheme.typography.bodySmall,
-            color = MaterialTheme.colorScheme.onSurfaceVariant,
-        )
-        TextButton(onClick = onRequestPermission) { Text("授权") }
+        Column(verticalArrangement = Arrangement.spacedBy(DcSpacing.sm)) {
+            Text(
+                "需要蓝牙权限",
+                style = MaterialTheme.typography.titleMedium,
+                color = MaterialTheme.colorScheme.onSecondaryContainer,
+            )
+            Text(
+                "扫描与连接设备需要 BLUETOOTH_SCAN 与 BLUETOOTH_CONNECT；已安装的设备包列表仍然可见。",
+                style = MaterialTheme.typography.bodySmall,
+                color = MaterialTheme.colorScheme.onSecondaryContainer,
+            )
+            Button(onClick = onRequestPermission) { Text("授权") }
+        }
     }
 }
 
@@ -145,19 +151,30 @@ private fun DeviceCard(entry: DeviceEntry, artwork: ImageBitmap?, onClick: () ->
         DeviceConnectionState.ERROR -> "连接失败"
         DeviceConnectionState.DISCONNECTED -> "未连接"
     }
-    com.Fusion.Btremix.ui.components.DcCard(onClick = onClick, contentPadding = androidx.compose.foundation.layout.PaddingValues(0.dp)) {
+    DcCard(onClick = onClick, contentPadding = PaddingValues(0.dp)) {
         Column {
             Box(
                 Modifier
                     .fillMaxWidth()
-                    .aspectRatio(1.5f)
-                    .background(MaterialTheme.colorScheme.surfaceContainerHigh),
+                    .aspectRatio(1.4f)
+                    .background(MaterialTheme.colorScheme.surfaceContainerHighest),
                 contentAlignment = Alignment.Center,
             ) {
                 if (artwork != null) {
                     Image(artwork, contentDescription = null, modifier = Modifier.fillMaxSize(), contentScale = ContentScale.Crop)
                 } else {
                     Monogram(entry.packageDisplayName)
+                }
+                Surface(
+                    modifier = Modifier.align(Alignment.TopEnd).padding(DcSpacing.sm),
+                    shape = DcShapes.pill,
+                    color = MaterialTheme.colorScheme.surface.copy(alpha = 0.88f),
+                ) {
+                    DcStatusDot(
+                        color = statusColor,
+                        label = statusLabel,
+                        modifier = Modifier.padding(horizontal = 10.dp, vertical = 5.dp),
+                    )
                 }
             }
             Column(Modifier.padding(DcSpacing.sm), verticalArrangement = Arrangement.spacedBy(2.dp)) {
@@ -174,7 +191,6 @@ private fun DeviceCard(entry: DeviceEntry, artwork: ImageBitmap?, onClick: () ->
                     maxLines = 1,
                     overflow = TextOverflow.Ellipsis,
                 )
-                DcStatusDot(color = statusColor, label = statusLabel)
             }
         }
     }
@@ -185,14 +201,14 @@ private fun Monogram(label: String) {
     val initial = label.trim().firstOrNull()?.uppercase() ?: "?"
     Box(
         Modifier
-            .size(44.dp)
+            .size(56.dp)
             .clip(CircleShape)
             .background(MaterialTheme.colorScheme.primaryContainer),
         contentAlignment = Alignment.Center,
     ) {
         Text(
             initial,
-            style = MaterialTheme.typography.titleLarge,
+            style = MaterialTheme.typography.headlineSmall,
             color = MaterialTheme.colorScheme.onPrimaryContainer,
         )
     }

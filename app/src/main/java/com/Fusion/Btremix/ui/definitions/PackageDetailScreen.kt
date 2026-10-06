@@ -10,6 +10,7 @@ import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material3.MaterialTheme
+import androidx.compose.material3.FilledTonalButton
 import androidx.compose.material3.OutlinedButton
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
@@ -61,10 +62,13 @@ fun PackageDetailScreen(
             CapabilitySection(pkg)
             MatcherSection(pkg)
             MetadataSection(pkg)
-            Row(horizontalArrangement = Arrangement.spacedBy(DcSpacing.sm)) {
-                OutlinedButton(onClick = { onToggle(!pkg.enabled) }) { Text(if (pkg.enabled) "禁用" else "启用") }
+            Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(DcSpacing.sm)) {
+                FilledTonalButton(
+                    onClick = { onToggle(!pkg.enabled) },
+                    modifier = Modifier.weight(1f),
+                ) { Text(if (pkg.enabled) "禁用" else "启用") }
                 if (!pkg.isBuiltIn) {
-                    OutlinedButton(onClick = onUninstall) { Text("卸载") }
+                    OutlinedButton(onClick = onUninstall, modifier = Modifier.weight(1f)) { Text("卸载") }
                 }
             }
             Spacer(Modifier.height(DcSpacing.contentBottomInset))
@@ -77,7 +81,7 @@ private fun HeaderCard(pkg: InstalledPackage) {
     val manifest = pkg.devicePackage.definition.manifest
     DcCard {
         Column(verticalArrangement = Arrangement.spacedBy(DcSpacing.xs)) {
-            Text(pkg.devicePackage.displayName, style = MaterialTheme.typography.titleLarge)
+            Text(pkg.devicePackage.displayName, style = MaterialTheme.typography.headlineSmall)
             Text("${pkg.packageId} · v${pkg.devicePackage.version}", style = DcType.mono, color = MaterialTheme.colorScheme.onSurfaceVariant)
             val subtitle = listOfNotNull(
                 manifest.author,

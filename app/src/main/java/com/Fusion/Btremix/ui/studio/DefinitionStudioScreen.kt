@@ -13,7 +13,8 @@ import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material3.Button
-import androidx.compose.material3.Divider
+import androidx.compose.material3.FilledTonalButton
+import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedButton
 import androidx.compose.material3.OutlinedTextField
@@ -28,10 +29,12 @@ import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.text.font.FontFamily
-import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import com.Fusion.Btremix.device.runtime.DeviceAction
+import com.Fusion.Btremix.ui.components.DcCard
 import com.Fusion.Btremix.ui.renderer.DefinitionDevicePage
+import com.Fusion.Btremix.ui.theme.DcShapes
+import com.Fusion.Btremix.ui.theme.DcSpacing
 
 /**
  * Third-party developer studio: edit, validate, simulate and export a Definition without writing
@@ -58,25 +61,38 @@ fun DefinitionStudioScreen(
     val exportLauncher = rememberLauncherForActivityResult(ActivityResultContracts.CreateDocument("application/zip")) { uri ->
         if (uri != null) onExport(uri)
     }
-    Column(modifier.verticalScroll(rememberScrollState()).padding(20.dp), verticalArrangement = Arrangement.spacedBy(10.dp)) {
-        Text("Definition Studio", style = MaterialTheme.typography.headlineSmall, fontWeight = FontWeight.SemiBold)
-        Text(
-            "Author a .dcpkg definition, validate it, simulate it and export it — no build step.",
-            style = MaterialTheme.typography.bodySmall,
-            color = MaterialTheme.colorScheme.onSurfaceVariant,
-        )
+    Column(
+        modifier.verticalScroll(rememberScrollState()).padding(DcSpacing.screenPadding),
+        verticalArrangement = Arrangement.spacedBy(DcSpacing.md),
+    ) {
+        Column {
+            Text("Definition Studio", style = MaterialTheme.typography.headlineSmall)
+            Text(
+                "Author a .dcpkg definition, validate it, simulate it and export it — no build step.",
+                style = MaterialTheme.typography.bodySmall,
+                color = MaterialTheme.colorScheme.onSurfaceVariant,
+            )
+        }
 
         state.message?.let { message ->
-            Surface(color = MaterialTheme.colorScheme.secondaryContainer, shape = MaterialTheme.shapes.small) {
-                Row(Modifier.fillMaxWidth().padding(10.dp), verticalAlignment = Alignment.CenterVertically) {
-                    Text(message, Modifier.weight(1f), style = MaterialTheme.typography.bodySmall)
+            Surface(color = MaterialTheme.colorScheme.secondaryContainer, shape = MaterialTheme.shapes.large) {
+                Row(Modifier.fillMaxWidth().padding(DcSpacing.md), verticalAlignment = Alignment.CenterVertically) {
+                    Text(
+                        message,
+                        Modifier.weight(1f),
+                        style = MaterialTheme.typography.bodySmall,
+                        color = MaterialTheme.colorScheme.onSecondaryContainer,
+                    )
                     TextButton(onClick = onDismissMessage) { Text("Dismiss") }
                 }
             }
         }
         if (state.errors.isNotEmpty()) {
-            Surface(color = MaterialTheme.colorScheme.errorContainer, shape = MaterialTheme.shapes.small) {
-                Column(Modifier.fillMaxWidth().padding(10.dp), verticalArrangement = Arrangement.spacedBy(4.dp)) {
+            Surface(color = MaterialTheme.colorScheme.errorContainer, shape = MaterialTheme.shapes.large) {
+                Column(
+                    Modifier.fillMaxWidth().padding(DcSpacing.md),
+                    verticalArrangement = Arrangement.spacedBy(DcSpacing.xs),
+                ) {
                     Text("Validation errors", style = MaterialTheme.typography.labelLarge, color = MaterialTheme.colorScheme.onErrorContainer)
                     state.errors.forEach { error ->
                         Text(error, style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onErrorContainer)
@@ -91,33 +107,41 @@ fun DefinitionStudioScreen(
             modifier = Modifier.fillMaxWidth(),
             label = { Text("definition.json") },
             textStyle = MaterialTheme.typography.bodySmall.copy(fontFamily = FontFamily.Monospace),
+            shape = MaterialTheme.shapes.large,
             // Keep the primary actions reachable without scrolling on a phone-sized viewport.
             minLines = 8,
         )
 
-        Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-            OutlinedButton(onClick = onValidate) { Text("Validate") }
-            OutlinedButton(onClick = onToggleSimulation, enabled = !state.busy) {
+        Row(horizontalArrangement = Arrangement.spacedBy(DcSpacing.sm)) {
+            FilledTonalButton(onClick = onValidate, modifier = Modifier.weight(1f)) { Text("Validate") }
+            OutlinedButton(onClick = onToggleSimulation, enabled = !state.busy, modifier = Modifier.weight(1f)) {
                 Text(if (state.simulator == null) "Simulate" else "Stop simulation")
             }
-            OutlinedButton(
-                enabled = state.definitionId != null,
-                onClick = { exportLauncher.launch("${state.definitionId}-${state.version}.dcpkg") },
-            ) { Text("Export .dcpkg") }
         }
+        OutlinedButton(
+            enabled = state.definitionId != null,
+            onClick = { exportLauncher.launch("${state.definitionId}-${state.version}.dcpkg") },
+            modifier = Modifier.fillMaxWidth(),
+        ) { Text("Export .dcpkg") }
+
         state.definitionId?.let { id ->
-            Text("Parsed: $id v${state.version} · schema ${state.schemaVersion}", style = MaterialTheme.typography.labelMedium, color = MaterialTheme.colorScheme.onSurfaceVariant)
+            Text(
+                "Parsed: $id v${state.version} · schema ${state.schemaVersion}",
+                style = MaterialTheme.typography.labelMedium,
+                color = MaterialTheme.colorScheme.onSurfaceVariant,
+            )
         }
 
-        Divider()
-        Text("Drafts", style = MaterialTheme.typography.titleSmall)
-        Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+        HorizontalDivider(color = MaterialTheme.colorScheme.outlineVariant)
+        Text("Drafts", style = MaterialTheme.typography.titleMedium)
+        Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(DcSpacing.sm)) {
             OutlinedTextField(
                 value = draftName,
                 onValueChange = { draftName = it },
                 modifier = Modifier.weight(1f),
                 label = { Text("Draft name") },
                 singleLine = true,
+                shape = MaterialTheme.shapes.large,
             )
             Button(onClick = { onSaveDraft(draftName) }, enabled = draftName.isNotBlank()) { Text("Save") }
         }
@@ -125,23 +149,25 @@ fun DefinitionStudioScreen(
             Text("No drafts yet", style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
         } else {
             state.drafts.forEach { draft ->
-                Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
-                    Column(Modifier.weight(1f)) {
-                        Text(draft.name, style = MaterialTheme.typography.bodyMedium)
-                        Text(
-                            listOfNotNull(draft.definitionId, draft.version).joinToString(" · ").ifBlank { "unreadable" },
-                            style = MaterialTheme.typography.labelSmall,
-                            color = MaterialTheme.colorScheme.onSurfaceVariant,
-                        )
+                DcCard(modifier = Modifier.fillMaxWidth()) {
+                    Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
+                        Column(Modifier.weight(1f)) {
+                            Text(draft.name, style = MaterialTheme.typography.bodyMedium)
+                            Text(
+                                listOfNotNull(draft.definitionId, draft.version).joinToString(" · ").ifBlank { "unreadable" },
+                                style = MaterialTheme.typography.labelSmall,
+                                color = MaterialTheme.colorScheme.onSurfaceVariant,
+                            )
+                        }
+                        TextButton(onClick = { onLoadDraft(draft.name) }) { Text("Load") }
+                        TextButton(onClick = { onDeleteDraft(draft.name) }) { Text("Delete") }
                     }
-                    TextButton(onClick = { onLoadDraft(draft.name) }) { Text("Load") }
-                    TextButton(onClick = { onDeleteDraft(draft.name) }) { Text("Delete") }
                 }
             }
         }
 
         state.simulator?.let { simulator ->
-            Divider()
+            HorizontalDivider(color = MaterialTheme.colorScheme.outlineVariant)
             SimulatorSection(simulator, onAction, onSelectTarget, onNotificationHex, onInject)
         }
     }
@@ -155,15 +181,20 @@ private fun SimulatorSection(
     onNotificationHex: (String) -> Unit,
     onInject: () -> Unit,
 ) {
-    Text("Simulator", style = MaterialTheme.typography.titleSmall)
+    Text("Simulator", style = MaterialTheme.typography.titleMedium)
     Text(
         "${simulator.definition.id} v${simulator.definition.manifest.version} — actions and notifications run against an in-memory device.",
         style = MaterialTheme.typography.bodySmall,
         color = MaterialTheme.colorScheme.onSurfaceVariant,
     )
     simulator.actionError?.let { error ->
-        Surface(color = MaterialTheme.colorScheme.errorContainer, shape = MaterialTheme.shapes.small) {
-            Text("$error", Modifier.fillMaxWidth().padding(10.dp), style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onErrorContainer)
+        Surface(color = MaterialTheme.colorScheme.errorContainer, shape = MaterialTheme.shapes.large) {
+            Text(
+                "$error",
+                Modifier.fillMaxWidth().padding(DcSpacing.md),
+                style = MaterialTheme.typography.bodySmall,
+                color = MaterialTheme.colorScheme.onErrorContainer,
+            )
         }
     }
     DefinitionDevicePage(
@@ -172,28 +203,28 @@ private fun SimulatorSection(
         onAction = onAction,
     )
 
-    Divider()
-    Text("Inject notification", style = MaterialTheme.typography.titleSmall)
+    HorizontalDivider(color = MaterialTheme.colorScheme.outlineVariant)
+    Text("Inject notification", style = MaterialTheme.typography.titleMedium)
     if (simulator.notifyTargets.isEmpty()) {
         Text("This definition declares no notification characteristics.", style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
     } else {
-        Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+        Row(horizontalArrangement = Arrangement.spacedBy(DcSpacing.sm)) {
             simulator.notifyTargets.forEachIndexed { index, target ->
                 Surface(
                     onClick = { onSelectTarget(index) },
-                    color = if (index == simulator.selectedTarget) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.surfaceVariant,
-                    shape = MaterialTheme.shapes.small,
+                    color = if (index == simulator.selectedTarget) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.surfaceContainerHighest,
+                    contentColor = if (index == simulator.selectedTarget) MaterialTheme.colorScheme.onPrimary else MaterialTheme.colorScheme.onSurfaceVariant,
+                    shape = DcShapes.pill,
                 ) {
                     Text(
                         target.characteristicUuid.toString().take(8),
-                        Modifier.padding(horizontal = 10.dp, vertical = 6.dp),
+                        Modifier.padding(horizontal = 14.dp, vertical = 8.dp),
                         style = MaterialTheme.typography.labelSmall,
-                        color = if (index == simulator.selectedTarget) MaterialTheme.colorScheme.onPrimary else MaterialTheme.colorScheme.onSurfaceVariant,
                     )
                 }
             }
         }
-        Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+        Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(DcSpacing.sm)) {
             OutlinedTextField(
                 value = simulator.notificationHex,
                 onValueChange = onNotificationHex,
@@ -201,13 +232,14 @@ private fun SimulatorSection(
                 label = { Text("Notification HEX") },
                 placeholder = { Text("4D") },
                 singleLine = true,
+                shape = MaterialTheme.shapes.large,
             )
             Button(onClick = onInject) { Text("Inject") }
         }
     }
 
-    Spacer(Modifier.height(4.dp))
-    Text("Recorded writes (${simulator.writes.size})", style = MaterialTheme.typography.titleSmall)
+    Spacer(Modifier.height(DcSpacing.xs))
+    Text("Recorded writes (${simulator.writes.size})", style = MaterialTheme.typography.titleMedium)
     if (simulator.writes.isEmpty()) {
         Text("No writes yet", style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
     } else {

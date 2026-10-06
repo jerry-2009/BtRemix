@@ -1,14 +1,12 @@
 package com.Fusion.Btremix.ui.components
 
+import androidx.compose.animation.animateColorAsState
 import androidx.compose.animation.core.RepeatMode
 import androidx.compose.animation.core.animateFloat
 import androidx.compose.animation.core.infiniteRepeatable
 import androidx.compose.animation.core.rememberInfiniteTransition
 import androidx.compose.animation.core.tween
-import androidx.compose.animation.animateColorAsState
-import androidx.compose.foundation.BorderStroke
 import androidx.compose.foundation.background
-import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.horizontalScroll
 import androidx.compose.foundation.layout.Arrangement
@@ -33,13 +31,14 @@ import androidx.compose.material.icons.rounded.BatteryFull
 import androidx.compose.material.icons.rounded.ErrorOutline
 import androidx.compose.material.icons.rounded.Inbox
 import androidx.compose.material.icons.rounded.Refresh
+import androidx.compose.material3.Button
 import androidx.compose.material3.FilterChip
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
-import androidx.compose.material3.TextButton
+import androidx.compose.material3.contentColorFor
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
 import androidx.compose.ui.Alignment
@@ -47,17 +46,18 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.alpha
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.graphics.takeOrElse
 import androidx.compose.ui.graphics.vector.ImageVector
-import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
-import com.Fusion.Btremix.ui.theme.DcSpacing
 import com.Fusion.Btremix.ui.theme.DcMotion
+import com.Fusion.Btremix.ui.theme.DcShapes
+import com.Fusion.Btremix.ui.theme.DcSpacing
 import com.Fusion.Btremix.ui.theme.DcType
 import com.Fusion.Btremix.ui.theme.statusColors
 
 /**
- * A card follows the plan's elevation rule: flat fill plus a 1dp outline, never a drop shadow.
+ * Material 3 Expressive card: one large-radius, tonal-filled block, never a drop shadow.
  *
  * The fill is passed to `Surface` itself (never `Color.Transparent`): `Surface` derives its content
  * color from the background it is given, and a transparent background makes `contentColorFor()`
@@ -67,17 +67,21 @@ import com.Fusion.Btremix.ui.theme.statusColors
 fun DcCard(
     modifier: Modifier = Modifier,
     onClick: (() -> Unit)? = null,
+    containerColor: Color = MaterialTheme.colorScheme.surfaceContainerHigh,
     contentPadding: PaddingValues = PaddingValues(DcSpacing.md),
     content: @Composable () -> Unit,
 ) {
     val shape = MaterialTheme.shapes.large
-    val color = MaterialTheme.colorScheme.surfaceContainerLow
-    val border = BorderStroke(1.dp, MaterialTheme.colorScheme.outlineVariant)
     val body: @Composable () -> Unit = { Box(Modifier.padding(contentPadding)) { content() } }
     if (onClick != null) {
-        Surface(onClick = onClick, modifier = modifier, shape = shape, color = color, border = border) { body() }
+        Surface(
+            onClick = onClick,
+            modifier = modifier,
+            shape = shape,
+            color = containerColor,
+        ) { body() }
     } else {
-        Surface(modifier = modifier, shape = shape, color = color, border = border) { body() }
+        Surface(modifier = modifier, shape = shape, color = containerColor) { body() }
     }
 }
 
@@ -100,15 +104,23 @@ fun DcSectionHeader(
     }
 }
 
-/** Big number + caption tile used by the Home stats row. */
+/**
+ * Big number + caption tile used by the Home stats row.
+ *
+ * [containerColor] lets the caller assign an expressive tonal role per tile (primary / secondary /
+ * tertiary container), which is the cheapest way to give the dashboard the colour-blocked
+ * expressive look without touching the copy.
+ */
 @Composable
 fun DcStatTile(
     value: String,
     label: String,
     modifier: Modifier = Modifier,
+    containerColor: Color = MaterialTheme.colorScheme.surfaceContainerHigh,
     onClick: (() -> Unit)? = null,
 ) {
     val shape = MaterialTheme.shapes.large
+    val onContainer = contentColorFor(containerColor).takeOrElse { MaterialTheme.colorScheme.onSurface }
     val content: @Composable () -> Unit = {
         Column(
             Modifier
@@ -117,30 +129,18 @@ fun DcStatTile(
             horizontalAlignment = Alignment.CenterHorizontally,
             verticalArrangement = Arrangement.spacedBy(DcSpacing.xs),
         ) {
-            Text(value, style = MaterialTheme.typography.headlineMedium)
+            Text(value, style = MaterialTheme.typography.headlineMedium, color = onContainer)
             Text(
                 label,
-                style = MaterialTheme.typography.bodySmall,
-                color = MaterialTheme.colorScheme.onSurfaceVariant,
+                style = MaterialTheme.typography.labelMedium,
+                color = onContainer.copy(alpha = 0.75f),
             )
         }
     }
-    val tint = if (onClick != null) MaterialTheme.colorScheme.surfaceContainerHigh else MaterialTheme.colorScheme.surfaceContainerLow
     if (onClick != null) {
-        Surface(
-            onClick = onClick,
-            modifier = modifier,
-            shape = shape,
-            color = tint,
-            border = BorderStroke(1.dp, MaterialTheme.colorScheme.outlineVariant),
-        ) { content() }
+        Surface(onClick = onClick, modifier = modifier, shape = shape, color = containerColor) { content() }
     } else {
-        Surface(
-            modifier = modifier,
-            shape = shape,
-            color = tint,
-            border = BorderStroke(1.dp, MaterialTheme.colorScheme.outlineVariant),
-        ) { content() }
+        Surface(modifier = modifier, shape = shape, color = containerColor) { content() }
     }
 }
 
@@ -152,24 +152,24 @@ fun DcStatusDot(
     label: String? = null,
     labelStyle: androidx.compose.ui.text.TextStyle = MaterialTheme.typography.labelMedium,
 ) {
-    val animatedColor by animateColorAsState(color, tween(DcMotion.STATUS_COLOR_MS), label = "status-dot")
+    val animatedColor by animateColorAsState(color, DcMotion.colorEffects, label = "status-dot")
     Row(modifier, verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(DcSpacing.xs)) {
         Box(Modifier.size(8.dp).clip(CircleShape).background(animatedColor))
         if (label != null) Text(label, style = labelStyle, color = animatedColor)
     }
 }
 
-/** Small pill with a tinted fill; used for secondary device statuses. */
+/** Small stadium pill with a tinted fill; used for secondary device statuses. */
 @Composable
 fun DcStatusChip(text: String, color: Color, modifier: Modifier = Modifier) {
     Surface(
         modifier = modifier,
-        shape = MaterialTheme.shapes.extraSmall,
-        color = color.copy(alpha = 0.12f),
+        shape = DcShapes.pill,
+        color = color.copy(alpha = 0.14f),
     ) {
         Text(
             text,
-            modifier = Modifier.padding(horizontal = 8.dp, vertical = 3.dp),
+            modifier = Modifier.padding(horizontal = 12.dp, vertical = 4.dp),
             style = MaterialTheme.typography.labelMedium,
             color = color,
         )
@@ -248,9 +248,8 @@ fun DcListItem(
 fun DcListGroup(modifier: Modifier = Modifier, content: @Composable () -> Unit) {
     Surface(
         modifier = modifier.fillMaxWidth(),
-        color = MaterialTheme.colorScheme.surfaceContainerLow,
+        color = MaterialTheme.colorScheme.surfaceContainerHigh,
         shape = MaterialTheme.shapes.large,
-        border = BorderStroke(1.dp, MaterialTheme.colorScheme.outlineVariant),
     ) {
         Column { content() }
     }
@@ -276,6 +275,7 @@ fun DcFilterChips(
                 selected = option == selected,
                 onClick = { onSelect(option) },
                 label = { Text(option) },
+                shape = DcShapes.pill,
             )
         }
     }
@@ -296,8 +296,22 @@ fun DcEmptyState(
         horizontalAlignment = Alignment.CenterHorizontally,
         verticalArrangement = Arrangement.spacedBy(DcSpacing.sm),
     ) {
-        Icon(icon, contentDescription = null, modifier = Modifier.size(72.dp), tint = MaterialTheme.colorScheme.outline)
-        Text(title, style = MaterialTheme.typography.titleMedium)
+        Box(
+            Modifier
+                .size(88.dp)
+                .clip(MaterialTheme.shapes.extraLarge)
+                .background(MaterialTheme.colorScheme.secondaryContainer),
+            contentAlignment = Alignment.Center,
+        ) {
+            Icon(
+                icon,
+                contentDescription = null,
+                modifier = Modifier.size(40.dp),
+                tint = MaterialTheme.colorScheme.onSecondaryContainer,
+            )
+        }
+        Spacer(Modifier.height(DcSpacing.xs))
+        Text(title, style = MaterialTheme.typography.titleLarge)
         Text(
             description,
             style = MaterialTheme.typography.bodyMedium,
@@ -305,7 +319,7 @@ fun DcEmptyState(
         )
         if (actionLabel != null && onAction != null) {
             Spacer(Modifier.height(DcSpacing.xs))
-            TextButton(onClick = onAction) { Text(actionLabel) }
+            Button(onClick = onAction) { Text(actionLabel) }
         }
     }
 }
@@ -320,7 +334,7 @@ fun DcErrorState(
 ) {
     Surface(
         modifier = modifier.fillMaxWidth(),
-        shape = MaterialTheme.shapes.medium,
+        shape = MaterialTheme.shapes.large,
         color = MaterialTheme.colorScheme.errorContainer,
     ) {
         Row(
@@ -338,10 +352,10 @@ fun DcErrorState(
                 )
             }
             if (onRetry != null) {
-                TextButton(onClick = onRetry) { Text("重试") }
+                Button(onClick = onRetry) { Text("重试") }
             }
             if (onViewLogs != null) {
-                TextButton(onClick = onViewLogs) { Text("查看日志") }
+                Button(onClick = onViewLogs) { Text("查看日志") }
             }
         }
     }
@@ -361,7 +375,7 @@ fun DcSkeletonBlock(modifier: Modifier = Modifier, height: androidx.compose.ui.u
         modifier
             .fillMaxWidth()
             .height(height)
-            .clip(MaterialTheme.shapes.small)
+            .clip(DcShapes.pill)
             .alpha(alpha)
             .background(MaterialTheme.colorScheme.surfaceContainerHighest),
     )
@@ -387,21 +401,28 @@ fun DcLoadingState(modifier: Modifier = Modifier, rows: Int = 3) {
 }
 
 /**
- * Page top bar: 56dp, transparent so the page background shows through. Collapses to nothing more
- * than a title, which is enough for the four first-level pages and their details.
+ * Page top bar. First-level pages get the expressive large title treatment (`headlineSmall`) so the
+ * four tabs read like full-bleed expressive headers; detail pages keep the compact 56dp bar with a
+ * back affordance. [subtitle] is only used by the large variant and mirrors the dashboard hero
+ * (title + one supporting line).
  */
 @Composable
 fun DcTopBar(
     title: String,
     modifier: Modifier = Modifier,
     onBack: (() -> Unit)? = null,
+    subtitle: String? = null,
     actions: @Composable () -> Unit = {},
 ) {
+    val large = onBack == null
     Row(
         modifier = modifier
             .fillMaxWidth()
-            .height(56.dp)
-            .padding(horizontal = DcSpacing.sm),
+            .heightIn(min = if (large) 72.dp else 56.dp)
+            .padding(
+                horizontal = if (large) DcSpacing.screenPadding else DcSpacing.sm,
+                vertical = if (large && subtitle != null) DcSpacing.sm else 0.dp,
+            ),
         verticalAlignment = Alignment.CenterVertically,
     ) {
         if (onBack != null) {
@@ -409,14 +430,23 @@ fun DcTopBar(
                 Icon(Icons.AutoMirrored.Rounded.ArrowBack, contentDescription = "返回")
             }
         }
-        Text(
-            title,
-            modifier = Modifier.weight(1f).padding(start = if (onBack == null) DcSpacing.sm else 0.dp),
-            style = MaterialTheme.typography.titleLarge,
-            fontWeight = FontWeight.SemiBold,
-            maxLines = 1,
-            overflow = TextOverflow.Ellipsis,
-        )
+        Column(Modifier.weight(1f).padding(start = if (large) 0.dp else DcSpacing.sm)) {
+            Text(
+                title,
+                style = if (large) MaterialTheme.typography.headlineSmall else MaterialTheme.typography.titleLarge,
+                maxLines = 1,
+                overflow = TextOverflow.Ellipsis,
+            )
+            if (large && subtitle != null) {
+                Text(
+                    subtitle,
+                    style = MaterialTheme.typography.bodySmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    maxLines = 1,
+                    overflow = TextOverflow.Ellipsis,
+                )
+            }
+        }
         actions()
     }
 }
@@ -453,7 +483,7 @@ fun DcDivider(modifier: Modifier = Modifier) {
     )
 }
 
-/** Spacer that leaves room for the glass bottom bar. */
+/** Spacer that leaves room for the floating bottom bar. */
 @Composable
 fun DcBottomContentInset() {
     Spacer(Modifier.height(DcSpacing.contentBottomInset))

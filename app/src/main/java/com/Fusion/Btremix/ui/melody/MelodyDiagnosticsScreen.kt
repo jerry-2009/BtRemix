@@ -12,7 +12,6 @@ import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material3.Button
-import androidx.compose.material3.Divider
 import androidx.compose.material3.FilterChip
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedButton
@@ -37,7 +36,11 @@ import com.Fusion.Btremix.melody.bridge.MelodyHostUpdateTracker
 import com.Fusion.Btremix.melody.hook.anchor.MelodyAnchorCatalog
 import com.Fusion.Btremix.ui.components.DcListGroup
 import com.Fusion.Btremix.ui.components.DcListItem
+import com.Fusion.Btremix.ui.components.DcCard
+import com.Fusion.Btremix.ui.components.DcDivider
 import com.Fusion.Btremix.ui.components.DcSectionHeader
+import com.Fusion.Btremix.ui.theme.DcShapes
+import com.Fusion.Btremix.ui.theme.DcSpacing
 import java.io.File
 import java.text.SimpleDateFormat
 import java.util.Date
@@ -80,6 +83,7 @@ fun MelodyDiagnosticsScreen(modifier: Modifier = Modifier) {
                     selected = tab == entry,
                     onClick = { tab = entry },
                     label = { Text(entry.label) },
+                    shape = DcShapes.pill,
                 )
             }
         }
@@ -136,9 +140,12 @@ private fun HostUpdatePage(
     message: String?,
 ) {
     HostUpdateSection(state = state, onRescan = onRescan)
-    Divider()
-    KeyValue("宿主包", MelodyCallPolicy.HOST_PACKAGE)
-    KeyValue("托管设备", if (managedMacs.isEmpty()) "无" else managedMacs.joinToString(", "))
+    DcCard {
+        Column(verticalArrangement = Arrangement.spacedBy(DcSpacing.xs)) {
+            KeyValue("宿主包", MelodyCallPolicy.HOST_PACKAGE)
+            KeyValue("托管设备", if (managedMacs.isEmpty()) "无" else managedMacs.joinToString(", "))
+        }
+    }
     message?.let { Text(it, style = MaterialTheme.typography.bodySmall) }
 }
 
@@ -204,7 +211,7 @@ private fun KeyValue(key: String, value: String) {
  */
 @Composable
 private fun HostUpdateSection(state: MelodyHostUpdateState?, onRescan: () -> Unit) {
-    Divider()
+    DcDivider()
     Text("宿主更新 / 锚点", style = MaterialTheme.typography.titleMedium)
     if (state == null) {
         Text("未检测到 com.oplus.melody（未安装或读不到）。", style = MaterialTheme.typography.bodySmall)
@@ -216,14 +223,18 @@ private fun HostUpdateSection(state: MelodyHostUpdateState?, onRescan: () -> Uni
         state.resolved -> "锚点已就绪（安装未变化）"
         else -> "尚未收到锚点报告（打开一次 Melody 详情页）"
     }
-    KeyValue("宿主版本", state.version ?: "读不到")
-    KeyValue("上次提示版本", state.previousVersion ?: "-")
-    KeyValue("安装指纹", state.installId)
-    KeyValue("适配状态", status)
-    if (state.resolved) {
-        KeyValue("锚点命中", "${state.hits}/${state.total}")
-        state.report?.processes?.forEach { process ->
-            KeyValue("· ${process.processName.substringAfterLast('.')}", "${process.hits}/${process.total}")
+    DcCard {
+        Column(verticalArrangement = Arrangement.spacedBy(DcSpacing.xs)) {
+            KeyValue("宿主版本", state.version ?: "读不到")
+            KeyValue("上次提示版本", state.previousVersion ?: "-")
+            KeyValue("安装指纹", state.installId)
+            KeyValue("适配状态", status)
+            if (state.resolved) {
+                KeyValue("锚点命中", "${state.hits}/${state.total}")
+                state.report?.processes?.forEach { process ->
+                    KeyValue("· ${process.processName.substringAfterLast('.')}", "${process.hits}/${process.total}")
+                }
+            }
         }
     }
     if (state.missingIds.isNotEmpty()) {
