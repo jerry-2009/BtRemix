@@ -67,6 +67,29 @@ class DevicePackageBootstrapTest {
     }
 
     @Test
+    fun capabilityFailure_disablesOnlyThatInstalledDefinition() {
+        val directory = File(tempFolder.root, "device-packages")
+        val manager = DevicePackageManager(DevicePackageStore(directory))
+        val bootstrap = DevicePackageBootstrap(manager, StringSource(emptyMap()))
+        val store = DevicePackageStore(directory)
+        val unsupported = definitionJson(id = "vendor.unsupported")
+            .replace("\"capabilities\":", "\"requires\": [\"session.onFrame\"], \"capabilities\":")
+        store.write(
+            "vendor.unsupported",
+            validPackageBytes(id = "vendor.unsupported", definition = unsupported),
+        )
+        store.write("vendor.supported", validPackageBytes(id = "vendor.supported"))
+
+        val failures = bootstrap.load()
+
+        assertEquals(listOf("vendor.supported"), manager.registry.all().map { it.packageId })
+        assertEquals(1, failures.size)
+        val error = failures.single().error
+        assertTrue(error is PackageError.DefinitionInvalid)
+        assertEquals("manifest.requires[0]", (error as PackageError.DefinitionInvalid).path)
+    }
+
+    @Test
     fun loadIfNeeded_doesNotReloadAfterTheFirstLoad() {
         val source = StringSource(mapOf("demo.json" to definitionJson(id = "demo.builtin")))
         val manager = manager()

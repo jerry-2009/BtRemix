@@ -142,7 +142,21 @@
             "codec": "framed",
             "header": 165,
             "trailer": 32,
-            "checksum": "crc16",
+            "checksum": {
+              "function": "crc",
+              "width": 16,
+              "polynomial": 4129,
+              "initial": 0,
+              "reflectIn": false,
+              "reflectOut": false,
+              "xorOut": 0,
+              "outputByteOrder": "big",
+              "coverage": "body"
+            },
+            "splitter": {
+              "function": "delimited",
+              "maxFrameBytes": 4096
+            },
             "layout": {
               "messageTypeOffset": 2,
               "sequenceOffset": 1,
@@ -187,10 +201,6 @@
         }
       },
       "expectedCurrentErrors": [
-        {
-          "path": "protocol.framing",
-          "reason": "CRC-16 is not registered"
-        },
         {
           "path": "protocol.transactions.request.requestCommand",
           "reason": "Packet.command is UInt8-only"
@@ -400,7 +410,7 @@
       "id": "L1-CRC16",
       "fixture": "lab.static",
       "classification": "data",
-      "reason": "ChecksumAlgorithm only supports none/sum8/xor8",
+      "reason": "P1 closed parameterized CRC-8/16; body coverage is executable while magic-through-payload scope remains P2",
       "proposedIn": "P1"
     },
     {

@@ -108,10 +108,11 @@ internal fun validPackageBytes(
     version: String = "1.0.0",
     entry: String = "definition.json",
     extra: List<Pair<String, ByteArray>> = emptyList(),
+    definition: String = definitionJson(id = id, version = version),
 ): ByteArray {
     val entries = buildList {
         add("package.json" to packageJson(id = id, version = version, entry = entry).toByteArray())
-        add(entry to definitionJson(id = id, version = version).toByteArray())
+        add(entry to definition.toByteArray())
         addAll(extra)
     }
     return storedZip(*entries.toTypedArray())

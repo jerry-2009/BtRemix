@@ -57,6 +57,21 @@ class DevicePackageValidatorTest {
     }
 
     @Test
+    fun unsupportedCapabilityReportsTheManifestArrayPath() {
+        val definition = definitionJson()
+            .replace(
+                "\"capabilities\": [\"battery\"],",
+                "\"runtimeApi\": 1, \"requires\": [\"checksum.crc\", \"vendor.magic\"], \"capabilities\": [\"battery\"],",
+            )
+        val raw = reader.read(validPackageBytes(definition = definition))
+
+        val error = assertPackageError { validator.validate(raw) }
+        assertTrue(error is PackageError.DefinitionInvalid)
+        assertEquals("manifest.requires[1]", (error as PackageError.DefinitionInvalid).path)
+        assertTrue(error.detail.contains("unsupported capability 'vendor.magic'"))
+    }
+
+    @Test
     fun definitionJsonSyntaxError_isRejected() {
         val raw = reader.read(validPackageBytes()).copy(definitionJson = "{ not json")
 

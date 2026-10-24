@@ -19,6 +19,7 @@ data class FramingSpec(
     val checksum: ChecksumSpec? = null,
     val layout: FramingLayout = FramingLayout(),
     val acknowledgement: AcknowledgementSpec? = null,
+    val splitter: FrameSplitterSpec = FrameSplitterSpec(),
 ) {
     init {
         require(header in 0..0xff) { "Frame header must fit UInt8" }
@@ -31,17 +32,6 @@ data class FramingSpec(
         require(header != trailer) { "Frame header and trailer must differ" }
     }
 }
-
-/** Checksum algorithm applied to the frame body. */
-enum class ChecksumAlgorithm { NONE, SUM8, XOR8 }
-
-/** Which bytes the checksum covers. Kept as data so new scopes stay additive. */
-enum class ChecksumCoverage { BODY }
-
-data class ChecksumSpec(
-    val algorithm: ChecksumAlgorithm,
-    val coverage: ChecksumCoverage = ChecksumCoverage.BODY,
-)
 
 /** Fixed header fields inside the (unescaped) body. */
 data class FramingLayout(

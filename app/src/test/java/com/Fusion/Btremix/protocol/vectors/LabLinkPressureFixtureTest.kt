@@ -91,6 +91,10 @@ class LabLinkPressureFixtureTest {
         val definition = decodeProbe(layer)
         val errors = DefinitionValidator.validate(definition)
         val byPath = errors.associateBy { it.path }
+        assertFalse(
+            "P1 must close the parameterized CRC gap",
+            errors.any { it.path.startsWith("protocol.framing.checksum") },
+        )
 
         layer.requiredArray("expectedCurrentErrors").values.forEach { raw ->
             val expected = raw.requiredObject("l1.expectedCurrentErrors[]")
@@ -110,6 +114,10 @@ class LabLinkPressureFixtureTest {
 
         val probeFraming = decodeProbe(layer).protocol.framing ?: error("probe framing missing")
         assertEquals(2, probeFraming.lengthBytes)
+        assertEquals("crc", probeFraming.checksumSpec?.function)
+        assertEquals(16, probeFraming.checksumSpec?.width)
+        assertEquals("delimited", probeFraming.splitter.function)
+        assertEquals(4096, probeFraming.splitter.maxFrameBytes)
         val rawFraming = layer.requiredObject("currentProbeDefinition")
             .requiredObject("protocol")
             .requiredObject("framing")
@@ -164,9 +172,13 @@ class LabLinkPressureFixtureTest {
         assertEquals(1, extension.requiredInt("apiVersion"))
 
         val definition = DefinitionJsonCodec.decode(JsonWriter.write(probeJson), validate = false)
-        assertTrue("the current validator silently accepts an unknown extension field", DefinitionValidator.validate(definition).isEmpty())
+        val errors = DefinitionValidator.validate(definition)
+        assertTrue(
+            "P1 must reject the not-yet-registered reactive capability",
+            errors.any { it.path == "manifest.requires[0]" },
+        )
         val manifestFields = DefinitionManifest::class.java.declaredFields.map { it.name }
-        assertFalse("P0 would become stale once manifest.extensions is modelled", manifestFields.any { it == "extensions" })
+        assertFalse("P4 would become stale once manifest.extensions is modelled", manifestFields.any { it == "extensions" })
         assertEquals(
             "manifest.extensions[0]",
             layer.requiredObject("expectedCurrentGap").requiredString("path"),

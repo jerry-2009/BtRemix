@@ -26,6 +26,10 @@ import com.Fusion.Btremix.definition.api.StateDefinitionType
 import com.Fusion.Btremix.definition.api.TransportDefinition
 import com.Fusion.Btremix.definition.api.UiNode
 import com.Fusion.Btremix.definition.api.UiSchema
+import com.Fusion.Btremix.protocol.api.ChecksumCoverage
+import com.Fusion.Btremix.protocol.api.ChecksumSpec
+import com.Fusion.Btremix.protocol.api.Endianness
+import com.Fusion.Btremix.protocol.api.FrameSplitterSpec
 import com.Fusion.Btremix.scripting.api.ScriptCodec
 import com.Fusion.Btremix.scripting.api.ScriptExpression
 import com.Fusion.Btremix.device.runtime.StateValue
@@ -56,6 +60,10 @@ object DefinitionJsonCodec {
         displayName = obj.requiredString("displayName"),
         version = obj.requiredString("version"),
         schemaVersion = obj.optionalInt("schemaVersion") ?: DefinitionSchema.VERSION_SCRIPT_ONLY,
+        runtimeApi = obj.optionalInt("runtimeApi") ?: com.Fusion.Btremix.definition.api.DefinitionRuntimeApi.CURRENT,
+        requires = obj.optionalArray("requires")?.values?.mapIndexed { index, value ->
+            value.string("manifest.requires[$index]")
+        } ?: emptyList(),
         runtime = obj.optionalString("runtime"),
         // Optional product metadata (§3.5A); absent keys fall back to null and never fail a load.
         author = obj.optionalString("author"),
@@ -129,16 +137,28 @@ object DefinitionJsonCodec {
         bonded = obj.optionalBoolean("bonded") ?: true,
     )
 
-    private fun parseFraming(obj: JsonValue.Object): com.Fusion.Btremix.definition.api.FramingDefinition =
-        com.Fusion.Btremix.definition.api.FramingDefinition(
+    private fun parseFraming(obj: JsonValue.Object): com.Fusion.Btremix.definition.api.FramingDefinition {
+        var legacyChecksum: String? = null
+        var structuredChecksum: ChecksumSpec? = null
+        when (val checksum = obj.values["checksum"]) {
+            null -> Unit
+            is JsonValue.StringValue -> legacyChecksum = checksum.value
+            is JsonValue.Object -> structuredChecksum = parseChecksum(checksum, "protocol.framing.checksum")
+            else -> throw DefinitionJsonException("protocol.framing.checksum", "must be a string or an object")
+        }
+        return com.Fusion.Btremix.definition.api.FramingDefinition(
             codec = obj.requiredString("codec"),
             header = obj.optionalInt("header"),
             trailer = obj.optionalInt("trailer"),
             escape = obj.optionalInt("escape"),
             escapeMask = obj.optionalInt("escapeMask") ?: 0xEF,
-            checksum = obj.optionalString("checksum"),
+            checksum = legacyChecksum,
+            checksumSpec = structuredChecksum,
+            splitter = obj.values["splitter"]?.let { parseSplitter(it, "protocol.framing.splitter") } ?: FrameSplitterSpec(),
             messageTypeOffset = obj.optionalObj("layout")?.optionalInt("messageTypeOffset") ?: 0,
-            sequenceOffset = obj.optionalObj("layout")?.let { layout -> layout.optionalInt("sequenceOffset") } ?: 1,
+            sequenceOffset = obj.optionalObj("layout")?.let { layout ->
+                if ("sequenceOffset" in layout.values) layout.optionalNullableInt("sequenceOffset") else 1
+            } ?: 1,
             lengthOffset = obj.optionalObj("layout")?.optionalInt("lengthOffset") ?: 2,
             lengthBytes = obj.optionalObj("layout")?.optionalInt("lengthBytes") ?: 4,
             lengthByteOrder = obj.optionalObj("layout")?.optionalString("lengthByteOrder")
@@ -150,6 +170,71 @@ object DefinitionJsonCodec {
             acknowledgeReplyMessageType = obj.optionalObj("acknowledge")?.optionalInt("replyMessageType"),
             acknowledgeSequence = obj.optionalObj("acknowledge")?.optionalString("sequence") ?: "complement",
         )
+    }
+
+    private fun parseChecksum(obj: JsonValue.Object, path: String): ChecksumSpec {
+        val known = setOf(
+            "function",
+            "width",
+            "polynomial",
+            "initial",
+            "reflectIn",
+            "reflectOut",
+            "xorOut",
+            "outputByteOrder",
+            "coverage",
+        )
+        obj.values.keys.firstOrNull { it !in known }?.let { unknown ->
+            throw DefinitionJsonException("$path.$unknown", "unknown checksum field")
+        }
+        val function = obj.requiredString("function").trim().lowercase()
+        val width = obj.optionalIntegerToken("width") ?: when (function) {
+            "none" -> 0
+            "sum8", "xor8" -> 8
+            else -> throw DefinitionJsonException("$path.width", "is required for checksum function '$function'")
+        }
+        val coverage = when (val raw = obj.optionalString("coverage")?.lowercase() ?: "body") {
+            "body" -> ChecksumCoverage.BODY
+            else -> throw DefinitionJsonException("$path.coverage", "must be 'body' in P1, not '$raw'")
+        }
+        return ChecksumSpec(
+            function = function,
+            width = width,
+            polynomial = obj.optionalIntegerToken("polynomial"),
+            initial = obj.optionalIntegerToken("initial") ?: 0,
+            reflectIn = obj.optionalBoolean("reflectIn") ?: false,
+            reflectOut = obj.optionalBoolean("reflectOut") ?: false,
+            xorOut = obj.optionalIntegerToken("xorOut") ?: 0,
+            outputByteOrder = obj.optionalString("outputByteOrder")
+                ?.let { parseEndianness(it, "$path.outputByteOrder") }
+                ?: Endianness.BIG,
+            coverage = coverage,
+        )
+    }
+
+    private fun parseSplitter(value: JsonValue, path: String): FrameSplitterSpec {
+        val function: String
+        val maxFrameBytes: Int
+        when (value) {
+            is JsonValue.StringValue -> {
+                function = value.value
+                maxFrameBytes = FrameSplitterSpec.DEFAULT_MAX_FRAME_BYTES
+            }
+            is JsonValue.Object -> {
+                val known = setOf("function", "maxFrameBytes")
+                value.values.keys.firstOrNull { it !in known }?.let { unknown ->
+                    throw DefinitionJsonException("$path.$unknown", "unknown splitter field")
+                }
+                function = value.optionalString("function") ?: "delimited"
+                maxFrameBytes = value.optionalInt("maxFrameBytes")
+                    ?: FrameSplitterSpec.DEFAULT_MAX_FRAME_BYTES
+            }
+            else -> throw DefinitionJsonException(path, "must be a string or an object")
+        }
+        return runCatching { FrameSplitterSpec(function, maxFrameBytes) }.getOrElse {
+            throw DefinitionJsonException("$path.maxFrameBytes", it.message ?: "invalid splitter configuration")
+        }
+    }
 
     private fun parseState(key: String, obj: JsonValue.Object): StateDefinition = StateDefinition(
         key = key,
@@ -476,6 +561,28 @@ private fun JsonValue.Object.optionalArray(name: String): JsonValue.Array? = val
 private fun JsonValue.Object.optionalString(name: String): String? = values[name]?.string(name)
 private fun JsonValue.Object.optionalBoolean(name: String): Boolean? = values[name]?.let { (it as? JsonValue.BooleanValue)?.value ?: throw DefinitionJsonException(name, "must be a boolean") }
 private fun JsonValue.Object.optionalInt(name: String): Int? = values[name]?.number(name)?.raw?.toIntOrNull() ?: values[name]?.let { throw DefinitionJsonException(name, "must be an integer") }
+private fun JsonValue.Object.optionalNullableInt(name: String): Int? = when (val value = values[name]) {
+    null, JsonValue.NullValue -> null
+    is JsonValue.NumberValue -> value.raw.toIntOrNull()
+        ?: throw DefinitionJsonException(name, "must be an integer or null")
+    else -> throw DefinitionJsonException(name, "must be an integer or null")
+}
+private fun JsonValue.Object.optionalIntegerToken(name: String): Int? = values[name]?.let { value ->
+    when (value) {
+        is JsonValue.NumberValue -> value.raw.toIntOrNull()
+            ?: throw DefinitionJsonException(name, "must be an integer")
+        is JsonValue.StringValue -> {
+            val raw = value.value.trim()
+            val parsed = if (raw.startsWith("0x", ignoreCase = true)) {
+                raw.substring(2).toIntOrNull(16)
+            } else {
+                raw.toIntOrNull()
+            }
+            parsed ?: throw DefinitionJsonException(name, "must be an integer or 0x-prefixed hexadecimal string")
+        }
+        else -> throw DefinitionJsonException(name, "must be an integer or 0x-prefixed hexadecimal string")
+    }
+}
 private fun JsonValue.Object.requiredInt(name: String): Int = optionalInt(name) ?: throw DefinitionJsonException(name, "is required")
 private fun JsonValue.Object.optionalLong(name: String): Long? = values[name]?.number(name)?.raw?.toLongOrNull() ?: values[name]?.let { throw DefinitionJsonException(name, "must be an integer") }
 private fun JsonValue.Object.optionalDouble(name: String): Double? = values[name]?.number(name)?.raw?.toDoubleOrNull() ?: values[name]?.let { throw DefinitionJsonException(name, "must be a number") }

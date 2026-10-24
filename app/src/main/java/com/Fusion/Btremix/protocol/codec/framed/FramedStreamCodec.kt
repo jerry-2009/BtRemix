@@ -1,9 +1,11 @@
 package com.Fusion.Btremix.protocol.codec.framed
 
 import com.Fusion.Btremix.protocol.api.AcknowledgementSequence
-import com.Fusion.Btremix.protocol.api.ChecksumAlgorithm
+import com.Fusion.Btremix.protocol.api.Checksum
+import com.Fusion.Btremix.protocol.api.ChecksumRegistry
 import com.Fusion.Btremix.protocol.api.Endianness
 import com.Fusion.Btremix.protocol.api.FrameAccumulator
+import com.Fusion.Btremix.protocol.api.FrameSplitterRegistry
 import com.Fusion.Btremix.protocol.api.FramingSpec
 import com.Fusion.Btremix.protocol.api.Packet
 import com.Fusion.Btremix.protocol.api.StreamCodec
@@ -27,9 +29,14 @@ class FramedCodecException(message: String) : IllegalArgumentException(message)
  */
 class FramedStreamCodec(private val spec: FramingSpec) : StreamCodec {
     override val name: String = NAME
+    private val checksum: Checksum? = spec.checksum?.let(ChecksumRegistry::create)
+    private val checksumBytes: Int get() = (checksum?.widthBits ?: 0) / 8
 
-    override fun accumulator(): FrameAccumulator =
-        DelimitedFrameAccumulator(spec.header, spec.trailer)
+    override fun accumulator(): FrameAccumulator = FrameSplitterRegistry.create(spec.splitter.function, spec)
+        ?: error(
+            "Unknown frame splitter '${spec.splitter.function}', supported " +
+                FrameSplitterRegistry.names.sorted(),
+        )
 
     override fun encode(packet: Packet): ByteArray {
         val layout = spec.layout
@@ -45,9 +52,12 @@ class FramedStreamCodec(private val spec: FramingSpec) : StreamCodec {
         writeLength(body, layout.lengthOffset, layout.lengthBytes, layout.lengthByteOrder, length)
         packet.payload.copyInto(body, layout.payloadOffset)
 
-        val checksum = if (checksumPresent) checksum(spec.checksum!!.algorithm, body) else null
+        val checksumValue = checksum?.let { it.calculate(body) }
         val escapedBody = escape(body)
-        val escapedChecksum = checksum?.let { escape(byteArrayOf(it.toByte())) }
+        val rawChecksum = checksumValue?.takeIf { checksumBytes > 0 }?.let {
+            writeInteger(it, checksumBytes, spec.checksum!!.outputByteOrder)
+        }
+        val escapedChecksum = rawChecksum?.let(::escape)
         val frame = ByteArray(
             2 + escapedBody.size + (escapedChecksum?.size ?: 0),
         )
@@ -67,15 +77,19 @@ class FramedStreamCodec(private val spec: FramingSpec) : StreamCodec {
             throw FramedCodecException("Frame does not end with 0x%02X".format(spec.trailer))
         }
         val inner = unescape(bytes.copyOfRange(1, bytes.size - 1))
-        val checksumSize = if (checksumPresent) 1 else 0
         val layout = spec.layout
-        if (inner.size < layout.payloadOffset + checksumSize) {
+        if (inner.size < layout.payloadOffset + checksumBytes) {
             throw FramedCodecException("Frame body is truncated: ${inner.size} bytes")
         }
-        val body = inner.copyOfRange(0, inner.size - checksumSize)
-        if (checksumPresent) {
-            val expected = checksum(spec.checksum!!.algorithm, body)
-            val actual = inner.last().toInt() and 0xff
+        val body = inner.copyOfRange(0, inner.size - checksumBytes)
+        if (checksum != null && checksumBytes > 0) {
+            val expected = checksum.calculate(body)
+            val actual = readInteger(
+                inner,
+                inner.size - checksumBytes,
+                checksumBytes,
+                spec.checksum!!.outputByteOrder,
+            )
             if (actual != expected) throw FramedCodecException("Checksum mismatch: $actual != $expected")
         }
         val length = readLength(body, layout.lengthOffset, layout.lengthBytes, layout.lengthByteOrder)
@@ -137,12 +151,6 @@ class FramedStreamCodec(private val spec: FramingSpec) : StreamCodec {
         return out.toByteArray()
     }
 
-    private fun checksum(algorithm: ChecksumAlgorithm, body: ByteArray): Int = when (algorithm) {
-        ChecksumAlgorithm.NONE -> 0
-        ChecksumAlgorithm.SUM8 -> body.fold(0) { sum, byte -> (sum + (byte.toInt() and 0xff)) and 0xff }
-        ChecksumAlgorithm.XOR8 -> body.fold(0) { acc, byte -> acc xor (byte.toInt() and 0xff) }
-    }
-
     private fun writeLength(body: ByteArray, offset: Int, width: Int, order: Endianness, value: Int) {
         for (index in 0 until width) {
             val shift = if (order == Endianness.BIG) (width - 1 - index) * 8 else index * 8
@@ -151,63 +159,23 @@ class FramedStreamCodec(private val spec: FramingSpec) : StreamCodec {
     }
 
     private fun readLength(body: ByteArray, offset: Int, width: Int, order: Endianness): Int {
+        return readInteger(body, offset, width, order)
+    }
+
+    private fun writeInteger(value: Int, width: Int, order: Endianness): ByteArray = ByteArray(width).also { bytes ->
+        writeLength(bytes, 0, width, order, value)
+    }
+
+    private fun readInteger(bytes: ByteArray, offset: Int, width: Int, order: Endianness): Int {
         var value = 0
         for (index in 0 until width) {
             val shift = if (order == Endianness.BIG) (width - 1 - index) * 8 else index * 8
-            value = value or ((body[offset + index].toInt() and 0xff) shl shift)
+            value = value or ((bytes[offset + index].toInt() and 0xff) shl shift)
         }
         return value
     }
 
-    private val checksumPresent: Boolean
-        get() = spec.checksum != null && spec.checksum!!.algorithm != ChecksumAlgorithm.NONE
-
     companion object {
         const val NAME: String = "framed"
-    }
-}
-
-/**
- * Splits a byte stream into delimited frames.
- *
- * Escaping guarantees payload bytes never contain a raw delimiter, so scanning for the header and
- * the trailer is enough. Bytes before the first header are discarded, which keeps a noisy reconnect
- * from poisoning the next frame.
- */
-class DelimitedFrameAccumulator(
-    private val header: Int,
-    private val trailer: Int,
-    private val maxFrameBytes: Int = DEFAULT_MAX_FRAME_BYTES,
-) : FrameAccumulator {
-    private var buffer = ByteArray(0)
-
-    override fun feed(chunk: ByteArray): List<ByteArray> {
-        if (chunk.isEmpty()) return emptyList()
-        val combined = ByteArray(buffer.size + chunk.size)
-        buffer.copyInto(combined, 0)
-        chunk.copyInto(combined, buffer.size)
-
-        val frames = mutableListOf<ByteArray>()
-        var frameStart = -1
-        combined.forEachIndexed { index, raw ->
-            val value = raw.toInt() and 0xff
-            if (frameStart < 0) {
-                if (value == header) frameStart = index
-            } else if (value == trailer) {
-                frames += combined.copyOfRange(frameStart, index + 1)
-                frameStart = -1
-            }
-        }
-        val remainder = if (frameStart >= 0) combined.copyOfRange(frameStart, combined.size) else ByteArray(0)
-        buffer = if (remainder.size > maxFrameBytes) ByteArray(0) else remainder
-        return frames
-    }
-
-    override fun reset() {
-        buffer = ByteArray(0)
-    }
-
-    private companion object {
-        const val DEFAULT_MAX_FRAME_BYTES = 8192
     }
 }

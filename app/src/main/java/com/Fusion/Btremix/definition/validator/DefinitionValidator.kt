@@ -6,7 +6,11 @@ import com.Fusion.Btremix.definition.api.ProtocolFieldDefinition
 import com.Fusion.Btremix.definition.api.ProtocolFieldType
 import com.Fusion.Btremix.definition.api.ProtocolFieldType.*
 import com.Fusion.Btremix.definition.api.*
+import com.Fusion.Btremix.definition.capability.CapabilityRegistry
 import com.Fusion.Btremix.device.runtime.StateValue
+import com.Fusion.Btremix.protocol.api.ChecksumRegistry
+import com.Fusion.Btremix.protocol.api.ChecksumSpec
+import com.Fusion.Btremix.protocol.api.FrameSplitterRegistry
 import java.util.UUID
 
 data class DefinitionValidationError(val path: String, val message: String)
@@ -29,6 +33,12 @@ object DefinitionValidator {
                 "manifest.schemaVersion",
                 "unsupported schema version ${manifest.schemaVersion}, supported ${DefinitionSchema.SUPPORTED}",
             )
+        }
+        CapabilityRegistry.validateRuntimeApi(manifest.runtimeApi)?.let { message ->
+            errors += DefinitionValidationError("manifest.runtimeApi", message)
+        }
+        CapabilityRegistry.validateRequires(manifest.requires, manifest.runtimeApi).forEach { error ->
+            errors += DefinitionValidationError("manifest.requires[${error.index}]", error.message)
         }
         if (manifest.matchers.isEmpty()) errors += DefinitionValidationError("manifest.matchers", "must contain at least one rule")
         manifest.matchers.forEachIndexed { index, matcher -> validateMatcher(matcher, "manifest.matchers[$index]", errors) }
@@ -464,6 +474,19 @@ object DefinitionValidator {
                 "unknown codec '${framing.codec}', supported ${com.Fusion.Btremix.protocol.api.StreamCodecRegistry.names.sorted()}",
             )
         }
+        validateChecksum(framing, errors)
+        if (framing.splitter.normalized().function !in FrameSplitterRegistry.names) {
+            errors += DefinitionValidationError(
+                "protocol.framing.splitter.function",
+                "unknown splitter '${framing.splitter.function}', supported ${FrameSplitterRegistry.names.sorted()}",
+            )
+        }
+        if (framing.splitter.maxFrameBytes <= 0) {
+            errors += DefinitionValidationError(
+                "protocol.framing.splitter.maxFrameBytes",
+                "must be positive",
+            )
+        }
         // The codec owns the shape of its own configuration: build the runtime spec here so a
         // malformed layout is rejected at validation time instead of at connection time.
         runCatching { framing.toSpec() }.onFailure { error ->
@@ -471,6 +494,31 @@ object DefinitionValidator {
         }
         if (transport?.type != TransportType.RFCOMM) {
             errors += DefinitionValidationError("protocol.framing", "is only valid for an rfcomm transport")
+        }
+    }
+
+    private fun validateChecksum(
+        framing: FramingDefinition,
+        errors: MutableList<DefinitionValidationError>,
+    ) {
+        val structured = framing.checksumSpec
+        val checksum = when {
+            structured != null -> structured
+            framing.checksum != null -> runCatching { ChecksumSpec.legacy(framing.checksum) }
+                .getOrElse { error ->
+                    errors += DefinitionValidationError(
+                        "protocol.framing.checksum",
+                        error.message ?: "invalid legacy checksum",
+                    )
+                    return
+                }
+            else -> return
+        }
+        ChecksumRegistry.validate(checksum).forEach { error ->
+            errors += DefinitionValidationError(
+                "protocol.framing.checksum.${error.parameter}",
+                "checksum '${checksum.function}' ${error.message}",
+            )
         }
     }
 

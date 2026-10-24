@@ -3,21 +3,6 @@ package com.Fusion.Btremix.protocol.api
 import com.Fusion.Btremix.protocol.codec.framed.FramedStreamCodec
 
 /**
- * Splits a raw byte stream into wire frames.
- *
- * Byte-stream transports (RFCOMM/SPP) deliver arbitrary chunks: half a frame, exactly one frame or
- * several frames glued together. Implementations keep the trailing partial frame internally so a
- * caller can feed every read without doing its own buffering.
- */
-interface FrameAccumulator {
-    /** Returns every complete wire frame contained in [chunk], dropping bytes before the first frame. */
-    fun feed(chunk: ByteArray): List<ByteArray>
-
-    /** Drops any buffered partial frame. */
-    fun reset()
-}
-
-/**
  * Builds a [StreamCodec] from the framing a Definition declares.
  *
  * A registry entry is a *generic* implementation (for example "framed"); the vendor-specific part

@@ -2,6 +2,8 @@ package com.Fusion.Btremix.definition.api
 
 import com.Fusion.Btremix.core.bluetooth.api.BleScanResult
 import com.Fusion.Btremix.protocol.api.Endianness
+import com.Fusion.Btremix.protocol.api.ChecksumSpec
+import com.Fusion.Btremix.protocol.api.FrameSplitterSpec
 import com.Fusion.Btremix.protocol.api.Message
 import com.Fusion.Btremix.protocol.api.MessageCodec
 import com.Fusion.Btremix.protocol.api.MessageSchema
@@ -38,6 +40,12 @@ object DefinitionSchema {
     const val VERSION_MELODY: Int = 4
     const val CURRENT: Int = VERSION_MELODY
     val SUPPORTED: IntRange = VERSION_SCRIPT_ONLY..VERSION_MELODY
+}
+
+/** Version of the host-side capability contract declared by `manifest.runtimeApi`. */
+object DefinitionRuntimeApi {
+    const val CURRENT: Int = 1
+    val SUPPORTED: IntRange = CURRENT..CURRENT
 }
 
 /**
@@ -154,6 +162,10 @@ data class DefinitionManifest(
     val homepage: String? = null,
     val deviceType: String? = null,
     val minRuntime: String? = null,
+    /** Host runtime capability contract; defaults to the P1 API so old packages load unchanged. */
+    val runtimeApi: Int = DefinitionRuntimeApi.CURRENT,
+    /** Stable capability names such as `checksum.crc` or `splitter.delimited`. */
+    val requires: List<String> = emptyList(),
 ) : DeviceDefinition
 
 sealed interface DeviceMatchRule {
@@ -267,7 +279,7 @@ data class FramingDefinition(
     val trailer: Int? = null,
     val escape: Int? = null,
     val escapeMask: Int = 0xEF,
-    /** `sum8`, `xor8` or `none`. */
+    /** Legacy `sum8`, `xor8` or `none`; superseded by [checksumSpec] when the JSON is an object. */
     val checksum: String? = null,
     val messageTypeOffset: Int = 0,
     val sequenceOffset: Int? = 1,
@@ -278,18 +290,14 @@ data class FramingDefinition(
     val acknowledgeReplyMessageType: Int? = null,
     /** `copy`, `complement`, `zero` or `one`. */
     val acknowledgeSequence: String = "complement",
+    /** Parameterized checksum parsed from a JSON object. */
+    val checksumSpec: ChecksumSpec? = null,
+    /** Selects the stream splitter and its resource limits. */
+    val splitter: FrameSplitterSpec = FrameSplitterSpec(),
 ) {
     /** Validated by the Definition validator; a malformed config fails here instead of on connect. */
     fun toSpec(): com.Fusion.Btremix.protocol.api.FramingSpec {
-        val checksumSpec = checksum?.let { name ->
-            val algorithm = when (name.lowercase()) {
-                "sum8" -> com.Fusion.Btremix.protocol.api.ChecksumAlgorithm.SUM8
-                "xor8" -> com.Fusion.Btremix.protocol.api.ChecksumAlgorithm.XOR8
-                "none" -> com.Fusion.Btremix.protocol.api.ChecksumAlgorithm.NONE
-                else -> error("Unknown checksum '$name'")
-            }
-            com.Fusion.Btremix.protocol.api.ChecksumSpec(algorithm)
-        }
+        val normalizedChecksum = checksumSpec ?: checksum?.let(ChecksumSpec::legacy)
         val acknowledgement = acknowledgeReplyMessageType?.let { replyType ->
             com.Fusion.Btremix.protocol.api.AcknowledgementSpec(
                 messageTypes = acknowledgeMessageTypes.toSet(),
@@ -308,7 +316,7 @@ data class FramingDefinition(
             trailer = requireNotNull(trailer) { "Framing requires 'trailer'" },
             escape = escape,
             escapeMask = escapeMask,
-            checksum = checksumSpec,
+            checksum = normalizedChecksum,
             layout = com.Fusion.Btremix.protocol.api.FramingLayout(
                 messageTypeOffset = messageTypeOffset,
                 sequenceOffset = sequenceOffset,
@@ -316,6 +324,7 @@ data class FramingDefinition(
                 lengthBytes = lengthBytes,
                 lengthByteOrder = lengthByteOrder,
             ),
+            splitter = splitter.normalized(),
             acknowledgement = acknowledgement,
         )
     }
