@@ -9,6 +9,8 @@ import kotlinx.coroutines.flow.MutableSharedFlow
 import kotlinx.coroutines.flow.emptyFlow
 import kotlinx.coroutines.runBlocking
 import kotlinx.coroutines.withTimeout
+import com.Fusion.Btremix.protocol.codec.framed.SegmentedFrameCodec
+import com.Fusion.Btremix.protocol.codec.framed.SegmentedFrameCodecTest
 import org.junit.Assert.assertArrayEquals
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
@@ -154,7 +156,35 @@ class ProtocolRuntimeTest {
         }
     }
 
-    private class FakeTransport(private val codec: SimplePacketCodec) : ProtocolTransport {
+    @Test
+    fun dataMatcher_combines24BitCommandAndPayloadPrefixWithoutUnrelatedCompletion() = runBlocking {
+        val codec = SegmentedFrameCodec(SegmentedFrameCodecTest.framing())
+        val transport = FakeTransport(codec, codec::decodeRequest)
+        val expected = Packet(0x9003, payload = byteArrayOf(0x02, 0x7F))
+        transport.onWrite = {
+            transport.emitRaw(codec.encodeResponse(Packet(0x9002, payload = byteArrayOf(0x02))))
+            transport.emitRaw(codec.encodeResponse(Packet(0x9003, payload = byteArrayOf(0x01))))
+            transport.emitRaw(codec.encodeResponse(expected))
+        }
+        val runtime = TransactionRuntime(transport, codec, codec, 200.milliseconds)
+
+        val result = runtime.execute(
+            TransactionRequest(
+                request = Packet(0x1003),
+                matcherSpec = PacketMatcherSpec(
+                    command = 0x9003,
+                    payloadPrefix = byteArrayOf(0x02),
+                ),
+            ),
+        )
+
+        assertEquals(TransactionResult.Success(expected, 1), result)
+    }
+
+    private class FakeTransport(
+        private val codec: PacketCodec,
+        private val decodeWrite: (ByteArray) -> Packet = codec::decode,
+    ) : ProtocolTransport {
         private val events = MutableSharedFlow<ByteArray>(extraBufferCapacity = 10)
         val writes = mutableListOf<ByteArray>()
         val writeSignal = CompletableDeferred<Unit>()
@@ -163,7 +193,7 @@ class ProtocolRuntimeTest {
         override suspend fun write(data: ByteArray) {
             writes += data.clone()
             writeSignal.complete(Unit)
-            onWrite(codec.decode(data))
+            onWrite(decodeWrite(data))
         }
 
         override fun notifications(): Flow<ByteArray> = events

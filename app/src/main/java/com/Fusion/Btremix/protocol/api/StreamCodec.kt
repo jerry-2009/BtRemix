@@ -1,6 +1,7 @@
 package com.Fusion.Btremix.protocol.api
 
 import com.Fusion.Btremix.protocol.codec.framed.FramedStreamCodec
+import com.Fusion.Btremix.protocol.codec.framed.SegmentedFrameCodec
 
 /**
  * Builds a [StreamCodec] from the framing a Definition declares.
@@ -39,6 +40,7 @@ interface StreamCodec : PacketCodec {
 object StreamCodecRegistry {
     private val factories = linkedMapOf<String, StreamCodecFactory>(
         FramedStreamCodec.NAME to StreamCodecFactory { spec -> FramedStreamCodec(spec) },
+        SegmentedFrameCodec.NAME to StreamCodecFactory { spec -> SegmentedFrameCodec(spec) },
     )
 
     @Synchronized

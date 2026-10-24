@@ -14,6 +14,8 @@ import com.Fusion.Btremix.protocol.api.EnumValue
 import com.Fusion.Btremix.protocol.api.Field
 import com.Fusion.Btremix.protocol.api.Message
 import com.Fusion.Btremix.protocol.api.MessageSchema
+import com.Fusion.Btremix.protocol.api.Packet
+import com.Fusion.Btremix.protocol.api.PacketMatcherSpec
 import com.Fusion.Btremix.scripting.api.ScriptEvaluationException
 import com.Fusion.Btremix.scripting.api.evaluateScriptExpression
 
@@ -32,6 +34,12 @@ internal class DeclarativeProtocolSupport(
     val factory: DefinitionProtocolFactory = definition.protocolFactory()
 
     fun schema(name: String): MessageSchema = factory.schema(name)
+
+    /** One matcher path for P2 notifications; legacy payload types become an equivalent descriptor. */
+    fun matchesNotification(packet: Packet, notify: NotifyDefinition): Boolean {
+        val matcher = notify.matcher ?: PacketMatcherSpec(payloadTypes = notify.payloadTypes)
+        return matcher.matches(packet, requestSequence = null)
+    }
 
     suspend fun buildMessage(action: ActionDefinition, messageName: String, input: DeviceAction): Message {
         val schema = schema(messageName)

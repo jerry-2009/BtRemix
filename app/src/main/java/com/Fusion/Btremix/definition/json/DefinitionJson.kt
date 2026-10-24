@@ -29,7 +29,12 @@ import com.Fusion.Btremix.definition.api.UiSchema
 import com.Fusion.Btremix.protocol.api.ChecksumCoverage
 import com.Fusion.Btremix.protocol.api.ChecksumSpec
 import com.Fusion.Btremix.protocol.api.Endianness
+import com.Fusion.Btremix.protocol.api.FrameLayoutSpec
+import com.Fusion.Btremix.protocol.api.FrameSegmentRole
+import com.Fusion.Btremix.protocol.api.FrameSegmentSpec
 import com.Fusion.Btremix.protocol.api.FrameSplitterSpec
+import com.Fusion.Btremix.protocol.api.PacketMatcherSpec
+import com.Fusion.Btremix.protocol.api.SegmentedFramingSpec
 import com.Fusion.Btremix.scripting.api.ScriptCodec
 import com.Fusion.Btremix.scripting.api.ScriptExpression
 import com.Fusion.Btremix.device.runtime.StateValue
@@ -138,16 +143,58 @@ object DefinitionJsonCodec {
     )
 
     private fun parseFraming(obj: JsonValue.Object): com.Fusion.Btremix.definition.api.FramingDefinition {
+        val codec = obj.requiredString("codec")
+        val known = setOf(
+            "codec",
+            "header",
+            "trailer",
+            "escape",
+            "escapeMask",
+            "checksum",
+            "layout",
+            "acknowledge",
+            "splitter",
+            "request",
+            "response",
+        )
+        obj.values.keys.firstOrNull { it !in known }?.let { unknown ->
+            throw DefinitionJsonException("protocol.framing.$unknown", "unknown framing field")
+        }
+        if (codec == "segmented") {
+            obj.values.keys.firstOrNull {
+                it in setOf("header", "trailer", "escape", "escapeMask", "layout", "acknowledge")
+            }?.let { legacyOnly ->
+                throw DefinitionJsonException(
+                    "protocol.framing.$legacyOnly",
+                    "is not valid with the segmented codec",
+                )
+            }
+        } else if ("request" in obj.values || "response" in obj.values) {
+            throw DefinitionJsonException(
+                if ("request" in obj.values) "protocol.framing.request" else "protocol.framing.response",
+                "requires codec 'segmented'",
+            )
+        }
         var legacyChecksum: String? = null
         var structuredChecksum: ChecksumSpec? = null
         when (val checksum = obj.values["checksum"]) {
             null -> Unit
             is JsonValue.StringValue -> legacyChecksum = checksum.value
-            is JsonValue.Object -> structuredChecksum = parseChecksum(checksum, "protocol.framing.checksum")
+            is JsonValue.Object -> structuredChecksum = parseChecksum(
+                checksum,
+                "protocol.framing.checksum",
+                defaultCoverage = if (codec == "segmented") {
+                    ChecksumCoverage.SEGMENTS
+                } else {
+                    ChecksumCoverage.BODY
+                },
+            )
             else -> throw DefinitionJsonException("protocol.framing.checksum", "must be a string or an object")
         }
+        val requestSegments = obj.values["request"]?.let { parseFrameLayout(it, "protocol.framing.request") }
+        val responseSegments = obj.values["response"]?.let { parseFrameLayout(it, "protocol.framing.response") }
         return com.Fusion.Btremix.definition.api.FramingDefinition(
-            codec = obj.requiredString("codec"),
+            codec = codec,
             header = obj.optionalInt("header"),
             trailer = obj.optionalInt("trailer"),
             escape = obj.optionalInt("escape"),
@@ -169,10 +216,99 @@ object DefinitionJsonCodec {
                 ?: emptyList(),
             acknowledgeReplyMessageType = obj.optionalObj("acknowledge")?.optionalInt("replyMessageType"),
             acknowledgeSequence = obj.optionalObj("acknowledge")?.optionalString("sequence") ?: "complement",
+            segmented = when {
+                requestSegments != null && responseSegments != null ->
+                    SegmentedFramingSpec(requestSegments, responseSegments)
+                requestSegments != null || responseSegments != null ->
+                    throw DefinitionJsonException(
+                        if (requestSegments == null) "protocol.framing.request" else "protocol.framing.response",
+                        "is required when the other direction is declared",
+                    )
+                else -> null
+            },
         )
     }
 
-    private fun parseChecksum(obj: JsonValue.Object, path: String): ChecksumSpec {
+    private fun parseFrameLayout(value: JsonValue, path: String): FrameLayoutSpec {
+        val array = value as? JsonValue.Array
+            ?: throw DefinitionJsonException(path, "must be an array of frame segments")
+        if (array.values.isEmpty()) throw DefinitionJsonException(path, "must contain at least one segment")
+        return FrameLayoutSpec(
+            array.values.mapIndexed { index, segment ->
+                parseFrameSegment(segment.obj("$path[$index]"), "$path[$index]")
+            },
+        )
+    }
+
+    private fun parseFrameSegment(obj: JsonValue.Object, path: String): FrameSegmentSpec {
+        val known = setOf(
+            "role",
+            "width",
+            "order",
+            "name",
+            "hex",
+            "value",
+            "includeInLength",
+            "inLength",
+            "includeInChecksum",
+            "inChecksum",
+        )
+        obj.values.keys.firstOrNull { it !in known }?.let { unknown ->
+            throw DefinitionJsonException("$path.$unknown", "unknown frame segment field")
+        }
+        val role = when (val raw = obj.requiredString("role").trim().lowercase()) {
+            "magic" -> FrameSegmentRole.MAGIC
+            "constant", "const" -> FrameSegmentRole.CONSTANT
+            "command" -> FrameSegmentRole.COMMAND
+            "sequence", "seq" -> FrameSegmentRole.SEQUENCE
+            "length" -> FrameSegmentRole.LENGTH
+            "opaque", "status" -> FrameSegmentRole.OPAQUE
+            "payload" -> FrameSegmentRole.PAYLOAD
+            "checksum", "crc" -> FrameSegmentRole.CHECKSUM
+            else -> throw DefinitionJsonException("$path.role", "unknown frame segment role '$raw'")
+        }
+        val width = obj.optionalInt("width")
+        val order = obj.optionalString("order")?.let { parseEndianness(it, "$path.order") } ?: Endianness.BIG
+        if (obj.values.containsKey("hex") && obj.values.containsKey("value")) {
+            throw DefinitionJsonException("$path", "cannot declare both 'hex' and 'value'")
+        }
+        val constant = obj.optionalString("hex")?.let { parseBytes(it, "$path.hex") }
+            ?: obj.optionalIntegerToken("value")?.let { integer ->
+                val byteWidth = width ?: throw DefinitionJsonException("$path.width", "is required with 'value'")
+                if (byteWidth !in 1..4) throw DefinitionJsonException("$path.width", "must be 1..4 with 'value'")
+                val maximum = if (byteWidth == 4) 0xffffffffL else (1L shl (byteWidth * 8)) - 1
+                if (integer.toLong() !in 0..maximum) {
+                    throw DefinitionJsonException("$path.value", "does not fit in $byteWidth bytes")
+                }
+                ByteArray(byteWidth) { index ->
+                    val shift = if (order == Endianness.BIG) (byteWidth - 1 - index) * 8 else index * 8
+                    (integer ushr shift).toByte()
+                }
+            }
+        fun inclusion(longName: String, shortName: String): Boolean {
+            val long = obj.optionalBoolean(longName)
+            val short = obj.optionalBoolean(shortName)
+            if (long != null && short != null && long != short) {
+                throw DefinitionJsonException("$path.$longName", "conflicts with '$shortName'")
+            }
+            return long ?: short ?: false
+        }
+        return FrameSegmentSpec(
+            role = role,
+            width = width,
+            order = order,
+            name = obj.optionalString("name"),
+            constant = constant,
+            includeInLength = inclusion("includeInLength", "inLength"),
+            includeInChecksum = inclusion("includeInChecksum", "inChecksum"),
+        )
+    }
+
+    private fun parseChecksum(
+        obj: JsonValue.Object,
+        path: String,
+        defaultCoverage: ChecksumCoverage = ChecksumCoverage.BODY,
+    ): ChecksumSpec {
         val known = setOf(
             "function",
             "width",
@@ -193,9 +329,10 @@ object DefinitionJsonCodec {
             "sum8", "xor8" -> 8
             else -> throw DefinitionJsonException("$path.width", "is required for checksum function '$function'")
         }
-        val coverage = when (val raw = obj.optionalString("coverage")?.lowercase() ?: "body") {
+        val coverage = when (val raw = obj.optionalString("coverage")?.lowercase() ?: defaultCoverage.name.lowercase()) {
             "body" -> ChecksumCoverage.BODY
-            else -> throw DefinitionJsonException("$path.coverage", "must be 'body' in P1, not '$raw'")
+            "segments", "segment" -> ChecksumCoverage.SEGMENTS
+            else -> throw DefinitionJsonException("$path.coverage", "must be 'body' or 'segments', not '$raw'")
         }
         return ChecksumSpec(
             function = function,
@@ -260,6 +397,9 @@ object DefinitionJsonCodec {
             }
         },
         condition = obj.values["if"]?.let { ScriptCodec.parseExpression(it, "states.$stateKey.notify.if") },
+        matcher = obj.values["matcher"]?.let {
+            parsePacketMatcher(it.obj("states.$stateKey.notify.matcher"), "states.$stateKey.notify.matcher")
+        },
     )
 
     private fun parseStates(value: JsonValue): Map<String, StateDefinition> = when (value) {
@@ -532,7 +672,60 @@ object DefinitionJsonCodec {
         },
         expectsResponse = obj.optionalBoolean("expectsResponse") ?: true,
         requestPayload = obj.optionalString("requestPayload")?.let { parseBytes(it, "protocol.transactions.$name.requestPayload") },
+        matcher = obj.values["matcher"]?.let {
+            parsePacketMatcher(it.obj("protocol.transactions.$name.matcher"), "protocol.transactions.$name.matcher")
+        },
     )
+
+    private fun parsePacketMatcher(obj: JsonValue.Object, path: String): PacketMatcherSpec {
+        val known = setOf("command", "sequence", "payloadPrefix", "payloadType", "payloadTypes")
+        obj.values.keys.firstOrNull { it !in known }?.let { unknown ->
+            throw DefinitionJsonException("$path.$unknown", "unknown matcher field")
+        }
+        var matchRequestSequence = false
+        var literalSequence: Int? = null
+        when (val sequence = obj.values["sequence"]) {
+            null -> Unit
+            is JsonValue.BooleanValue -> matchRequestSequence = sequence.value
+            is JsonValue.NumberValue -> literalSequence = sequence.raw.toIntOrNull()
+                ?: throw DefinitionJsonException("$path.sequence", "must be an integer or boolean")
+            is JsonValue.StringValue -> when (sequence.value.trim().lowercase()) {
+                "request" -> matchRequestSequence = true
+                else -> throw DefinitionJsonException(
+                    "$path.sequence",
+                    "must be 'request', a boolean or an integer",
+                )
+            }
+            else -> throw DefinitionJsonException("$path.sequence", "must be 'request', a boolean or an integer")
+        }
+        val payloadTypes = buildSet {
+            obj.optionalInt("payloadType")?.let(::add)
+            obj.optionalArray("payloadTypes")?.values?.forEachIndexed { index, value ->
+                add(
+                    value.number("$path.payloadTypes[$index]").raw.toIntOrNull()
+                        ?: throw DefinitionJsonException("$path.payloadTypes[$index]", "must be an integer"),
+                )
+            }
+        }
+        val command = obj.optionalInt("command")
+        if (command != null && command !in 0..com.Fusion.Btremix.protocol.api.MAX_COMMAND) {
+            throw DefinitionJsonException("$path.command", "must fit UInt24")
+        }
+        if (literalSequence != null && literalSequence !in 0..0xff) {
+            throw DefinitionJsonException("$path.sequence", "must fit UInt8")
+        }
+        if (payloadTypes.any { it !in 0..0xff }) {
+            throw DefinitionJsonException("$path.payloadTypes", "every payload type must fit UInt8")
+        }
+        return PacketMatcherSpec(
+            command = command,
+            matchRequestSequence = matchRequestSequence,
+            sequence = literalSequence,
+            payloadPrefix = obj.optionalString("payloadPrefix")?.let { parseBytes(it, "$path.payloadPrefix") }
+                ?: ByteArray(0),
+            payloadTypes = payloadTypes,
+        )
+    }
 
     private fun parseEndianness(value: String, path: String) = when (value.lowercase()) {
         "little", "little_endian", "le" -> com.Fusion.Btremix.protocol.api.Endianness.LITTLE

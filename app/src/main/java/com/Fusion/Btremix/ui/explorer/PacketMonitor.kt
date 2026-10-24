@@ -48,6 +48,7 @@ data class DecodedField(val name: String, val value: String)
 data class PacketDecode(
     val command: Int?,
     val sequence: Int?,
+    val commandLabel: String? = null,
     val messageName: String?,
     val fields: List<DecodedField>,
     val error: String?,
@@ -61,6 +62,8 @@ data class PacketDecode(
 class ProtocolDebugger(private val definition: LoadedDeviceDefinition) {
     private val factory = definition.protocolFactory()
     private val codec = factory.packetCodec
+    private val commandWidthBytes =
+        (definition.protocol.framing?.segmented?.response?.commandWidthBytes) ?: 1
     private val messagesByCommand: Map<Int, String> = buildMap {
         definition.protocol.transactions.values.forEach { transaction ->
             transaction.requestMessage?.let { putIfAbsent(transaction.requestCommand, it) }
@@ -72,19 +75,40 @@ class ProtocolDebugger(private val definition: LoadedDeviceDefinition) {
 
     fun decode(payload: ByteArray): PacketDecode {
         val packet = runCatching { codec.decode(payload) }.getOrElse { error ->
-            return PacketDecode(null, null, null, emptyList(), "Not a packet: ${error.message}")
+            return PacketDecode(null, null, null, null, emptyList(), "Not a packet: ${error.message}")
         }
         val messageName = messagesByCommand[packet.command]
-            ?: return PacketDecode(packet.command, packet.sequence, null, emptyList(), "No message declared for command ${packet.command}")
+            ?: return PacketDecode(
+                packet.command,
+                packet.sequence,
+                commandLabel(packet.command),
+                null,
+                emptyList(),
+                "No message declared for command ${commandLabel(packet.command)}",
+            )
         val message = runCatching { MessageCodec(factory.schema(messageName)).decode(packet.payload) }
             .getOrElse { error ->
-                return PacketDecode(packet.command, packet.sequence, messageName, emptyList(), "Payload does not match '$messageName': ${error.message}")
+                return PacketDecode(
+                    packet.command,
+                    packet.sequence,
+                    commandLabel(packet.command),
+                    messageName,
+                    emptyList(),
+                    "Payload does not match '$messageName': ${error.message}",
+                )
             }
         val fields = factory.schema(messageName).fields.map { field ->
             DecodedField(field.name, formatValue(message.asMap()[field.name]))
         }
-        return PacketDecode(packet.command, packet.sequence, messageName, fields, null)
+        return PacketDecode(packet.command, packet.sequence, commandLabel(packet.command), messageName, fields, null)
     }
+
+    private fun commandLabel(command: Int): String =
+        if (command > 0xff || commandWidthBytes > 1) {
+            "0x%0${commandWidthBytes * 2}X".format(command)
+        } else {
+            command.toString()
+        }
 
     private fun formatValue(value: Any?): String = when (value) {
         null -> "--"

@@ -9,9 +9,9 @@ package com.Fusion.Btremix.protocol.api
  */
 data class FramingSpec(
     /** Byte that starts a frame. */
-    val header: Int,
+    val header: Int? = null,
     /** Byte that ends a frame. */
-    val trailer: Int,
+    val trailer: Int? = null,
     /** Byte introducing an escape sequence, or `null` when the framing has no escaping. */
     val escape: Int? = null,
     /** Mask applied to an escaped byte (`escaped = byte and escapeMask`). */
@@ -20,16 +20,89 @@ data class FramingSpec(
     val layout: FramingLayout = FramingLayout(),
     val acknowledgement: AcknowledgementSpec? = null,
     val splitter: FrameSplitterSpec = FrameSplitterSpec(),
+    /** Request/response segment tables used by the generic `segmented` codec. */
+    val segmented: SegmentedFramingSpec? = null,
 ) {
     init {
-        require(header in 0..0xff) { "Frame header must fit UInt8" }
-        require(trailer in 0..0xff) { "Frame trailer must fit UInt8" }
+        if (segmented == null) {
+            require(header != null && header in 0..0xff) { "Frame header must fit UInt8" }
+            require(trailer != null && trailer in 0..0xff) { "Frame trailer must fit UInt8" }
+        }
         require(escape == null || escape in 0..0xff) { "Escape byte must fit UInt8" }
         require(escapeMask in 0..0xff) { "Escape mask must fit UInt8" }
         require(escape == null || (escape != header && escape != trailer)) {
             "Escape byte must differ from header and trailer"
         }
-        require(header != trailer) { "Frame header and trailer must differ" }
+        if (segmented == null) require(header != trailer) { "Frame header and trailer must differ" }
+    }
+}
+
+/**
+ * One-way adapter for schema v1-v4 layouts.
+ *
+ * The legacy codec remains the production path so frozen v1-v4 bytes do not change. The adapter exists so
+ * validation, diagnostics and tests can compare the old implicit layout with the P2 segment model.
+ */
+object LegacyFramingAdapter {
+    fun requestAndResponse(spec: FramingSpec): SegmentedFramingSpec {
+        val layout = FrameLayoutSpec(layoutSegments(spec))
+        return SegmentedFramingSpec(request = layout, response = layout)
+    }
+
+    fun layoutSegments(spec: FramingSpec): List<FrameSegmentSpec> = buildList {
+        add(
+            FrameSegmentSpec(
+                role = FrameSegmentRole.MAGIC,
+                width = 1,
+                constant = byteArrayOf(requireNotNull(spec.header).toByte()),
+            ),
+        )
+
+        val layout = spec.layout
+        val bodyEnd = layout.payloadOffset
+        var cursor = 0
+        fun addGapUntil(target: Int) {
+            if (target > cursor) {
+                add(
+                    FrameSegmentSpec(
+                        role = FrameSegmentRole.OPAQUE,
+                        width = target - cursor,
+                        includeInChecksum = true,
+                    ),
+                )
+                cursor = target
+            }
+        }
+        val points = buildList {
+            add(layout.messageTypeOffset to FrameSegmentRole.COMMAND)
+            layout.sequenceOffset?.let { add(it to FrameSegmentRole.SEQUENCE) }
+            add(layout.lengthOffset to FrameSegmentRole.LENGTH)
+        }.sortedBy { it.first }
+        points.forEach { (offset, role) ->
+            addGapUntil(offset)
+            val width = when (role) {
+                FrameSegmentRole.COMMAND, FrameSegmentRole.SEQUENCE -> 1
+                FrameSegmentRole.LENGTH -> layout.lengthBytes
+                else -> error("Unexpected legacy role")
+            }
+            add(FrameSegmentSpec(role = role, width = width, includeInChecksum = true))
+            cursor += width
+        }
+        addGapUntil(bodyEnd)
+        require(cursor == bodyEnd) { "Legacy layout fields overlap before payload" }
+        add(FrameSegmentSpec(role = FrameSegmentRole.PAYLOAD, includeInLength = true, includeInChecksum = true))
+
+        val checksumWidth = (spec.checksum?.width ?: 0) / 8
+        if (checksumWidth > 0) {
+            add(FrameSegmentSpec(role = FrameSegmentRole.CHECKSUM, width = checksumWidth))
+        }
+        add(
+            FrameSegmentSpec(
+                role = FrameSegmentRole.CONSTANT,
+                width = 1,
+                constant = byteArrayOf(requireNotNull(spec.trailer).toByte()),
+            ),
+        )
     }
 }
 

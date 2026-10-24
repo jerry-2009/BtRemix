@@ -8,6 +8,8 @@ import com.Fusion.Btremix.protocol.api.Message
 import com.Fusion.Btremix.protocol.api.MessageCodec
 import com.Fusion.Btremix.protocol.api.MessageSchema
 import com.Fusion.Btremix.protocol.api.Packet
+import com.Fusion.Btremix.protocol.api.PacketMatcherSpec
+import com.Fusion.Btremix.protocol.api.SegmentedFramingSpec
 import com.Fusion.Btremix.protocol.api.SimplePacketCodec
 import com.Fusion.Btremix.protocol.api.TransactionRequest
 import com.Fusion.Btremix.protocol.api.ValueCodec
@@ -29,6 +31,8 @@ enum class StateDefinitionType { BOOLEAN, INTEGER, NUMBER, STRING, ENUM, BYTES }
  * `protocol.transactions.*.expectedPayloadType`).
  * Version 4 adds the optional `melody` section ([MelodySectionDefinition]) that advertises a
  * device to the ColorOS Melody panel; it is independent of the transport versions above.
+ * Version 5 adds direction-specific segmented frame layouts and data-only packet matchers. Both
+ * remain optional; v1-v4 definitions retain their frozen legacy semantics.
  *
  * A definition that omits `manifest.schemaVersion` is treated as version 1 so every package written
  * before the declarative bindings keep working unchanged.
@@ -38,8 +42,9 @@ object DefinitionSchema {
     const val VERSION_DECLARATIVE: Int = 2
     const val VERSION_STREAM: Int = 3
     const val VERSION_MELODY: Int = 4
-    const val CURRENT: Int = VERSION_MELODY
-    val SUPPORTED: IntRange = VERSION_SCRIPT_ONLY..VERSION_MELODY
+    const val VERSION_SEGMENTED: Int = 5
+    const val CURRENT: Int = VERSION_SEGMENTED
+    val SUPPORTED: IntRange = VERSION_SCRIPT_ONLY..VERSION_SEGMENTED
 }
 
 /** Version of the host-side capability contract declared by `manifest.runtimeApi`. */
@@ -71,6 +76,8 @@ data class NotifyDefinition(
     val payloadTypes: Set<Int> = emptySet(),
     /** Byte-stream only: when present, the notification is ignored unless this expression is `true`. */
     val condition: ScriptExpression? = null,
+    /** P2 byte-stream matcher; when present it replaces the legacy payload-type discriminator. */
+    val matcher: PacketMatcherSpec? = null,
 )
 
 data class StateDefinition(
@@ -294,6 +301,8 @@ data class FramingDefinition(
     val checksumSpec: ChecksumSpec? = null,
     /** Selects the stream splitter and its resource limits. */
     val splitter: FrameSplitterSpec = FrameSplitterSpec(),
+    /** P2 direction-specific byte layouts used by the `segmented` codec. */
+    val segmented: SegmentedFramingSpec? = null,
 ) {
     /** Validated by the Definition validator; a malformed config fails here instead of on connect. */
     fun toSpec(): com.Fusion.Btremix.protocol.api.FramingSpec {
@@ -312,8 +321,8 @@ data class FramingDefinition(
             )
         }
         return com.Fusion.Btremix.protocol.api.FramingSpec(
-            header = requireNotNull(header) { "Framing requires 'header'" },
-            trailer = requireNotNull(trailer) { "Framing requires 'trailer'" },
+            header = header,
+            trailer = trailer,
             escape = escape,
             escapeMask = escapeMask,
             checksum = normalizedChecksum,
@@ -326,6 +335,7 @@ data class FramingDefinition(
             ),
             splitter = splitter.normalized(),
             acknowledgement = acknowledgement,
+            segmented = segmented,
         )
     }
 }
@@ -352,6 +362,8 @@ data class TransactionDefinition(
      * response payload.
      */
     val expectsResponse: Boolean = true,
+    /** P2 matcher declaration. Absent keeps the legacy command + request-sequence default. */
+    val matcher: PacketMatcherSpec? = null,
 )
 
 data class ProtocolDefinition(
@@ -426,17 +438,32 @@ class DefinitionProtocolFactory(private val definition: LoadedDeviceDefinition) 
         val transaction = definition.protocol.transactions[transactionName]
             ?: error("Unknown transaction '$transactionName'")
         val expectedPayloadTypes = transaction.expectedPayloadTypes
+        val matcher = transaction.matcher?.let { declared ->
+            if (declared.command == null && transaction.expectedCommand != null) {
+                declared.copy(command = transaction.expectedCommand)
+            } else {
+                declared
+            }
+        }
         return TransactionRequest(
             request = encodePacket(transactionName, message),
             expectedCommand = transaction.expectedCommand,
             timeout = transaction.timeout,
             retries = transaction.retries,
-            // A byte-stream peer numbers its responses independently of the request, so the default
-            // "same sequence" matcher would never match; the payload type is the discriminator.
-            matcher = if (expectedPayloadTypes.isEmpty()) null else { response ->
-                (transaction.expectedCommand == null || response.command == transaction.expectedCommand) &&
-                    (response.payload.firstOrNull()?.toInt()?.and(0xff) in expectedPayloadTypes)
-            },
+            matcherSpec = matcher ?: legacyMatcher(transaction, expectedPayloadTypes),
+        )
+    }
+
+    private fun legacyMatcher(
+        transaction: TransactionDefinition,
+        expectedPayloadTypes: Set<Int>,
+    ): PacketMatcherSpec? {
+        // Payload-type matching intentionally ignores sequence, matching the frozen v3 stream
+        // contract. A command-only transaction keeps the normal command + sequence default.
+        if (expectedPayloadTypes.isEmpty()) return null
+        return PacketMatcherSpec(
+            command = transaction.expectedCommand,
+            payloadTypes = expectedPayloadTypes,
         )
     }
 

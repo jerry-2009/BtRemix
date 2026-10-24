@@ -326,7 +326,7 @@ private fun MonitorRow(entry: MonitorEntry, debugger: ProtocolDebugger) {
             Text("decode: ${decode.error}", style = MaterialTheme.typography.labelSmall, color = MaterialTheme.colorScheme.error)
         } else {
             Text(
-                "cmd ${decode.command}${decode.sequence?.let { " · seq $it" } ?: ""} · ${decode.messageName}: " +
+                "cmd ${decode.commandLabel}${decode.sequence?.let { " · seq $it" } ?: ""} · ${decode.messageName}: " +
                     decode.fields.joinToString(", ") { "${it.name}=${it.value}" },
                 style = MaterialTheme.typography.labelSmall,
                 color = MaterialTheme.colorScheme.primary,

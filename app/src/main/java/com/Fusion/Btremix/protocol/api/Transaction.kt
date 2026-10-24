@@ -56,13 +56,49 @@ data class TransactionRequest(
     val timeout: Duration? = null,
     val retries: Int? = null,
     val matcher: ((Packet) -> Boolean)? = null,
+    val matcherSpec: PacketMatcherSpec? = null,
 ) {
     init {
-        require(expectedCommand == null || expectedCommand in 0..0xff)
+        require(expectedCommand == null || expectedCommand in 0..MAX_COMMAND)
         require(timeout == null || timeout.isPositive()) { "Timeout must be positive" }
         require(retries == null || retries >= 0) { "Retries cannot be negative" }
     }
 }
+
+/**
+ * Data-only response matcher shared by transactions and notifications.
+ *
+ * [matchRequestSequence] compares the response sequence with the sequence assigned to the current
+ * request. [sequence] instead requires one literal value. All declared predicates are ANDed.
+ */
+data class PacketMatcherSpec(
+    val command: Int? = null,
+    val matchRequestSequence: Boolean = false,
+    val sequence: Int? = null,
+    val payloadPrefix: ByteArray = ByteArray(0),
+    val payloadTypes: Set<Int> = emptySet(),
+) {
+    init {
+        require(command == null || command in 0..MAX_COMMAND) { "Matcher command must fit in 24 bits" }
+        require(sequence == null || sequence in 0..0xff) { "Matcher sequence must fit in UInt8" }
+        require(!(matchRequestSequence && sequence != null)) {
+            "Matcher cannot require both the request sequence and a literal sequence"
+        }
+        require(payloadTypes.all { it in 0..0xff }) { "Matcher payload types must fit in UInt8" }
+    }
+
+    fun matches(packet: Packet, requestSequence: Int?): Boolean =
+        (command == null || packet.command == command) &&
+            (!matchRequestSequence || packet.sequence == requestSequence) &&
+            (sequence == null || packet.sequence == sequence) &&
+            (payloadPrefix.isEmpty() || packet.payload.startsWith(payloadPrefix)) &&
+            (payloadTypes.isEmpty() || (packet.payload.firstOrNull()?.toInt()?.and(0xff) in payloadTypes))
+
+    fun copyPayloadPrefix(): ByteArray = payloadPrefix.clone()
+}
+
+private fun ByteArray.startsWith(prefix: ByteArray): Boolean =
+    size >= prefix.size && prefix.indices.all { this[it] == prefix[it] }
 
 sealed interface TransactionResult {
     data class Success(val response: Packet, val attempts: Int) : TransactionResult
@@ -111,10 +147,12 @@ class TransactionRuntime(
         val packet = request.request.copy(sequence = sequence)
         val timeout = request.timeout ?: defaultTimeout
         val retries = request.retries ?: defaultRetries
-        val matcher = request.matcher ?: { response ->
-            (request.expectedCommand == null || response.command == request.expectedCommand) &&
-                (response.sequence == null || response.sequence == packet.sequence)
-        }
+        val matcher = request.matcher
+            ?: request.matcherSpec?.let { spec -> { response: Packet -> spec.matches(response, packet.sequence) } }
+            ?: { response ->
+                (request.expectedCommand == null || response.command == request.expectedCommand) &&
+                    (response.sequence == null || response.sequence == packet.sequence)
+            }
         var lastError: TransactionError? = null
 
         repeat(retries + 1) { attemptIndex ->

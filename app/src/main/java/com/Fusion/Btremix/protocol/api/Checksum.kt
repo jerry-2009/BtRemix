@@ -20,16 +20,19 @@ interface Checksum {
 /** Legacy checksum names retained only for source-compatible callers and old package adapters. */
 enum class ChecksumAlgorithm { NONE, SUM8, XOR8 }
 
-/** Checksum coverage supported by the P1 framed codec. */
-enum class ChecksumCoverage { BODY }
+/**
+ * [BODY] is the legacy framed-codec contract. [SEGMENTS] delegates the exact covered span to each
+ * segment's `includeInChecksum` flag in the P2 segmented codec.
+ */
+enum class ChecksumCoverage { BODY, SEGMENTS }
 
 /**
  * Vendor-neutral, serializable description of a checksum.
  *
  * [function] is looked up in [ChecksumRegistry]. CRC parameters are normalized by the registry;
  * built-in non-CRC functions use their fixed parameters and width. [outputByteOrder] controls how
- * widths above eight bits are appended to and read from the wire. P1 supports body coverage only;
- * checksum placement and multi-segment coverage belong to the P2 frame model.
+ * widths above eight bits are appended to and read from the wire. Legacy framing uses body coverage;
+ * segmented framing declares byte-level coverage in its segment table.
  */
 data class ChecksumSpec(
     val function: String,

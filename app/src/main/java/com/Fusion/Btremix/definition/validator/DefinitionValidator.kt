@@ -10,7 +10,13 @@ import com.Fusion.Btremix.definition.capability.CapabilityRegistry
 import com.Fusion.Btremix.device.runtime.StateValue
 import com.Fusion.Btremix.protocol.api.ChecksumRegistry
 import com.Fusion.Btremix.protocol.api.ChecksumSpec
+import com.Fusion.Btremix.protocol.api.ChecksumCoverage
 import com.Fusion.Btremix.protocol.api.FrameSplitterRegistry
+import com.Fusion.Btremix.protocol.api.FrameLayoutRules
+import com.Fusion.Btremix.protocol.api.FrameLayoutSpec
+import com.Fusion.Btremix.protocol.api.FrameSegmentRole
+import com.Fusion.Btremix.protocol.api.MAX_COMMAND
+import com.Fusion.Btremix.protocol.api.PacketMatcherSpec
 import java.util.UUID
 
 data class DefinitionValidationError(val path: String, val message: String)
@@ -149,6 +155,20 @@ object DefinitionValidator {
             errors += DefinitionValidationError("protocol.transport", "is required when an action declares a transaction")
         }
         validateFraming(definition, errors)
+        val segmented = definition.protocol.framing?.segmented
+        if (segmented != null) {
+            definition.states.forEach { (key, state) ->
+                state.notify?.matcher?.let { matcher ->
+                    validatePacketMatcher(
+                        matcher,
+                        "states.$key.notify.matcher",
+                        segmented.request,
+                        segmented.response,
+                        errors,
+                    )
+                }
+            }
+        }
         definition.protocol.initialize.forEachIndexed { index, name ->
             if (manifest.schemaVersion < DefinitionSchema.VERSION_STREAM) {
                 errors += DefinitionValidationError("protocol.initialize[$index]", "requires manifest.schemaVersion ${DefinitionSchema.VERSION_STREAM}")
@@ -178,8 +198,50 @@ object DefinitionValidator {
         }
         definition.protocol.transactions.forEach { (name, transaction) ->
             if (name.isBlank()) errors += DefinitionValidationError("protocol.transactions", "transaction name must not be blank")
-            if (transaction.requestCommand !in 0..0xff) errors += DefinitionValidationError("protocol.transactions.$name.requestCommand", "must fit UInt8")
-            if (transaction.expectedCommand != null && transaction.expectedCommand !in 0..0xff) errors += DefinitionValidationError("protocol.transactions.$name.expectedCommand", "must fit UInt8")
+            if (transaction.requestCommand !in 0..MAX_COMMAND) {
+                errors += DefinitionValidationError("protocol.transactions.$name.requestCommand", "must fit UInt24")
+            }
+            if (transaction.expectedCommand != null && transaction.expectedCommand !in 0..MAX_COMMAND) {
+                errors += DefinitionValidationError("protocol.transactions.$name.expectedCommand", "must fit UInt24")
+            }
+            val segmented = definition.protocol.framing?.segmented
+            if (segmented == null && transaction.requestCommand > 0xff) {
+                errors += DefinitionValidationError(
+                    "protocol.transactions.$name.requestCommand",
+                    "must fit UInt8 for a legacy one-byte command codec",
+                )
+            }
+            if (segmented == null && transaction.expectedCommand != null && transaction.expectedCommand > 0xff) {
+                errors += DefinitionValidationError(
+                    "protocol.transactions.$name.expectedCommand",
+                    "must fit UInt8 for a legacy one-byte command codec",
+                )
+            }
+            if (segmented != null) {
+                validateCommandWidth(
+                    transaction.requestCommand,
+                    segmented.request,
+                    "protocol.transactions.$name.requestCommand",
+                    errors,
+                )
+                transaction.expectedCommand?.let { command ->
+                    validateCommandWidth(
+                        command,
+                        segmented.response,
+                        "protocol.transactions.$name.expectedCommand",
+                        errors,
+                    )
+                }
+                transaction.matcher?.let { matcher ->
+                    validatePacketMatcher(
+                        matcher,
+                        "protocol.transactions.$name.matcher",
+                        segmented.request,
+                        segmented.response,
+                        errors,
+                    )
+                }
+            }
             if (transaction.expectedPayloadTypes.isNotEmpty()) {
                 if (manifest.schemaVersion < DefinitionSchema.VERSION_STREAM) {
                     errors += DefinitionValidationError("protocol.transactions.$name.expectedPayloadTypes", "requires manifest.schemaVersion ${DefinitionSchema.VERSION_STREAM}")
@@ -204,6 +266,29 @@ object DefinitionValidator {
             }
             if (transaction.retries < 0) errors += DefinitionValidationError("protocol.transactions.$name.retries", "must not be negative")
             if (transaction.timeout != null && !transaction.timeout.isPositive()) errors += DefinitionValidationError("protocol.transactions.$name.timeout", "must be positive")
+            if (transaction.matcher != null) {
+                if (manifest.schemaVersion < DefinitionSchema.VERSION_SEGMENTED) {
+                    errors += DefinitionValidationError(
+                        "protocol.transactions.$name.matcher",
+                        "requires manifest.schemaVersion ${DefinitionSchema.VERSION_SEGMENTED}",
+                    )
+                }
+                if (transaction.expectedPayloadTypes.isNotEmpty()) {
+                    errors += DefinitionValidationError(
+                        "protocol.transactions.$name.matcher",
+                        "cannot be combined with legacy 'expectedPayloadTypes'",
+                    )
+                }
+                if (transaction.expectedCommand != null &&
+                    transaction.matcher.command != null &&
+                    transaction.expectedCommand != transaction.matcher.command
+                ) {
+                    errors += DefinitionValidationError(
+                        "protocol.transactions.$name.matcher.command",
+                        "conflicts with expectedCommand ${transaction.expectedCommand}",
+                    )
+                }
+            }
         }
         return errors
     }
@@ -422,6 +507,30 @@ object DefinitionValidator {
         if (manifest.schemaVersion < DefinitionSchema.VERSION_DECLARATIVE) {
             errors += DefinitionValidationError("$path.notify", "requires manifest.schemaVersion ${DefinitionSchema.VERSION_DECLARATIVE}")
         }
+        notify.matcher?.let { matcher ->
+            if (manifest.schemaVersion < DefinitionSchema.VERSION_SEGMENTED) {
+                errors += DefinitionValidationError(
+                    "$path.notify.matcher",
+                    "requires manifest.schemaVersion ${DefinitionSchema.VERSION_SEGMENTED}",
+                )
+            }
+            if (!stream) {
+                errors += DefinitionValidationError("$path.notify.matcher", "requires an rfcomm protocol.transport")
+            }
+            if (notify.payloadTypes.isNotEmpty()) {
+                errors += DefinitionValidationError(
+                    "$path.notify.matcher",
+                    "cannot be combined with legacy 'payloadTypes'",
+                )
+            }
+            if (notify.service != null || notify.characteristic != null) {
+                errors += DefinitionValidationError(
+                    "$path.notify.matcher",
+                    "cannot be combined with 'service'/'characteristic'",
+                )
+            }
+            validatePacketMatcherBasic(matcher, "$path.notify.matcher", errors)
+        }
         if (notify.payloadTypes.isNotEmpty()) {
             if (manifest.schemaVersion < DefinitionSchema.VERSION_STREAM) {
                 errors += DefinitionValidationError("$path.notify.payloadTypes", "requires manifest.schemaVersion ${DefinitionSchema.VERSION_STREAM}")
@@ -439,12 +548,14 @@ object DefinitionValidator {
                 )
             }
         } else {
-            if (stream) {
+            if (stream && notify.matcher == null) {
                 errors += DefinitionValidationError("$path.notify", "an rfcomm transport requires 'payloadType'")
             }
-            validateUuid(notify.service, "$path.notify.service", errors)
-            validateUuid(notify.characteristic, "$path.notify.characteristic", errors)
-            if (notify.condition != null) {
+            if (notify.matcher == null) {
+                validateUuid(notify.service, "$path.notify.service", errors)
+                validateUuid(notify.characteristic, "$path.notify.characteristic", errors)
+            }
+            if (notify.condition != null && notify.matcher == null) {
                 errors += DefinitionValidationError("$path.notify.if", "requires 'payloadType'")
             }
         }
@@ -487,6 +598,70 @@ object DefinitionValidator {
                 "must be positive",
             )
         }
+        val segmented = framing.segmented
+        if (segmented != null) {
+            if (definition.manifest.schemaVersion < DefinitionSchema.VERSION_SEGMENTED) {
+                errors += DefinitionValidationError(
+                    "protocol.framing.request",
+                    "segmented layouts require manifest.schemaVersion ${DefinitionSchema.VERSION_SEGMENTED}",
+                )
+            }
+            if (framing.codec != "segmented") {
+                errors += DefinitionValidationError(
+                    "protocol.framing.codec",
+                    "must be 'segmented' when request/response layouts are declared",
+                )
+            }
+            if (framing.splitter.normalized().function != FrameSplitterRegistry.LENGTH_PREFIXED) {
+                errors += DefinitionValidationError(
+                    "protocol.framing.splitter.function",
+                    "must be '${FrameSplitterRegistry.LENGTH_PREFIXED}' for segmented length-prefixed frames",
+                )
+            }
+            val checksum = normalizedChecksum(framing)
+            if (checksum != null && checksum.coverage != ChecksumCoverage.SEGMENTS) {
+                errors += DefinitionValidationError(
+                    "protocol.framing.checksum.coverage",
+                    "must be 'segments' for a segmented codec",
+                )
+            }
+            validateFrameLayout(
+                segmented.request,
+                "protocol.framing.request",
+                (checksum?.width ?: 0) / 8,
+                framing.splitter.maxFrameBytes,
+                errors,
+                checksum?.outputByteOrder,
+            )
+            validateFrameLayout(
+                segmented.response,
+                "protocol.framing.response",
+                (checksum?.width ?: 0) / 8,
+                framing.splitter.maxFrameBytes,
+                errors,
+                checksum?.outputByteOrder,
+            )
+        } else if (framing.codec == "segmented") {
+            errors += DefinitionValidationError(
+                "protocol.framing.request",
+                "is required for the segmented codec",
+            )
+        } else {
+            if (framing.header == null || framing.header !in 0..0xff) {
+                errors += DefinitionValidationError("protocol.framing.header", "must fit UInt8")
+            }
+            if (framing.trailer == null || framing.trailer !in 0..0xff) {
+                errors += DefinitionValidationError("protocol.framing.trailer", "must fit UInt8")
+            }
+            normalizedChecksum(framing)?.let { checksum ->
+                if (checksum.coverage != ChecksumCoverage.BODY) {
+                    errors += DefinitionValidationError(
+                        "protocol.framing.checksum.coverage",
+                        "must be 'body' for the legacy framed codec",
+                    )
+                }
+            }
+        }
         // The codec owns the shape of its own configuration: build the runtime spec here so a
         // malformed layout is rejected at validation time instead of at connection time.
         runCatching { framing.toSpec() }.onFailure { error ->
@@ -501,24 +676,106 @@ object DefinitionValidator {
         framing: FramingDefinition,
         errors: MutableList<DefinitionValidationError>,
     ) {
-        val structured = framing.checksumSpec
-        val checksum = when {
-            structured != null -> structured
-            framing.checksum != null -> runCatching { ChecksumSpec.legacy(framing.checksum) }
-                .getOrElse { error ->
-                    errors += DefinitionValidationError(
-                        "protocol.framing.checksum",
-                        error.message ?: "invalid legacy checksum",
-                    )
-                    return
-                }
-            else -> return
-        }
+        val checksum = normalizedChecksum(framing, errors) ?: return
         ChecksumRegistry.validate(checksum).forEach { error ->
             errors += DefinitionValidationError(
                 "protocol.framing.checksum.${error.parameter}",
                 "checksum '${checksum.function}' ${error.message}",
             )
+        }
+    }
+
+    private fun normalizedChecksum(
+        framing: FramingDefinition,
+        errors: MutableList<DefinitionValidationError>? = null,
+    ): ChecksumSpec? {
+        framing.checksumSpec?.let { return it }
+        val legacy = framing.checksum ?: return null
+        return runCatching { ChecksumSpec.legacy(legacy) }.getOrElse { error ->
+            errors?.add(
+                DefinitionValidationError(
+                    "protocol.framing.checksum",
+                    error.message ?: "invalid legacy checksum",
+                ),
+            )
+            null
+        }
+    }
+
+    private fun validateFrameLayout(
+        layout: FrameLayoutSpec,
+        path: String,
+        checksumWidth: Int,
+        maxFrameBytes: Int,
+        errors: MutableList<DefinitionValidationError>,
+        checksumOrder: com.Fusion.Btremix.protocol.api.Endianness? = null,
+    ) {
+        FrameLayoutRules.validate(layout, checksumWidth, checksumOrder).forEach { issue ->
+            errors += DefinitionValidationError("$path.${issue.parameter}", issue.message)
+        }
+        val minimum = runCatching { layout.minimalBytes(checksumWidth) }.getOrNull()
+        if (minimum == null) {
+            errors += DefinitionValidationError(path, "layout cannot be resolved")
+        } else if (minimum > maxFrameBytes) {
+            errors += DefinitionValidationError(
+                path,
+                "minimum frame size $minimum exceeds maxFrameBytes $maxFrameBytes",
+            )
+        }
+    }
+
+    private fun validateCommandWidth(
+        command: Int,
+        layout: FrameLayoutSpec,
+        path: String,
+        errors: MutableList<DefinitionValidationError>,
+    ) {
+        val width = layout.commandWidthBytes ?: return
+        val maximum = (1 shl (width * 8)) - 1
+        if (command !in 0..maximum) {
+            errors += DefinitionValidationError(path, "does not fit the ${width}-byte command segment")
+        }
+    }
+
+    private fun validatePacketMatcher(
+        matcher: PacketMatcherSpec,
+        path: String,
+        requestLayout: FrameLayoutSpec,
+        responseLayout: FrameLayoutSpec,
+        errors: MutableList<DefinitionValidationError>,
+    ) {
+        validatePacketMatcherBasic(matcher, path, errors)
+        if (matcher.matchRequestSequence && requestLayout.segment(FrameSegmentRole.SEQUENCE) == null) {
+            errors += DefinitionValidationError("$path.sequence", "request layout has no sequence segment")
+        }
+        if ((matcher.matchRequestSequence || matcher.sequence != null) &&
+            responseLayout.segment(FrameSegmentRole.SEQUENCE) == null
+        ) {
+            errors += DefinitionValidationError("$path.sequence", "response layout has no sequence segment")
+        }
+        if (matcher.command != null) {
+            validateCommandWidth(matcher.command, responseLayout, "$path.command", errors)
+        }
+        if ((matcher.payloadPrefix.isNotEmpty() || matcher.payloadTypes.isNotEmpty()) &&
+            responseLayout.segment(FrameSegmentRole.PAYLOAD) == null
+        ) {
+            errors += DefinitionValidationError("$path", "response layout has no payload segment")
+        }
+    }
+
+    private fun validatePacketMatcherBasic(
+        matcher: PacketMatcherSpec,
+        path: String,
+        errors: MutableList<DefinitionValidationError>,
+    ) {
+        if (matcher.command != null && matcher.command !in 0..MAX_COMMAND) {
+            errors += DefinitionValidationError("$path.command", "must fit UInt24")
+        }
+        if (matcher.sequence != null && matcher.sequence !in 0..0xff) {
+            errors += DefinitionValidationError("$path.sequence", "must fit UInt8")
+        }
+        if (matcher.payloadTypes.any { it !in 0..0xff }) {
+            errors += DefinitionValidationError("$path.payloadTypes", "every payload type must fit UInt8")
         }
     }
 

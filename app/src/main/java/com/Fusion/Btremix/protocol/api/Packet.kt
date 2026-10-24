@@ -6,7 +6,7 @@ data class Packet(
     val payload: ByteArray = byteArrayOf(),
 ) {
     init {
-        require(command in 0..0xff) { "Command must fit in UInt8" }
+        require(command in 0..MAX_COMMAND) { "Command must fit in 24 bits" }
         require(sequence == null || sequence in 0..0xff) { "Sequence must fit in UInt8" }
     }
 
@@ -29,9 +29,12 @@ interface PacketDecoder {
 /** A codec that can both encode and decode packets. */
 interface PacketCodec : PacketEncoder, PacketDecoder
 
+const val MAX_COMMAND: Int = 0xffffff
+
 /** Simple wire format: command, optional sequence, then payload. */
 class SimplePacketCodec(private val includesSequence: Boolean = true) : PacketCodec {
     override fun encode(packet: Packet): ByteArray {
+        require(packet.command in 0..0xff) { "Simple packet command must fit in UInt8" }
         if (includesSequence) require(packet.sequence != null) { "Packet sequence is required" }
         val output = ByteArray(1 + (if (includesSequence) 1 else 0) + packet.payload.size)
         output[0] = packet.command.toByte()

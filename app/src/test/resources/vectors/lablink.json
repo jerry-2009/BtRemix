@@ -1,6 +1,6 @@
 {
   "formatVersion": 1,
-  "fixture": "LabLink P0 pressure suite",
+  "fixture": "LabLink P2 pressure suite",
   "vendorNeutral": true,
   "provenance": {
     "kind": "derived",
@@ -10,6 +10,7 @@
     "l1": {
       "id": "lab.static",
       "source": "derived",
+      "packageFixture": "lab.static-1.0.0.dcpkg",
       "coverage": [
         "two-byte magic",
         "16-bit and 24-bit command",
@@ -200,7 +201,7 @@
           }
         }
       },
-      "expectedCurrentErrors": [
+      "expectedP0Errors": [
         {
           "path": "protocol.transactions.request.requestCommand",
           "reason": "Packet.command is UInt8-only"
@@ -410,28 +411,28 @@
       "id": "L1-CRC16",
       "fixture": "lab.static",
       "classification": "data",
-      "reason": "P1 closed parameterized CRC-8/16; body coverage is executable while magic-through-payload scope remains P2",
-      "proposedIn": "P1"
+      "reason": "P1 supplied CRC-8/16; P2 adds explicit magic-through-payload segment coverage",
+      "proposedIn": "P1/P2"
     },
     {
       "id": "L1-SPLITTER",
       "fixture": "lab.static",
       "classification": "data",
-      "reason": "The only accumulator is delimiter-based; there is no length-header splitter or length-includes-checksum policy",
+      "reason": "Closed by splitter.lengthPrefixed and direction-specific length segment flags",
       "proposedIn": "P1/P2"
     },
     {
       "id": "L1-WIDE-COMMAND",
       "fixture": "lab.static",
       "classification": "data",
-      "reason": "Packet.command and validator restrict commands to UInt8",
+      "reason": "Closed by the UInt24 Packet command and 1..3-byte command segment",
       "proposedIn": "P2"
     },
     {
       "id": "L1-DUAL-LAYOUT",
       "fixture": "lab.static",
       "classification": "data",
-      "reason": "FramingLayout describes one body layout for both directions",
+      "reason": "Closed by independent request and response segment tables",
       "proposedIn": "P2"
     },
     {

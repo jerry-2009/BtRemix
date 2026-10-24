@@ -1,13 +1,18 @@
 package com.Fusion.Btremix.protocol.vectors
 
 import com.Fusion.Btremix.definition.api.DefinitionManifest
-import com.Fusion.Btremix.definition.api.FramingDefinition
 import com.Fusion.Btremix.definition.json.DefinitionJsonCodec
 import com.Fusion.Btremix.definition.json.JsonValue
 import com.Fusion.Btremix.definition.json.JsonWriter
+import com.Fusion.Btremix.definition.packages.DevicePackageReader
+import com.Fusion.Btremix.definition.packages.DevicePackageValidator
 import com.Fusion.Btremix.definition.validator.DefinitionValidator
 import com.Fusion.Btremix.scripting.api.ScriptCodec
 import com.Fusion.Btremix.scripting.api.ScriptFormatException
+import com.Fusion.Btremix.protocol.codec.framed.SegmentedFrameCodec
+import java.io.File
+import org.junit.Assume.assumeTrue
+import org.junit.Assert.assertArrayEquals
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
 import org.junit.Assert.assertTrue
@@ -86,44 +91,21 @@ class LabLinkPressureFixtureTest {
     }
 
     @Test
-    fun labStatic_isRejectedAtTheDocumentedCurrentRuntimePaths() {
+    fun labStatic_isAcceptedByTheP2PackageAndSegmentedCodec() {
         val layer = layers.requiredObject("l1")
-        val definition = decodeProbe(layer)
-        val errors = DefinitionValidator.validate(definition)
-        val byPath = errors.associateBy { it.path }
-        assertFalse(
-            "P1 must close the parameterized CRC gap",
-            errors.any { it.path.startsWith("protocol.framing.checksum") },
+        val file = sampleFile(layer.requiredString("packageFixture"))
+        assumeTrue("LabLink .dcpkg fixture is unavailable", file != null)
+        val devicePackage = DevicePackageValidator().validate(DevicePackageReader().read(requireNotNull(file)))
+        assertEquals("lab.static", devicePackage.definition.id)
+        assertEquals(emptyList<Any>(), DefinitionValidator.validate(devicePackage.definition))
+        val codec = devicePackage.definition.protocolFactory().packetCodec as SegmentedFrameCodec
+
+        assertArrayEquals(
+            hexBytes(layer.requiredArray("vectors").values.first().requiredObject("vectors[0]").requiredString("bytesHex")),
+            codec.encodeRequest(com.Fusion.Btremix.protocol.api.Packet(0x1003)),
         )
-
-        layer.requiredArray("expectedCurrentErrors").values.forEach { raw ->
-            val expected = raw.requiredObject("l1.expectedCurrentErrors[]")
-            val path = expected.requiredString("path")
-            val error = byPath[path] ?: error("current runtime did not report $path; got ${errors.map { it.path }}")
-            assertTrue(
-                "$path must explain the gap: ${error.message}",
-                error.message.contains("fit UInt8") || error.message.contains("checksum", ignoreCase = true),
-            )
-        }
-
-        val framingFields = FramingDefinition::class.java.declaredFields.map { it.name }
-        assertFalse("P0 would become stale if request/response layouts are already modelled", framingFields.any { it.contains("requestLayout") })
-        assertFalse("P0 would become stale if response layouts are already modelled", framingFields.any { it.contains("responseLayout") })
-        assertFalse("P0 would become stale if variable command width is already modelled", framingFields.any { it == "commandWidthBytes" })
-        assertFalse("P0 would become stale if length-includes-checksum is already modelled", framingFields.any { it == "includesChecksum" })
-
-        val probeFraming = decodeProbe(layer).protocol.framing ?: error("probe framing missing")
-        assertEquals(2, probeFraming.lengthBytes)
-        assertEquals("crc", probeFraming.checksumSpec?.function)
-        assertEquals(16, probeFraming.checksumSpec?.width)
-        assertEquals("delimited", probeFraming.splitter.function)
-        assertEquals(4096, probeFraming.splitter.maxFrameBytes)
-        val rawFraming = layer.requiredObject("currentProbeDefinition")
-            .requiredObject("protocol")
-            .requiredObject("framing")
-        assertEquals(3, rawFraming.requiredInt("commandWidthBytes"))
-        val includesChecksum = rawFraming.requiredObject("length").values["includesChecksum"] as? JsonValue.BooleanValue
-        assertTrue("fixture must retain the length-includes-checksum requirement", includesChecksum?.value == true)
+        assertEquals(2, codec.responseCommandWidthBytes)
+        assertTrue(devicePackage.definition.actions.values.all { it.script == null })
     }
 
     @Test
@@ -190,6 +172,11 @@ class LabLinkPressureFixtureTest {
         validate = false,
     )
 
+    private fun sampleFile(relativePath: String): File? = SAMPLE_ROOTS
+        .asSequence()
+        .map { root -> File(root, relativePath) }
+        .firstOrNull(File::isFile)
+
     private fun crc16Xmodem(bytes: ByteArray): Int {
         var crc = 0
         bytes.forEach { byte ->
@@ -203,5 +190,9 @@ class LabLinkPressureFixtureTest {
             }
         }
         return crc
+    }
+
+    private companion object {
+        val SAMPLE_ROOTS = listOf("../../samples", "../samples", "samples")
     }
 }

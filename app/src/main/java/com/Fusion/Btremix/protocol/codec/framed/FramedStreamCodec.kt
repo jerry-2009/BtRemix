@@ -29,6 +29,8 @@ class FramedCodecException(message: String) : IllegalArgumentException(message)
  */
 class FramedStreamCodec(private val spec: FramingSpec) : StreamCodec {
     override val name: String = NAME
+    private val header: Int = requireNotNull(spec.header) { "Framed codec requires a header" }
+    private val trailer: Int = requireNotNull(spec.trailer) { "Framed codec requires a trailer" }
     private val checksum: Checksum? = spec.checksum?.let(ChecksumRegistry::create)
     private val checksumBytes: Int get() = (checksum?.widthBits ?: 0) / 8
 
@@ -61,20 +63,20 @@ class FramedStreamCodec(private val spec: FramingSpec) : StreamCodec {
         val frame = ByteArray(
             2 + escapedBody.size + (escapedChecksum?.size ?: 0),
         )
-        frame[0] = spec.header.toByte()
+        frame[0] = header.toByte()
         escapedBody.copyInto(frame, 1)
         escapedChecksum?.copyInto(frame, 1 + escapedBody.size)
-        frame[frame.lastIndex] = spec.trailer.toByte()
+        frame[frame.lastIndex] = trailer.toByte()
         return frame
     }
 
     override fun decode(bytes: ByteArray): Packet {
         if (bytes.isEmpty()) throw FramedCodecException("Frame is empty")
-        if ((bytes.first().toInt() and 0xff) != spec.header) {
-            throw FramedCodecException("Frame does not start with 0x%02X".format(spec.header))
+        if ((bytes.first().toInt() and 0xff) != header) {
+            throw FramedCodecException("Frame does not start with 0x%02X".format(header))
         }
-        if ((bytes.last().toInt() and 0xff) != spec.trailer) {
-            throw FramedCodecException("Frame does not end with 0x%02X".format(spec.trailer))
+        if ((bytes.last().toInt() and 0xff) != trailer) {
+            throw FramedCodecException("Frame does not end with 0x%02X".format(trailer))
         }
         val inner = unescape(bytes.copyOfRange(1, bytes.size - 1))
         val layout = spec.layout
@@ -121,7 +123,7 @@ class FramedStreamCodec(private val spec: FramingSpec) : StreamCodec {
         val out = ArrayList<Byte>(bytes.size + 4)
         for (raw in bytes) {
             val value = raw.toInt() and 0xff
-            if (value == escapeByte || value == spec.header || value == spec.trailer) {
+            if (value == escapeByte || value == header || value == trailer) {
                 out += escapeByte.toByte()
                 out += (value and spec.escapeMask).toByte()
             } else {

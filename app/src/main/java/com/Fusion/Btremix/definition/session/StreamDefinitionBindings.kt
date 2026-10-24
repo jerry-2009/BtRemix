@@ -87,12 +87,10 @@ class StreamDefinitionBindings(
     private fun bindNotifications() {
         definition.states.values.forEach { state ->
             val notify = state.notify ?: return@forEach
-            val payloadTypes = notify.payloadTypes
-            if (payloadTypes.isEmpty()) return@forEach
+            if (notify.payloadTypes.isEmpty() && notify.matcher == null) return@forEach
             jobs += scope.launch {
                 session.packets().collect { packet ->
-                    val type = packet.payload.firstOrNull()?.toInt()?.and(0xff) ?: return@collect
-                    if (type !in payloadTypes) return@collect
+                    if (!support.matchesNotification(packet, notify)) return@collect
                     val value = support.decodeNotification(state, notify, packet.payload) ?: return@collect
                     session.state.set(state.key, value, StateSource.NOTIFICATION)
                 }

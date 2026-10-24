@@ -4,6 +4,18 @@ import com.Fusion.Btremix.definition.json.DefinitionJsonCodec
 import com.Fusion.Btremix.definition.json.DefinitionJsonException
 import com.Fusion.Btremix.definition.validator.DefinitionValidationException
 import com.Fusion.Btremix.protocol.api.ChecksumSpec
+import com.Fusion.Btremix.protocol.api.ChecksumAlgorithm
+import com.Fusion.Btremix.protocol.api.ChecksumCoverage
+import com.Fusion.Btremix.protocol.api.Endianness
+import com.Fusion.Btremix.protocol.api.FramingLayout
+import com.Fusion.Btremix.protocol.api.FramingSpec
+import com.Fusion.Btremix.protocol.api.FrameSplitterRegistry
+import com.Fusion.Btremix.protocol.api.FrameSplitterSpec
+import com.Fusion.Btremix.protocol.api.LegacyFramingAdapter
+import com.Fusion.Btremix.protocol.api.Packet
+import com.Fusion.Btremix.protocol.codec.framed.FramedStreamCodec
+import com.Fusion.Btremix.protocol.codec.framed.SegmentedFrameCodec
+import org.junit.Assert.assertArrayEquals
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertTrue
 import org.junit.Test
@@ -59,6 +71,37 @@ class LegacyFramingAdapterTest {
         assertEquals(16, framing.checksumSpec?.width)
         assertEquals(listOf("checksum.crc", "splitter.delimited"), definition.manifest.requires)
         assertEquals("crc", framing.toSpec().checksum?.function)
+    }
+
+    @Test
+    fun legacyFramingAdapterProducesTheSameBytesAsTheFrozenCodec() {
+        val legacy = FramingSpec(
+            header = 0x3E,
+            trailer = 0x3C,
+            checksum = ChecksumSpec(ChecksumAlgorithm.SUM8),
+            layout = FramingLayout(
+                messageTypeOffset = 0,
+                sequenceOffset = 1,
+                lengthOffset = 2,
+                lengthBytes = 4,
+                lengthByteOrder = Endianness.BIG,
+            ),
+        )
+        val adapted = FramingSpec(
+            checksum = ChecksumSpec(
+                function = "sum8",
+                width = 8,
+                coverage = ChecksumCoverage.SEGMENTS,
+            ),
+            splitter = FrameSplitterSpec(FrameSplitterRegistry.LENGTH_PREFIXED),
+            segmented = LegacyFramingAdapter.requestAndResponse(legacy),
+        )
+        val packet = Packet(0x0C, 7, byteArrayOf(0x22, 0x01))
+
+        assertArrayEquals(
+            FramedStreamCodec(legacy).encode(packet),
+            SegmentedFrameCodec(adapted).encodeRequest(packet),
+        )
     }
 
     @Test

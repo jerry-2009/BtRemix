@@ -19,10 +19,12 @@ import org.junit.Test
 /** Covers the version 4 schema gate and the optional `melody` section. */
 class MelodySectionSchemaTest {
     @Test
-    fun schemaVersionFour_isCurrentAndSupported() {
+    fun schemaVersionFive_isCurrentAndMelodyVersionFourRemainsSupported() {
         assertEquals(4, DefinitionSchema.VERSION_MELODY)
-        assertEquals(DefinitionSchema.VERSION_MELODY, DefinitionSchema.CURRENT)
-        assertEquals(1..4, DefinitionSchema.SUPPORTED)
+        assertEquals(5, DefinitionSchema.VERSION_SEGMENTED)
+        assertEquals(DefinitionSchema.VERSION_SEGMENTED, DefinitionSchema.CURRENT)
+        assertTrue(DefinitionSchema.VERSION_MELODY in DefinitionSchema.SUPPORTED)
+        assertEquals(1..5, DefinitionSchema.SUPPORTED)
     }
 
     @Test

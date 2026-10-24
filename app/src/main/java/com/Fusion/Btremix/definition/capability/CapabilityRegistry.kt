@@ -48,6 +48,21 @@ object CapabilityRegistry {
             minRuntimeApi = 1,
             parameterRule = "header and trailer fit UInt8; maxFrameBytes is positive",
         ),
+        "splitter.lengthPrefixed" to CapabilityDescriptor(
+            id = "splitter.lengthPrefixed",
+            minRuntimeApi = 1,
+            parameterRule = "response layout declares magic and a 1..4-byte length; maxFrameBytes is positive",
+        ),
+        "framing.segmented" to CapabilityDescriptor(
+            id = "framing.segmented",
+            minRuntimeApi = 1,
+            parameterRule = "request/response segment tables are ordered, contiguous and checksum-covered",
+        ),
+        "framing.command24" to CapabilityDescriptor(
+            id = "framing.command24",
+            minRuntimeApi = 1,
+            parameterRule = "command segment width is 1..3 bytes",
+        ),
     )
 
     val names: Set<String> get() = capabilities.keys.toSet()
