@@ -16,7 +16,7 @@ import io.github.libxposed.api.XposedInterface
  *
  * - `e3.t.k(name)` (`isOplusWirelessDevices`) must be true, or the device must be a "totally supported
  *   AirPods" device - otherwise the category is removed;
- * - `k()` asks `E2.b.d(name)` (`OplusPodsDataManager.isOplusPodsWhiteSupportDevice`), which walks the
+ * - `k()` asks `O3.b.c(name)` (`OplusPodsDataManager.isOplusPodsWhiteSupportDevice`), which walks the
  *   whitelist rows the settings app fetched from Melody `ears_whitelist` and compares names with
  *   `query.equals(row.name)` - an **exact** match.
  *
@@ -40,9 +40,9 @@ internal class MelodyWirelessSettingsInjection(
             log.event("melody.anchor.missing", "hook" to "settings.pods", "class" to DATA_MANAGER_CLASS)
             return
         }
-        val method = Reflect.findMethod(cls, "d", arrayOf(String::class.java))
+        val method = Reflect.findMethod(cls, METHOD, arrayOf(String::class.java))
         if (method == null || method.returnType != Boolean::class.javaPrimitiveType) {
-            log.event("melody.anchor.missing", "hook" to "settings.pods", "class" to DATA_MANAGER_CLASS, "method" to "d")
+            log.event("melody.anchor.missing", "hook" to "settings.pods", "class" to DATA_MANAGER_CLASS, "method" to METHOD)
             return
         }
         module.hook(method).intercept(XposedInterface.Hooker { chain ->
@@ -72,7 +72,7 @@ internal class MelodyWirelessSettingsInjection(
      * Returns the whitelist row name that matches [query] loosely, or `null`.
      *
      * The row list is the settings app's own field (`OplusPodsDataManager.a`, a
-     * `CopyOnWriteArrayList<E2.a>`); each entry's name is its field `a`. Reading it (instead of keeping
+     * `CopyOnWriteArrayList<O3.a>`); each entry's name is its field `a`. Reading it (instead of keeping
      * our own copy) guarantees the entry can only appear for a device the settings app actually
      * received from Melody.
      */
@@ -90,8 +90,9 @@ internal class MelodyWirelessSettingsInjection(
     }
 
     private companion object {
-        /** `com.oplus.wirelesssettings` `E2.b` = `OplusPodsDataManager` (obfuscated short name). */
-        const val DATA_MANAGER_CLASS = "E2.b"
+        /** `com.oplus.wirelesssettings` `O3.b` = `OplusPodsDataManager` in 17.5.17. */
+        const val DATA_MANAGER_CLASS = "O3.b"
+        const val METHOD = "c"
         const val ROWS_FIELD = "a"
         const val NAME_FIELD = "a"
 

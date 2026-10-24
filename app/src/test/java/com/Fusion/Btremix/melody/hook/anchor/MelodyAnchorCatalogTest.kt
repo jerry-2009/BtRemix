@@ -24,7 +24,7 @@ class MelodyAnchorCatalogTest {
                 assertTrue(
                     "${spec.id} baseline $name must be an Oplus/COUI class",
                     name.startsWith("com.oplus.") || name.startsWith("com.coui.") ||
-                        name.substringBeforeLast('.').substringBefore('.') in setOf("A9", "D0", "E2", "Ba", "c7", "d7", "c9", "i9", "n7"),
+                        name.substringBeforeLast('.').substringBefore('.') in setOf("A9", "D0", "E2", "O3", "Ba", "c7", "d7", "c9", "i9", "n7"),
                 )
             }
         }
@@ -115,5 +115,14 @@ class MelodyAnchorCatalogTest {
             val query = requireNotNull(MelodyAnchorCatalog.spec(id)).query
             assertFalse("$id must not be BaselineOnly", query is MelodyAnchorQuery.BaselineOnly)
         }
+    }
+
+    @Test
+    fun settingsPodsAnchorTracksWirelessSettings17517() {
+        val spec = requireNotNull(MelodyAnchorCatalog.spec(MelodyAnchorCatalog.SETTINGS_PODS_DATA_MANAGER))
+
+        assertEquals(listOf("O3.b"), spec.baselineClasses)
+        assertEquals(listOf("O3"), spec.packages)
+        assertEquals(MelodyAnchorQuery.MethodName("c", 1), spec.query)
     }
 }

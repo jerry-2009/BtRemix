@@ -75,9 +75,9 @@ fun HomeScreen(
             verticalAlignment = Alignment.CenterVertically,
         ) {
             Column(Modifier.weight(1f)) {
-                Text("BtRemix", style = MaterialTheme.typography.headlineLarge)
+                Text("MelodyLink", style = MaterialTheme.typography.headlineLarge)
                 Text(
-                    "蓝牙设备管理中心",
+                    "首页",
                     style = MaterialTheme.typography.bodyMedium,
                     color = MaterialTheme.colorScheme.onSurfaceVariant,
                 )

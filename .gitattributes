@@ -2,3 +2,12 @@
 # line endings are part of the contract), so it must stay LF-only in every checkout. Without this,
 # `core.autocrlf=true` rewrites it to CRLF and MelodyWhitelistTemplateTest fails on a clean clone.
 app/src/main/assets/melody/whitelist-template.json text eol=lf
+* text=auto
+*.kt text eol=lf
+*.java text eol=lf
+*.kts text eol=lf
+*.gradle text eol=lf
+*.xml text eol=lf
+*.properties text eol=lf
+*.toml text eol=lf
+*.json text eol=lf

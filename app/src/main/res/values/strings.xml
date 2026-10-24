@@ -1,5 +1,5 @@
 <resources>
-    <string name="app_name">BtRemix</string>
+    <string name="app_name">MelodyLinkNeo</string>
     <string name="melody_bridge_channel_name">Melody bridge</string>
     <string name="melody_bridge_channel_description">Shown while a device session is active and BtRemix shares it with the ColorOS Melody panel; the service stops when the session ends.</string>
     <string name="melody_bridge_notification_title">BtRemix Melody bridge</string>

@@ -477,9 +477,11 @@ internal object MelodyAnchorCatalog {
             id = SETTINGS_PODS_DATA_MANAGER,
             host = MelodyAnchorHost.Settings,
             feature = "settings.pods",
-            baselineClasses = listOf("E2.b"),
-            packages = listOf("E2"),
-            query = MelodyAnchorQuery.MethodName("d", 1),
+            // 17.5.17 moved `OplusPodsDataManager` from `E2.b.d(String)` to `O3.b.c(String)`.
+            // `E2.b` still exists in the APK, but it is now unrelated to the headset whitelist.
+            baselineClasses = listOf("O3.b"),
+            packages = listOf("O3"),
+            query = MelodyAnchorQuery.MethodName("c", 1),
         ),
     )
 
