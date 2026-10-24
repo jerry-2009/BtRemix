@@ -1,0 +1,442 @@
+{
+  "formatVersion": 1,
+  "fixture": "LabLink P0 pressure suite",
+  "vendorNeutral": true,
+  "provenance": {
+    "kind": "derived",
+    "basis": "Synthetic protocol designed for docs/++HANDOFF_MULTI_VENDOR_PROTOCOLS_V3.md; it is not a renamed vendor protocol."
+  },
+  "layers": {
+    "l1": {
+      "id": "lab.static",
+      "source": "derived",
+      "coverage": [
+        "two-byte magic",
+        "16-bit and 24-bit command",
+        "little-endian length that includes the checksum",
+        "different request and response layouts",
+        "CRC-16/XMODEM"
+      ],
+      "frameRules": {
+        "request": "magic(2) | command(2 BE) | payloadLength(2 LE) | payload | crc16(2 BE)",
+        "response": "magic(2) | status(1) | command(2 BE) | payloadLength(2 LE) | payload | crc16(2 BE)",
+        "payloadLength": "starts at payload and includes both checksum bytes",
+        "checksum": "CRC-16/XMODEM over magic through payload, excluding checksum",
+        "maximumFrameBytes": 4096
+      },
+      "vectors": [
+        {
+          "id": "request",
+          "source": "derived",
+          "layer": "L1",
+          "coverage": ["16-bit command", "little-endian length", "length includes checksum", "CRC-16"],
+          "commandWidthBits": 16,
+          "command": 4099,
+          "length": 2,
+          "bytesHex": "A5 5A 10 03 02 00 D5 20"
+        },
+        {
+          "id": "response",
+          "source": "derived",
+          "layer": "L1",
+          "coverage": ["response status byte", "different request/response layout", "16-bit command", "CRC-16"],
+          "commandWidthBits": 16,
+          "command": 36867,
+          "length": 3,
+          "bytesHex": "A5 5A 00 90 03 03 00 02 13 CA"
+        },
+        {
+          "id": "wide-command",
+          "source": "derived",
+          "layer": "L1",
+          "coverage": ["24-bit command", "little-endian length", "length includes checksum", "CRC-16"],
+          "commandWidthBits": 24,
+          "command": 1193046,
+          "length": 2,
+          "bytesHex": "A5 5A 12 34 56 02 00 66 F3"
+        }
+      ],
+      "errorVectors": [
+        {
+          "id": "bad-magic",
+          "source": "derived",
+          "layer": "L1",
+          "coverage": ["broken magic recovery"],
+          "bytesHex": "A4 5A 10 03 02 00 D5 20",
+          "expectedError": "magic mismatch"
+        },
+        {
+          "id": "bad-length",
+          "source": "derived",
+          "layer": "L1",
+          "coverage": ["length includes checksum", "bad length recovery"],
+          "bytesHex": "A5 5A 10 03 03 00 D5 20",
+          "expectedError": "declared length exceeds available payload"
+        },
+        {
+          "id": "bad-crc",
+          "source": "derived",
+          "layer": "L1",
+          "coverage": ["CRC-16 integrity"],
+          "bytesHex": "A5 5A 10 03 02 00 D5 21",
+          "expectedError": "CRC-16 mismatch"
+        },
+        {
+          "id": "truncated-header",
+          "source": "derived",
+          "layer": "L1",
+          "coverage": ["half frame"],
+          "bytesHex": "A5 5A 10",
+          "expectedError": "incomplete header"
+        },
+        {
+          "id": "oversize",
+          "source": "derived",
+          "layer": "L1",
+          "coverage": ["maximum frame size"],
+          "bytesHex": "A5 5A 10 03 FF FF",
+          "expectedError": "frame length exceeds 4096"
+        }
+      ],
+      "streamCases": [
+        {
+          "id": "half-frame",
+          "source": "derived",
+          "layer": "L1",
+          "coverage": ["half frame"],
+          "chunks": ["A5 5A 10"],
+          "expectedFrames": []
+        },
+        {
+          "id": "coalesced",
+          "source": "derived",
+          "layer": "L1",
+          "coverage": ["coalesced frames", "request/response layout"],
+          "chunks": ["A5 5A 10 03 02 00 D5 20A5 5A 00 90 03 03 00 02 13 CA"],
+          "expectedFrames": ["request", "response"]
+        },
+        {
+          "id": "noise-then-good-frame",
+          "source": "derived",
+          "layer": "L1",
+          "coverage": ["garbage before magic", "resynchronisation"],
+          "chunks": ["00 FF A5 5A 10 03 02 00 D5 20"],
+          "expectedFrames": ["request"]
+        }
+      ],
+      "currentProbeDefinition": {
+        "manifest": {
+          "id": "lab.static.probe",
+          "displayName": "LabLink static current-runtime probe",
+          "version": "1.0.0",
+          "schemaVersion": 3,
+          "matchers": [{"type": "namePrefix", "value": "LabLink static"}]
+        },
+        "protocol": {
+          "transport": {
+            "type": "rfcomm",
+            "service": "00000000-0000-0000-0000-00000000a501",
+            "bonded": false
+          },
+          "framing": {
+            "codec": "framed",
+            "header": 165,
+            "trailer": 32,
+            "checksum": "crc16",
+            "layout": {
+              "messageTypeOffset": 2,
+              "sequenceOffset": 1,
+              "lengthOffset": 4,
+              "lengthBytes": 2,
+              "lengthByteOrder": "little"
+            },
+            "requestLayout": {
+              "header": ["magic", 2],
+              "command": [2, "big"]
+            },
+            "responseLayout": {
+              "header": ["magic", 2],
+              "status": [1, "none"],
+              "command": [2, "big"]
+            },
+            "length": {
+              "startsAt": "payload",
+              "includesChecksum": true
+            },
+            "checksumRule": {
+              "algorithm": "crc16-xmodem",
+              "coverage": "magic..payload",
+              "output": [2, "big"]
+            },
+            "commandWidthBytes": 3,
+            "maximumFrameBytes": 4096
+          },
+          "transactions": {
+            "request": {
+              "requestCommand": 4099,
+              "expectedCommand": 36867,
+              "requestPayload": "",
+              "expectedPayloadTypes": [2],
+              "timeoutMs": 500
+            },
+            "wide-command": {
+              "requestCommand": 1193046,
+              "expectsResponse": false
+            }
+          }
+        }
+      },
+      "expectedCurrentErrors": [
+        {
+          "path": "protocol.framing",
+          "reason": "CRC-16 is not registered"
+        },
+        {
+          "path": "protocol.transactions.request.requestCommand",
+          "reason": "Packet.command is UInt8-only"
+        },
+        {
+          "path": "protocol.transactions.request.expectedCommand",
+          "reason": "Packet.command is UInt8-only"
+        },
+        {
+          "path": "protocol.transactions.wide-command.requestCommand",
+          "reason": "24-bit command has no model"
+        }
+      ]
+    },
+    "l2": {
+      "id": "lab.reactive",
+      "source": "derived",
+      "coverage": [
+        "conditional initialization",
+        "unsolicited peer request",
+        "response deadline",
+        "state read-back",
+        "cancellation on disconnect"
+      ],
+      "program": [
+        {
+          "op": "session.request",
+          "request": "state.read",
+          "matcher": {"command": 36867},
+          "timeoutMs": 500
+        },
+        {
+          "op": "session.onFrame",
+          "matcher": {"command": 4099, "payloadPrefix": "01"},
+          "program": [{"op": "session.send", "bytes": "A5 5A 00 90 03 03 00 02 13 CA"}]
+        },
+        {
+          "op": "session.waitFor",
+          "matcher": {"command": 36867},
+          "timeoutMs": 1000
+        },
+        {
+          "op": "state.set",
+          "key": "initialized",
+          "value": true
+        }
+      ],
+      "cases": [
+        {
+          "id": "conditional-initialization",
+          "source": "derived",
+          "layer": "L2",
+          "coverage": ["conditional initialization", "state read-back"],
+          "expected": "initialize only after the protocol state read completes"
+        },
+        {
+          "id": "peer-request",
+          "source": "derived",
+          "layer": "L2",
+          "coverage": ["unsolicited peer request", "bounded response"],
+          "expected": "respond within the declared deadline"
+        },
+        {
+          "id": "timeout",
+          "source": "derived",
+          "layer": "L2",
+          "coverage": ["timeout"],
+          "expected": "report a bounded timeout without changing lifecycle"
+        },
+        {
+          "id": "disconnect-cancellation",
+          "source": "derived",
+          "layer": "L2",
+          "coverage": ["disconnect cancellation"],
+          "expected": "cancel pending requests and event handlers"
+        }
+      ],
+      "currentProbeDefinition": {
+        "manifest": {
+          "id": "lab.reactive.probe",
+          "displayName": "LabLink reactive current-runtime probe",
+          "version": "1.0.0",
+          "schemaVersion": 3,
+          "matchers": [{"type": "namePrefix", "value": "LabLink reactive"}]
+        },
+        "protocol": {
+          "transport": {
+            "type": "rfcomm",
+            "service": "00000000-0000-0000-0000-00000000a502",
+            "bonded": false
+          },
+          "framing": {
+            "codec": "framed",
+            "header": 126,
+            "trailer": 60,
+            "escape": 61,
+            "escapeMask": 239,
+            "checksum": "sum8",
+            "layout": {
+              "messageTypeOffset": 0,
+              "sequenceOffset": 1,
+              "lengthOffset": 2,
+              "lengthBytes": 4,
+              "lengthByteOrder": "big"
+            }
+          }
+        },
+        "states": {
+          "initialized": {"type": "boolean", "default": false}
+        },
+        "actions": {
+          "reactive.initialize": {
+            "displayName": "Initialize reactive fixture",
+            "script": [
+              {"op": "state.get", "key": "initialized", "into": "wasInitialized"}
+            ]
+          }
+        },
+        "ui": {
+          "children": [{"type": "value", "state": "initialized"}]
+        }
+      },
+      "expectedCurrentError": {
+        "path": "actions.reactive.initialize.script",
+        "reason": "RFCOMM definitions reject scripts because the current script host is GATT-specific"
+      }
+    },
+    "l3": {
+      "id": "lab.authenticated",
+      "source": "derived",
+      "coverage": [
+        "challenge-response",
+        "explicit first-party extension registration",
+        "extension failure isolation",
+        "extension API version mismatch"
+      ],
+      "algorithm": {
+        "name": "lab.xor-index",
+        "description": "response[i] = ((challenge[i] XOR key[i mod key.length]) + i) mod 256",
+        "challengeHex": "10 20 30 40 50 60 70 80",
+        "keyHex": "5A C3 11 7E",
+        "responseHex": "4A E4 23 41 0E A8 67 05"
+      },
+      "extension": {
+        "id": "lab.authenticated.xor-index",
+        "apiVersion": 1,
+        "entry": "default",
+        "operations": ["challengeResponse"]
+      },
+      "cases": [
+        {
+          "id": "success",
+          "source": "derived",
+          "layer": "L3",
+          "coverage": ["challenge-response", "registered extension"],
+          "expected": "response matches responseHex"
+        },
+        {
+          "id": "wrong-version",
+          "source": "derived",
+          "layer": "L3",
+          "coverage": ["extension API version mismatch"],
+          "apiVersion": 2,
+          "expected": "definition disabled with manifest.extensions[0] diagnostic"
+        },
+        {
+          "id": "extension-throws",
+          "source": "derived",
+          "layer": "L3",
+          "coverage": ["extension failure isolation"],
+          "expected": "definition disabled; other definitions remain loaded"
+        },
+        {
+          "id": "timeout",
+          "source": "derived",
+          "layer": "L3",
+          "coverage": ["extension timeout"],
+          "expected": "bounded timeout; no lifecycle change"
+        }
+      ],
+      "currentProbeDefinition": {
+        "manifest": {
+          "id": "lab.authenticated.probe",
+          "displayName": "LabLink authenticated current-runtime probe",
+          "version": "1.0.0",
+          "schemaVersion": 3,
+          "runtimeApi": 1,
+          "requires": ["session.onFrame"],
+          "extensions": [
+            {
+              "id": "lab.authenticated.xor-index",
+              "apiVersion": 1,
+              "entry": "default"
+            }
+          ],
+          "matchers": [{"type": "namePrefix", "value": "LabLink authenticated"}]
+        }
+      },
+      "expectedCurrentGap": {
+        "path": "manifest.extensions[0]",
+        "reason": "DefinitionManifest has no extensions field or ProtocolExtension registry"
+      }
+    }
+  },
+  "gaps": [
+    {
+      "id": "L1-CRC16",
+      "fixture": "lab.static",
+      "classification": "data",
+      "reason": "ChecksumAlgorithm only supports none/sum8/xor8",
+      "proposedIn": "P1"
+    },
+    {
+      "id": "L1-SPLITTER",
+      "fixture": "lab.static",
+      "classification": "data",
+      "reason": "The only accumulator is delimiter-based; there is no length-header splitter or length-includes-checksum policy",
+      "proposedIn": "P1/P2"
+    },
+    {
+      "id": "L1-WIDE-COMMAND",
+      "fixture": "lab.static",
+      "classification": "data",
+      "reason": "Packet.command and validator restrict commands to UInt8",
+      "proposedIn": "P2"
+    },
+    {
+      "id": "L1-DUAL-LAYOUT",
+      "fixture": "lab.static",
+      "classification": "data",
+      "reason": "FramingLayout describes one body layout for both directions",
+      "proposedIn": "P2"
+    },
+    {
+      "id": "L2-RFCOMM-SCRIPT",
+      "fixture": "lab.reactive",
+      "classification": "script",
+      "reason": "The validator rejects every script on RFCOMM and the script host exposes GATT reads/writes",
+      "proposedIn": "P3"
+    },
+    {
+      "id": "L3-EXTENSION-SPI",
+      "fixture": "lab.authenticated",
+      "classification": "extension",
+      "reason": "No ProtocolExtension API, registration table, manifest extensions field, or controlled I/O contract exists",
+      "proposedIn": "P4"
+    }
+  ]
+}

@@ -1,0 +1,141 @@
+{
+  "formatVersion": 1,
+  "fixture": "sony-baseline",
+  "purpose": "Frozen byte-level regression for the existing generic framed stream runtime.",
+  "framing": {
+    "codec": "framed",
+    "header": 62,
+    "trailer": 60,
+    "escape": 61,
+    "escapeMask": 239,
+    "checksum": "sum8",
+    "layout": {
+      "messageTypeOffset": 0,
+      "sequenceOffset": 1,
+      "lengthOffset": 2,
+      "lengthBytes": 4,
+      "lengthByteOrder": "big"
+    },
+    "acknowledge": {
+      "messageTypes": [12, 14],
+      "replyMessageType": 1,
+      "sequence": "complement"
+    }
+  },
+  "vectors": [
+    {
+      "id": "protocol.info",
+      "source": "implementation",
+      "sourceDetail": "extra/BudsLink-main Sony framed stream implementation; frozen in HANDOFF_CLASSIC_BT_SPP.md section 2.1",
+      "command": 12,
+      "sequence": 0,
+      "payloadHex": "00 00",
+      "wireHex": "3E 0C 00 00 00 00 02 00 00 0E 3C",
+      "expectedAck": {
+        "command": 1,
+        "sequence": 1,
+        "payloadHex": "",
+        "wireHex": "3E 01 01 00 00 00 00 02 3C"
+      }
+    },
+    {
+      "id": "escaped-header",
+      "source": "implementation",
+      "sourceDetail": "extra/BudsLink-main Sony escape implementation; frozen in HANDOFF_CLASSIC_BT_SPP.md section 2.1",
+      "command": 12,
+      "sequence": 1,
+      "payloadHex": "3E",
+      "wireHex": "3E 0C 01 00 00 00 01 3D 2E 4C 3C",
+      "expectedAck": {
+        "command": 1,
+        "sequence": 0,
+        "payloadHex": "",
+        "wireHex": "3E 01 00 00 00 00 00 01 3C"
+      }
+    },
+    {
+      "id": "escaped-trailer-and-escape",
+      "source": "derived",
+      "sourceDetail": "Escape-boundary payload constructed from the documented Sony escape rule and independently checksum-verified",
+      "command": 12,
+      "sequence": 0,
+      "payloadHex": "3C 3D",
+      "wireHex": "3E 0C 00 00 00 00 02 3D 2C 3D 2D 87 3C",
+      "expectedAck": {
+        "command": 1,
+        "sequence": 1,
+        "payloadHex": "",
+        "wireHex": "3E 01 01 00 00 00 00 02 3C"
+      }
+    }
+  ],
+  "streamCases": {
+    "splitAtBytes": 4,
+    "coalescedVectors": ["protocol.info", "escaped-header"],
+    "recovery": {
+      "corruptVector": "escaped-trailer-and-escape",
+      "corruptOffsetFromEnd": 2,
+      "xorMask": 1,
+      "noiseHex": "00 FF",
+      "followedBy": "protocol.info"
+    }
+  },
+  "packageSnapshots": [
+    {
+      "fixtureId": "sony.wf1000xm3",
+      "relativePath": "../../samples/sony.wf1000xm3-1.4.3.dcpkg",
+      "version": "1.4.3",
+      "schemaVersion": 4,
+      "transportType": "rfcomm",
+      "transportService": "96cc203e-5068-46ad-b32d-e316f5e069ba",
+      "initialize": [
+        "protocol.info",
+        "device.info",
+        "support.functions",
+        "end.of.get",
+        "eq.get",
+        "audio.get",
+        "battery.dual.get",
+        "battery.case.get",
+        "anc.get"
+      ],
+      "states": [
+        "battery.left",
+        "battery.right",
+        "battery.case",
+        "ancMode",
+        "ancLevel",
+        "eqPreset",
+        "upscaling"
+      ]
+    },
+    {
+      "fixtureId": "sony.linkbuds_s",
+      "relativePath": "../../samples/archive/sony.linkbuds_s-1.0.0.dcpkg",
+      "version": "1.0.0",
+      "schemaVersion": 4,
+      "transportType": "rfcomm",
+      "transportService": "956c7b26-d49a-4ba8-b03f-b17d393cb6e2",
+      "initialize": [
+        "protocol.info",
+        "device.info",
+        "support.functions",
+        "end.of.get",
+        "eq.get",
+        "audio.get",
+        "battery.dual.get",
+        "battery.case.get",
+        "anc.get"
+      ],
+      "states": [
+        "battery.left",
+        "battery.right",
+        "battery.case",
+        "ancMode",
+        "ancLevel",
+        "eqPreset",
+        "upscaling"
+      ]
+    }
+  ]
+}

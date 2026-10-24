@@ -3,6 +3,11 @@ package com.Fusion.Btremix.definition.packages
 import com.Fusion.Btremix.definition.api.UiNode
 import com.Fusion.Btremix.definition.api.DefinitionSchema
 import com.Fusion.Btremix.definition.api.TransportType
+import com.Fusion.Btremix.protocol.vectors.VectorJson
+import com.Fusion.Btremix.protocol.vectors.requiredArray
+import com.Fusion.Btremix.protocol.vectors.requiredInt
+import com.Fusion.Btremix.protocol.vectors.requiredObject
+import com.Fusion.Btremix.protocol.vectors.requiredString
 import java.io.File
 import org.junit.Assert.assertArrayEquals
 import org.junit.Assert.assertEquals
@@ -158,6 +163,44 @@ class SamplePackageTest {
         assertEquals(listOf(3, 8, 4), strength.levels.map { it.modeType })
         assertEquals(listOf(10, 11, 12), strength.levels.map { it.protocolIndex })
         assertTrue("the native noise group must stay visible", "noise" !in melody.panel.hideSections)
+    }
+
+    @Test
+    fun sonyPackageSnapshots_matchTheFrozenP0Contract() {
+        val snapshots = VectorJson.resource("sony-baseline.json").requiredArray("packageSnapshots")
+        snapshots.values.forEach { raw ->
+            val snapshot = raw.requiredObject("packageSnapshots[]")
+            val file = File(snapshot.requiredString("relativePath"))
+            assumeTrue("missing Sony package fixture ${file.path}", file.isFile)
+            val devicePackage = DevicePackageValidator().validate(DevicePackageReader().read(file))
+            val definition = devicePackage.definition
+
+            assertEquals(snapshot.requiredString("fixtureId"), devicePackage.packageId)
+            assertEquals(snapshot.requiredString("version"), devicePackage.version)
+            assertEquals(devicePackage.packageId, definition.manifest.id)
+            assertEquals(devicePackage.version, definition.manifest.version)
+            assertEquals(snapshot.requiredInt("schemaVersion"), definition.manifest.schemaVersion)
+
+            val transport = requireNotNull(definition.protocol.transport)
+            assertEquals(TransportType.RFCOMM, transport.type)
+            assertEquals(snapshot.requiredString("transportService"), transport.service)
+            assertEquals(null, transport.characteristic)
+            val framing = requireNotNull(definition.protocol.framing)
+            assertEquals("framed", framing.codec)
+            assertEquals(0x3E, framing.header)
+            assertEquals(0x3C, framing.trailer)
+            assertEquals("sum8", framing.checksum)
+            assertEquals(listOf(0x0C, 0x0E), framing.acknowledgeMessageTypes)
+            assertEquals(0x01, framing.acknowledgeReplyMessageType)
+
+            assertEquals(
+                snapshot.requiredArray("initialize").values.map { it.requiredString("initialize[]") },
+                definition.protocol.initialize,
+            )
+            val expectedStates = snapshot.requiredArray("states").values.map { it.requiredString("states[]") }
+            assertTrue("missing key states $expectedStates", definition.states.keys.containsAll(expectedStates))
+            assertTrue("Sony SPP packages must stay script-free", definition.actions.values.all { it.script == null })
+        }
     }
 
     private fun flatten(node: UiNode): List<UiNode> = listOf(node) +
