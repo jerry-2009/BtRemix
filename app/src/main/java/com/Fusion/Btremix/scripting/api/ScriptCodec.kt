@@ -2,7 +2,10 @@ package com.Fusion.Btremix.scripting.api
 
 import com.Fusion.Btremix.definition.json.JsonValue
 import com.Fusion.Btremix.device.runtime.StateValue
+import com.Fusion.Btremix.protocol.api.MAX_COMMAND
+import com.Fusion.Btremix.protocol.api.PacketMatcherSpec
 import java.util.UUID
+import kotlin.time.Duration.Companion.milliseconds
 
 class ScriptFormatException(val path: String, message: String) : IllegalArgumentException("$path: $message")
 
@@ -11,6 +14,7 @@ object ScriptCodec {
     private const val MAX_NODES = 256
     private const val MAX_DEPTH = 8
     private const val MAX_BYTES = 4096
+    private const val MAX_TIMEOUT_MS = 60_000L
 
     fun parse(value: JsonValue, path: String): ScriptProgram = ScriptProgram(Parser().steps(value, path, 0))
 
@@ -94,18 +98,119 @@ object ScriptCodec {
                 fun value() = expression(fields.required("value", stepPath), "$stepPath.value", 0)
                 fun characteristic() = UUID.fromString(required("characteristic")).toString()
                 fun service() = UUID.fromString(required("service")).toString()
+                fun into() = fields.values["into"]?.string("$stepPath.into")
+                fun timeout() = fields.values["timeoutMs"]?.integer("$stepPath.timeoutMs")
+                    ?.also {
+                        if (it !in 1..MAX_TIMEOUT_MS) {
+                            throw ScriptFormatException("$stepPath.timeoutMs", "must be in 1..$MAX_TIMEOUT_MS")
+                        }
+                    }
+                    ?.milliseconds
+                fun matcher(): PacketMatcherSpec =
+                    parseMatcher(fields.required("matcher", stepPath).obj("$stepPath.matcher"), "$stepPath.matcher")
+                fun rejectUnknown(vararg allowed: String) {
+                    fields.values.keys.firstOrNull { it !in allowed }?.let { unknown ->
+                        throw ScriptFormatException("$stepPath.$unknown", "unknown field for '$op'")
+                    }
+                }
                 try {
                     when (op) {
-                        "ble.read" -> ScriptStep.Read(service(), characteristic(), required("into"))
-                        "ble.write" -> ScriptStep.Write(service(), characteristic(), value(), fields.optionalBoolean("withResponse", stepPath) ?: true)
-                        "ble.subscribe" -> ScriptStep.Subscribe(service(), characteristic(), required("into"))
-                        "state.get" -> ScriptStep.GetState(required("key"), required("into"))
-                        "state.set" -> ScriptStep.SetState(required("key"), value())
-                        "event.emit" -> ScriptStep.Emit(required("name"), value())
-                        "let" -> ScriptStep.Assign(required("name"), value())
-                        "if" -> ScriptStep.If(expression(fields.required("condition", stepPath), "$stepPath.condition", 0), steps(fields.required("then", stepPath), "$stepPath.then", depth + 1), fields.values["else"]?.let { steps(it, "$stepPath.else", depth + 1) } ?: emptyList())
-                        "repeat" -> ScriptStep.Repeat(fields.required("count", stepPath).integer("$stepPath.count").also { if (it !in 0..32) throw ScriptFormatException("$stepPath.count", "must be 0..32") }, steps(fields.required("steps", stepPath), "$stepPath.steps", depth + 1))
-                        "return" -> ScriptStep.Return(value())
+                        "ble.read" -> {
+                            rejectUnknown("op", "service", "characteristic", "into")
+                            ScriptStep.Read(service(), characteristic(), required("into"))
+                        }
+                        "ble.write" -> {
+                            rejectUnknown("op", "service", "characteristic", "value", "withResponse")
+                            ScriptStep.Write(service(), characteristic(), value(), fields.optionalBoolean("withResponse", stepPath) ?: true)
+                        }
+                        "ble.subscribe" -> {
+                            rejectUnknown("op", "service", "characteristic", "into")
+                            ScriptStep.Subscribe(service(), characteristic(), required("into"))
+                        }
+                        "state.get" -> {
+                            rejectUnknown("op", "key", "into")
+                            ScriptStep.GetState(required("key"), required("into"))
+                        }
+                        "state.set" -> {
+                            rejectUnknown("op", "key", "value")
+                            ScriptStep.SetState(required("key"), value())
+                        }
+                        "event.emit" -> {
+                            rejectUnknown("op", "name", "value")
+                            ScriptStep.Emit(required("name"), value())
+                        }
+                        "let" -> {
+                            rejectUnknown("op", "name", "value")
+                            ScriptStep.Assign(required("name"), value())
+                        }
+                        "if" -> {
+                            rejectUnknown("op", "condition", "then", "else")
+                            ScriptStep.If(
+                                expression(fields.required("condition", stepPath), "$stepPath.condition", 0),
+                                steps(fields.required("then", stepPath), "$stepPath.then", depth + 1),
+                                fields.values["else"]?.let { steps(it, "$stepPath.else", depth + 1) } ?: emptyList(),
+                            )
+                        }
+                        "repeat" -> {
+                            rejectUnknown("op", "count", "steps")
+                            ScriptStep.Repeat(
+                                fields.required("count", stepPath).integer("$stepPath.count").also {
+                                    if (it !in 0..32) throw ScriptFormatException("$stepPath.count", "must be 0..32")
+                                },
+                                steps(fields.required("steps", stepPath), "$stepPath.steps", depth + 1),
+                            )
+                        }
+                        "return" -> {
+                            rejectUnknown("op", "value")
+                            ScriptStep.Return(value())
+                        }
+                        "session.send" -> {
+                            rejectUnknown("op", "bytes")
+                            val raw = fields.required("bytes", stepPath)
+                            val expression = if (raw is JsonValue.StringValue) {
+                                ScriptExpression.Literal(StateValue.BytesValue(hex(raw.value, "$stepPath.bytes")))
+                            } else {
+                                expression(raw, "$stepPath.bytes", 0)
+                            }
+                            ScriptStep.SessionSend(expression)
+                        }
+                        "session.request" -> {
+                            rejectUnknown("op", "request", "transaction", "matcher", "timeoutMs", "into")
+                            if ("request" in fields.values && "transaction" in fields.values) {
+                                throw ScriptFormatException(
+                                    "$stepPath.transaction",
+                                    "cannot be combined with 'request'",
+                                )
+                            }
+                            val endpoint = fields.values["request"]?.string("$stepPath.request")
+                                ?: fields.values["transaction"]?.string("$stepPath.transaction")
+                                ?: throw ScriptFormatException("$stepPath.request", "required")
+                            ScriptStep.SessionRequest(
+                                endpoint = endpoint,
+                                matcher = if ("matcher" in fields.values) matcher() else null,
+                                timeout = timeout(),
+                                into = into(),
+                            )
+                        }
+                        "session.waitFor" -> {
+                            rejectUnknown("op", "matcher", "timeoutMs", "into")
+                            ScriptStep.SessionWaitFor(
+                                matcher = matcher(),
+                                timeout = requireNotNull(timeout()) {
+                                    "session.waitFor requires timeoutMs"
+                                },
+                                into = into(),
+                            )
+                        }
+                        "session.onFrame" -> {
+                            rejectUnknown("op", "matcher", "program")
+                            ScriptStep.SessionOnFrame(
+                                matcher = matcher(),
+                                program = ScriptProgram(
+                                    steps(fields.required("program", stepPath), "$stepPath.program", depth + 1),
+                                ),
+                            )
+                        }
                         else -> throw ScriptFormatException("$stepPath.op", "unsupported operation '$op'")
                     }
                 } catch (error: IllegalArgumentException) {
@@ -113,6 +218,51 @@ object ScriptCodec {
                     throw ScriptFormatException(stepPath, error.message ?: "invalid step")
                 }
             }
+        }
+
+        private fun parseMatcher(obj: JsonValue.Object, path: String): PacketMatcherSpec {
+            val known = setOf("command", "sequence", "payloadPrefix", "payloadType", "payloadTypes")
+            obj.values.keys.firstOrNull { it !in known }?.let { unknown ->
+                throw ScriptFormatException("$path.$unknown", "unknown matcher field")
+            }
+            var matchRequestSequence = false
+            var literalSequence: Int? = null
+            when (val sequence = obj.values["sequence"]) {
+                null -> Unit
+                is JsonValue.BooleanValue -> matchRequestSequence = sequence.value
+                is JsonValue.NumberValue -> literalSequence = sequence.raw.toIntOrNull()
+                    ?: throw ScriptFormatException("$path.sequence", "must be an integer or boolean")
+                is JsonValue.StringValue -> when (sequence.value.trim().lowercase()) {
+                    "request" -> matchRequestSequence = true
+                    else -> throw ScriptFormatException("$path.sequence", "must be 'request', a boolean or an integer")
+                }
+                else -> throw ScriptFormatException("$path.sequence", "must be 'request', a boolean or an integer")
+            }
+            val command = obj.values["command"]?.integer("$path.command")
+            if (command != null && command !in 0..MAX_COMMAND) {
+                throw ScriptFormatException("$path.command", "must fit UInt24")
+            }
+            if (literalSequence != null && literalSequence !in 0..0xff) {
+                throw ScriptFormatException("$path.sequence", "must fit UInt8")
+            }
+            val payloadTypes = buildSet {
+                obj.values["payloadType"]?.integer("$path.payloadType")?.let(::add)
+                obj.values["payloadTypes"]?.array("$path.payloadTypes")?.forEachIndexed { index, item ->
+                    add(item.integer("$path.payloadTypes[$index]"))
+                }
+            }
+            if (payloadTypes.any { it !in 0..0xff }) {
+                throw ScriptFormatException("$path.payloadTypes", "every payload type must fit UInt8")
+            }
+            return PacketMatcherSpec(
+                command = command,
+                matchRequestSequence = matchRequestSequence,
+                sequence = literalSequence,
+                payloadPrefix = obj.values["payloadPrefix"]?.string("$path.payloadPrefix")
+                    ?.let { hex(it, "$path.payloadPrefix") }
+                    ?: ByteArray(0),
+                payloadTypes = payloadTypes,
+            )
         }
     }
 

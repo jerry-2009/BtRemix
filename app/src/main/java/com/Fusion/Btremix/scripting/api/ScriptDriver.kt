@@ -3,6 +3,8 @@ package com.Fusion.Btremix.scripting.api
 import com.Fusion.Btremix.device.runtime.ActionResult
 import com.Fusion.Btremix.device.runtime.DeviceAction
 import com.Fusion.Btremix.device.runtime.StateValue
+import com.Fusion.Btremix.protocol.api.PacketMatcherSpec
+import kotlin.time.Duration
 
 /** A deliberately small interpreted language. Programs never receive Android or JVM objects. */
 data class ScriptProgram(val steps: List<ScriptStep>)
@@ -44,6 +46,30 @@ sealed interface ScriptStep {
     data class If(val condition: ScriptExpression, val thenSteps: List<ScriptStep>, val elseSteps: List<ScriptStep>) : ScriptStep
     data class Repeat(val count: Int, val steps: List<ScriptStep>) : ScriptStep
     data class Return(val value: ScriptExpression) : ScriptStep
+
+    /** Sends an already-encoded frame through the controlled session write path. */
+    data class SessionSend(val value: ScriptExpression) : ScriptStep
+
+    /** Runs a Definition transaction by its logical endpoint name. */
+    data class SessionRequest(
+        val endpoint: String,
+        val matcher: PacketMatcherSpec? = null,
+        val timeout: Duration? = null,
+        val into: String? = null,
+    ) : ScriptStep
+
+    /** Waits for one matching frame without creating a second transport reader. */
+    data class SessionWaitFor(
+        val matcher: PacketMatcherSpec,
+        val timeout: Duration,
+        val into: String? = null,
+    ) : ScriptStep
+
+    /** Registers a bounded event program for the lifetime of the session. */
+    data class SessionOnFrame(
+        val matcher: PacketMatcherSpec,
+        val program: ScriptProgram,
+    ) : ScriptStep
 }
 
 interface ScriptDriver {

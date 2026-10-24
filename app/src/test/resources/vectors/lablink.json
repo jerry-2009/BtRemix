@@ -1,6 +1,6 @@
 {
   "formatVersion": 1,
-  "fixture": "LabLink P2 pressure suite",
+  "fixture": "LabLink P3 pressure suite",
   "vendorNeutral": true,
   "provenance": {
     "kind": "derived",
@@ -219,6 +219,8 @@
     "l2": {
       "id": "lab.reactive",
       "source": "derived",
+      "packageFixture": "lab.reactive-1.0.0.dcpkg",
+      "status": "P3 accepted",
       "coverage": [
         "conditional initialization",
         "unsolicited peer request",
@@ -279,7 +281,7 @@
           "expected": "cancel pending requests and event handlers"
         }
       ],
-      "currentProbeDefinition": {
+      "p0HistoricalProbeDefinition": {
         "manifest": {
           "id": "lab.reactive.probe",
           "displayName": "LabLink reactive current-runtime probe",
@@ -324,9 +326,9 @@
           "children": [{"type": "value", "state": "initialized"}]
         }
       },
-      "expectedCurrentError": {
+      "p0HistoricalProbeExpectation": {
         "path": "actions.reactive.initialize.script",
-        "reason": "RFCOMM definitions reject scripts because the current script host is GATT-specific"
+        "reason": "P0 recorded the former GATT-only script host; P3 now accepts this through SessionIo"
       }
     },
     "l3": {
@@ -439,7 +441,7 @@
       "id": "L2-RFCOMM-SCRIPT",
       "fixture": "lab.reactive",
       "classification": "script",
-      "reason": "The validator rejects every script on RFCOMM and the script host exposes GATT reads/writes",
+      "reason": "Closed by SessionIo, bounded session opcodes, explicit triggers and initialization policy",
       "proposedIn": "P3"
     },
     {

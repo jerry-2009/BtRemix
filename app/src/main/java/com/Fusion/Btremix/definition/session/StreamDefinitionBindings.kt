@@ -8,9 +8,8 @@ import com.Fusion.Btremix.device.runtime.DeviceLifecycleState
 import com.Fusion.Btremix.device.runtime.RuntimeError
 import com.Fusion.Btremix.device.runtime.StateSource
 import com.Fusion.Btremix.device.runtime.StreamDeviceSession
-import com.Fusion.Btremix.protocol.api.DefaultProtocolRuntime
-import com.Fusion.Btremix.protocol.api.ProtocolRuntime
-import com.Fusion.Btremix.protocol.api.TogglingSequenceGenerator
+import com.Fusion.Btremix.protocol.api.SessionIo
+import com.Fusion.Btremix.protocol.api.SessionRequest
 import com.Fusion.Btremix.protocol.api.TransactionResult
 import kotlinx.coroutines.CoroutineDispatcher
 import kotlinx.coroutines.CoroutineScope
@@ -18,8 +17,6 @@ import kotlinx.coroutines.Job
 import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.cancel
 import kotlinx.coroutines.launch
-import kotlinx.coroutines.sync.Mutex
-import kotlinx.coroutines.sync.withLock
 
 /**
  * Bridges a Definition's declarative section onto a classic-Bluetooth byte-stream session.
@@ -36,20 +33,13 @@ import kotlinx.coroutines.sync.withLock
 class StreamDefinitionBindings(
     private val session: StreamDeviceSession,
     private val definition: LoadedDeviceDefinition,
+    private val sessionIo: SessionIo,
     dispatcher: CoroutineDispatcher,
 ) {
     private val scope = CoroutineScope(SupervisorJob() + dispatcher)
     private val jobs = mutableListOf<Job>()
     private val support = DeclarativeProtocolSupport(definition) { key -> session.state.value(key) }
-    private val transactionMutex = Mutex()
     private var closed = false
-
-    private val runtime: ProtocolRuntime = DefaultProtocolRuntime(
-        transport = session.transport,
-        packetEncoder = support.factory.packetCodec,
-        packetDecoder = support.factory.packetCodec,
-        sequenceGenerator = TogglingSequenceGenerator(),
-    )
 
     fun start() {
         bindActions()
@@ -65,7 +55,6 @@ class StreamDefinitionBindings(
                 }
             }
         }
-        startInitialization()
     }
 
     fun close() {
@@ -78,9 +67,7 @@ class StreamDefinitionBindings(
 
     private fun bindActions() {
         definition.actions.values.filter { it.transaction != null }.forEach { action ->
-            session.registerAction(action.id) { input ->
-                transactionMutex.withLock { executeTransaction(action, input) }
-            }
+            session.registerAction(action.id) { input -> executeTransaction(action, input) }
         }
     }
 
@@ -98,13 +85,14 @@ class StreamDefinitionBindings(
         }
     }
 
-    private fun startInitialization() {
+    /** Legacy v1-v4 best-effort initialization, deliberately run only after Ready. */
+    fun startLegacyInitialization() {
         val names = definition.protocol.initialize
         if (names.isEmpty()) return
         jobs += scope.launch {
             names.forEach { name ->
                 // A device that ignores one handshake step must not block the rest of the flow.
-                runCatching { transactionMutex.withLock { runtime.execute(support.factory.transaction(name)) } }
+                runCatching { sessionIo.request(SessionRequest(name)) }
             }
         }
     }
@@ -116,7 +104,12 @@ class StreamDefinitionBindings(
         val message = transaction.requestMessage?.let { name -> support.buildMessage(action, name, input) }
         if (!transaction.expectsResponse) {
             // The peer only acknowledges this command at the framing layer; do not wait for a payload.
-            runtime.send(support.factory.encodePacket(transactionName, message))
+            sessionIo.send(
+                SessionRequest(
+                    endpoint = transactionName,
+                    packet = support.factory.encodePacket(transactionName, message),
+                ),
+            )
             val value = support.resultValue(action, input)
             if (action.resultState != null && value != null) {
                 session.state.set(action.resultState, value, StateSource.ACTION)
@@ -124,7 +117,15 @@ class StreamDefinitionBindings(
             refresh(action)
             return ActionResult.Success(value)
         }
-        return when (val result = runtime.execute(support.factory.transaction(transactionName, message))) {
+        return when (
+            val result = sessionIo.request(
+                SessionRequest(
+                    endpoint = transactionName,
+                    packet = support.factory.encodePacket(transactionName, message),
+                    timeout = transaction.timeout,
+                ),
+            )
+        ) {
             is TransactionResult.Success -> {
                 val value = support.resultValue(action, input)
                 if (action.resultState != null && value != null) {
@@ -149,7 +150,7 @@ class StreamDefinitionBindings(
      */
     private suspend fun refresh(action: ActionDefinition) {
         action.refresh.forEach { name ->
-            runCatching { runtime.execute(support.factory.transaction(name)) }
+            runCatching { sessionIo.request(SessionRequest(name)) }
         }
     }
 }

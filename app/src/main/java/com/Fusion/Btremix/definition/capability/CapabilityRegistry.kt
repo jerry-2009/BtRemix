@@ -18,8 +18,8 @@ data class CapabilityValidationError(
  * Registry of runtime capabilities exposed to device Definitions.
  *
  * This is a load-time contract, not a dependency resolver. A package names capabilities in
- * `manifest.requires`; the validator checks each name and the minimum runtime API. P1 registers only
- * the checksum and delimited-splitter primitives that the runtime actually implements.
+ * `manifest.requires`; the validator checks each name and the minimum runtime API. Entries are
+ * registered only after the corresponding generic primitive exists in the runtime.
  */
 object CapabilityRegistry {
     private val capabilities = linkedMapOf(
@@ -62,6 +62,36 @@ object CapabilityRegistry {
             id = "framing.command24",
             minRuntimeApi = 1,
             parameterRule = "command segment width is 1..3 bytes",
+        ),
+        "session.send" to CapabilityDescriptor(
+            id = "session.send",
+            minRuntimeApi = 1,
+            parameterRule = "bytes are bounded by the script byte limit",
+        ),
+        "session.request" to CapabilityDescriptor(
+            id = "session.request",
+            minRuntimeApi = 1,
+            parameterRule = "endpoint names a declared protocol transaction",
+        ),
+        "session.waitFor" to CapabilityDescriptor(
+            id = "session.waitFor",
+            minRuntimeApi = 1,
+            parameterRule = "matcher is data-only and timeout is 1..60000 ms",
+        ),
+        "session.onFrame" to CapabilityDescriptor(
+            id = "session.onFrame",
+            minRuntimeApi = 1,
+            parameterRule = "matcher is data-only and handler is a bounded JSON program",
+        ),
+        "session.triggers" to CapabilityDescriptor(
+            id = "session.triggers",
+            minRuntimeApi = 1,
+            parameterRule = "explicit triggers use disjoint matchers",
+        ),
+        "session.initializationPolicy" to CapabilityDescriptor(
+            id = "session.initializationPolicy",
+            minRuntimeApi = 1,
+            parameterRule = "ordered required/optional steps finish before Ready",
         ),
     )
 

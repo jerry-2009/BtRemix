@@ -49,16 +49,39 @@ class SegmentedFrameCodec(private val spec: FramingSpec) : StreamCodec {
     val requestCommandWidthBytes: Int? = layouts.request.commandWidthBytes
     val responseCommandWidthBytes: Int? = layouts.response.commandWidthBytes
 
-    override fun accumulator(): FrameAccumulator =
-        FrameSplitterRegistry.create(spec.splitter.function, spec)
+    override fun accumulator(): FrameAccumulator {
+        if (layouts.request != layouts.response) {
+            return DirectionalLengthPrefixedFrameSplitter(
+                request = layouts.request,
+                response = layouts.response,
+                maxFrameBytes = spec.splitter.maxFrameBytes,
+                acceptRequest = { bytes -> runCatching { decodeRequest(bytes) }.isSuccess },
+                acceptResponse = { bytes -> runCatching { decodeResponse(bytes) }.isSuccess },
+            )
+        }
+        return FrameSplitterRegistry.create(spec.splitter.function, spec)
             ?: error(
                 "Unknown frame splitter '${spec.splitter.function}', supported " +
                     FrameSplitterRegistry.names.sorted(),
             )
+    }
 
     override fun encode(packet: Packet): ByteArray = encodeRequest(packet)
 
-    override fun decode(bytes: ByteArray): Packet = decodeResponse(bytes)
+    /**
+     * Inbound direction is discovered from the declared layouts. P2 responses remain the first
+     * choice; if that layout does not fit, a request layout is tried for device-initiated frames.
+     */
+    override fun decode(bytes: ByteArray): Packet = try {
+        decodeResponse(bytes)
+    } catch (responseError: IllegalArgumentException) {
+        if (layouts.request == layouts.response) throw responseError
+        try {
+            decodeRequest(bytes)
+        } catch (_: IllegalArgumentException) {
+            throw responseError
+        }
+    }
 
     fun encodeRequest(packet: Packet): ByteArray = encodeWith(layouts.request, packet)
 
@@ -283,3 +306,139 @@ class SegmentedFrameCodec(private val spec: FramingSpec) : StreamCodec {
 }
 
 class SegmentedCodecException(message: String) : IllegalArgumentException(message)
+
+/**
+ * A length splitter for protocols whose request and response headers have different fixed sizes.
+ *
+ * The same length field can have a different absolute offset in each direction. A candidate is only
+ * emitted after its full layout and checksum decode successfully, which avoids treating a response's
+ * command byte as a request length when both directions share one magic.
+ */
+private class DirectionalLengthPrefixedFrameSplitter(
+    private val request: FrameLayoutSpec,
+    private val response: FrameLayoutSpec,
+    private val maxFrameBytes: Int,
+    private val acceptRequest: (ByteArray) -> Boolean,
+    private val acceptResponse: (ByteArray) -> Boolean,
+) : FrameAccumulator {
+    private val magic = requireNotNull(request.segments.first().constant).clone()
+    private var buffer = ByteArray(0)
+
+    init {
+        require(maxFrameBytes > 0)
+        require(magic.isNotEmpty())
+        require(response.segments.firstOrNull()?.constant?.contentEquals(magic) == true) {
+            "Request and response layouts must share a magic for directional splitting"
+        }
+    }
+
+    override fun feed(chunk: ByteArray): List<ByteArray> {
+        if (chunk.isEmpty()) return emptyList()
+        buffer = if (buffer.isEmpty()) chunk.clone() else buffer + chunk
+        return parseAll()
+    }
+
+    override fun reject(frame: ByteArray): List<ByteArray> {
+        val retained = buffer
+        buffer = ByteArray(0)
+        if (frame.size <= 1) {
+            buffer = retained
+            return emptyList()
+        }
+        buffer = frame + retained
+        return parseAll(startSearchAt = 1)
+    }
+
+    override fun reset() {
+        buffer = ByteArray(0)
+    }
+
+    private fun parseAll(startSearchAt: Int = 0): List<ByteArray> {
+        val frames = mutableListOf<ByteArray>()
+        var searchFrom = startSearchAt
+        while (true) {
+            val start = findMagic(searchFrom)
+            if (start < 0) {
+                keepMagicTail()
+                return frames
+            }
+            val requestSize = candidateSize(request, start)
+            val responseSize = candidateSize(response, start)
+            val acceptedSize = when {
+                requestSize != null &&
+                    requestSize in 1..(buffer.size - start) &&
+                    acceptRequest(buffer.copyOfRange(start, start + requestSize)) -> requestSize
+                responseSize != null &&
+                    responseSize in 1..(buffer.size - start) &&
+                    acceptResponse(buffer.copyOfRange(start, start + responseSize)) -> responseSize
+                else -> null
+            }
+            if (acceptedSize != null) {
+                frames += buffer.copyOfRange(start, start + acceptedSize)
+                searchFrom = start + acceptedSize
+                continue
+            }
+            val completeCandidates = listOfNotNull(requestSize, responseSize)
+                .filter { size -> size in 1..(buffer.size - start) }
+            if (completeCandidates.isNotEmpty()) {
+                // Emit one structurally complete candidate so StreamTransport can report the bad
+                // frame and call reject(). The shorter candidate preserves a possible magic prefix.
+                val rejectedSize = completeCandidates.min()
+                frames += buffer.copyOfRange(start, start + rejectedSize)
+                searchFrom = start + rejectedSize
+                continue
+            }
+            val awaitingHeaderOrFrame = requestSize == null ||
+                responseSize == null ||
+                listOf(requestSize, responseSize).any { size -> size > buffer.size - start }
+            if (awaitingHeaderOrFrame) {
+                buffer = buffer.copyOfRange(start, buffer.size)
+                return frames
+            }
+            searchFrom = start + 1
+        }
+    }
+
+    private fun candidateSize(layout: FrameLayoutSpec, start: Int): Int? {
+        val lengthIndex = layout.segments.indexOfFirst { it.role == FrameSegmentRole.LENGTH }
+        if (lengthIndex < 0) return null
+        val lengthOffset = layout.segments.take(lengthIndex).sumOf { it.width ?: 0 }
+        val lengthSegment = layout.segments[lengthIndex]
+        val lengthWidth = lengthSegment.width ?: return null
+        if (buffer.size - start < lengthOffset + lengthWidth) return null
+        var length = 0
+        repeat(lengthWidth) { index ->
+            val shift = if (lengthSegment.order == Endianness.BIG) {
+                (lengthWidth - 1 - index) * 8
+            } else {
+                index * 8
+            }
+            length = length or ((buffer[start + lengthOffset + index].toInt() and 0xff) shl shift)
+        }
+        val fixedInside = layout.segments.sumOf { segment ->
+            if (segment.includeInLength && segment.role != FrameSegmentRole.PAYLOAD) segment.width ?: 0 else 0
+        }
+        if (length < fixedInside) return -1
+        val fixedOutside = layout.segments.sumOf { segment ->
+            when {
+                segment.includeInLength -> 0
+                segment.role == FrameSegmentRole.PAYLOAD -> 0
+                else -> segment.width ?: 0
+            }
+        }
+        return (fixedOutside + length).takeIf { it <= maxFrameBytes } ?: -1
+    }
+
+    private fun findMagic(from: Int): Int {
+        if (buffer.size < magic.size) return -1
+        for (start in from..buffer.size - magic.size) {
+            if (magic.indices.all { buffer[start + it] == magic[it] }) return start
+        }
+        return -1
+    }
+
+    private fun keepMagicTail() {
+        val keep = minOf(buffer.size, magic.size - 1)
+        buffer = if (keep == 0) ByteArray(0) else buffer.copyOfRange(buffer.size - keep, buffer.size)
+    }
+}

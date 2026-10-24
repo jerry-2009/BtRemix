@@ -18,10 +18,7 @@ import org.junit.Assert.assertFalse
 import org.junit.Assert.assertTrue
 import org.junit.Test
 
-/**
- * P0 fixture contract. These probes deliberately assert today's capability boundary; when a later
- * phase closes one, the fixture and this test must be updated together.
- */
+/** Pressure-fixture contract updated as each phase closes its P0 gap. */
 class LabLinkPressureFixtureTest {
     private val fixture = VectorJson.resource("lablink.json")
     private val layers = fixture.requiredObject("layers")
@@ -109,17 +106,17 @@ class LabLinkPressureFixtureTest {
     }
 
     @Test
-    fun labReactive_rfcommScriptIsRejectedAtTheActionPath() {
-        val expected = layers.requiredObject("l2").requiredObject("expectedCurrentError")
+    fun labReactive_pureJsonScriptIsAcceptedOnRfcomm() {
         val errors = DefinitionValidator.validate(decodeProbe(layers.requiredObject("l2")))
 
-        val error = errors.singleOrNull { it.path == expected.requiredString("path") }
-            ?: error("missing ${expected.requiredString("path")}; got ${errors.map { it.path }}")
-        assertTrue(error.message.contains("not supported over an rfcomm transport"))
+        assertTrue(
+            "P3 must no longer reject a transport-neutral script: ${errors.map { it.path }}",
+            errors.none { it.path == "actions.reactive.initialize.script" },
+        )
     }
 
     @Test
-    fun labReactive_proposedSessionOpcodesAreNotAcceptedByTheCurrentScriptParser() {
+    fun labReactive_sessionOpcodesAreAcceptedByTheScriptParser() {
         fun sessionSteps(value: JsonValue): List<JsonValue.Object> = when (value) {
             is JsonValue.Array -> value.values.flatMap(::sessionSteps)
             is JsonValue.Object -> {
@@ -136,11 +133,7 @@ class LabLinkPressureFixtureTest {
         val proposed = sessionSteps(layers.requiredObject("l2").requiredArray("program")).distinct()
         assertEquals(4, proposed.size)
         proposed.forEach { step ->
-            val failure = runCatching {
-                ScriptCodec.parse(JsonValue.Array(listOf(step)), "lab.reactive.program")
-            }.exceptionOrNull()
-            assertTrue("${step.values["op"]} must be rejected in P0", failure is ScriptFormatException)
-            assertTrue(requireNotNull(failure).message!!.contains("unsupported operation"))
+            ScriptCodec.parse(JsonValue.Array(listOf(step)), "lab.reactive.program")
         }
     }
 
@@ -156,8 +149,8 @@ class LabLinkPressureFixtureTest {
         val definition = DefinitionJsonCodec.decode(JsonWriter.write(probeJson), validate = false)
         val errors = DefinitionValidator.validate(definition)
         assertTrue(
-            "P1 must reject the not-yet-registered reactive capability",
-            errors.any { it.path == "manifest.requires[0]" },
+            "P3 registers session.onFrame",
+            errors.none { it.path == "manifest.requires[0]" },
         )
         val manifestFields = DefinitionManifest::class.java.declaredFields.map { it.name }
         assertFalse("P4 would become stale once manifest.extensions is modelled", manifestFields.any { it == "extensions" })
@@ -168,7 +161,10 @@ class LabLinkPressureFixtureTest {
     }
 
     private fun decodeProbe(layer: JsonValue.Object) = DefinitionJsonCodec.decode(
-        JsonWriter.write(layer.requiredObject("currentProbeDefinition")),
+        JsonWriter.write(
+            layer.values["currentProbeDefinition"]
+                ?: layer.requiredObject("p0HistoricalProbeDefinition"),
+        ),
         validate = false,
     )
 

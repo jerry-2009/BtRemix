@@ -2,6 +2,7 @@ package com.Fusion.Btremix.definition
 
 import com.Fusion.Btremix.definition.api.DefinitionSchema
 import com.Fusion.Btremix.definition.json.DefinitionJsonCodec
+import com.Fusion.Btremix.definition.validator.DefinitionValidator
 import com.Fusion.Btremix.definition.validator.DefinitionValidationException
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertTrue
@@ -133,15 +134,18 @@ class DefinitionSchemaTest {
     }
 
     @Test
-    fun rfcommDefinitionWithScriptAction_isRejected() {
-        val failure = validationFailure(
+    fun rfcommDefinitionWithPureJsonScriptAction_isAccepted() {
+        val definition = DefinitionJsonCodec.decode(
             streamDefinition.replace(
                 "\"actions\": {",
                 "\"actions\": { \"legacy\": { \"displayName\": \"Legacy\", \"script\": [ { \"op\": \"return\", \"value\": 1 } ] },",
             ),
         )
 
-        assertTrue(failure.errors.any { it.path == "actions.legacy.script" })
+        assertEquals(
+            emptyList<Any>(),
+            DefinitionValidator.validate(definition),
+        )
     }
 
     @Test

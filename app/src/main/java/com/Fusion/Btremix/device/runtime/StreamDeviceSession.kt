@@ -8,6 +8,7 @@ import com.Fusion.Btremix.protocol.api.StreamCodec
 import com.Fusion.Btremix.protocol.stream.StreamTransport
 import java.time.Clock
 import java.util.concurrent.ConcurrentHashMap
+import java.util.concurrent.CopyOnWriteArrayList
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.CoroutineDispatcher
 import kotlinx.coroutines.CoroutineScope
@@ -47,6 +48,7 @@ class StreamDeviceSession(
     private val lifecycleImpl = MutableStateFlow<DeviceLifecycleState>(DeviceLifecycleState.Created)
     private val handlers = ConcurrentHashMap<String, DeviceActionHandler>()
     private val actionMutex = Mutex()
+    private val diagnostics = CopyOnWriteArrayList<InitializationDiagnostic>()
     private var connectionMonitor: Job? = null
     @Volatile private var closed = false
 
@@ -56,6 +58,8 @@ class StreamDeviceSession(
     override val state: StateStore = stateImpl
     override val stateStore: StateStore = stateImpl
     override val events: SharedFlow<DeviceEvent> = eventBus.events
+    override val initializationDiagnostics: List<InitializationDiagnostic>
+        get() = diagnostics.toList()
 
     init {
         scope.launch {
@@ -79,6 +83,12 @@ class StreamDeviceSession(
 
     /** Brings the session to [DeviceLifecycleState.Ready]; called once by the session factory. */
     suspend fun initialize() {
+        initializeForBinding()
+        markReady()
+    }
+
+    /** Connects the lifecycle state machine without exposing `Ready` before Definition startup. */
+    suspend fun initializeForBinding() {
         transition(DeviceLifecycleState.Connected)
         transition(DeviceLifecycleState.Initializing)
         connectionMonitor = scope.launch {
@@ -88,24 +98,43 @@ class StreamDeviceSession(
                     if (!closed) {
                         if (state is TransportState.Error) {
                             transition(DeviceLifecycleState.Error(RuntimeError.ConnectionFailed(state.message)))
+                            closeAfterFailure(preserveLifecycle = true)
                         } else {
                             transition(DeviceLifecycleState.Disconnected)
+                            closeAfterFailure()
                         }
-                        closeAfterFailure()
                     }
                 }
         }
-        try {
-            transition(DeviceLifecycleState.Ready)
-            eventBus.emit(DeviceEvent.DeviceReady(device.id, now()))
-        } catch (cancelled: CancellationException) {
-            closeAfterFailure()
-            throw cancelled
-        } catch (error: Throwable) {
-            transition(DeviceLifecycleState.Error(RuntimeError.InitializationFailed(error.message ?: "Stream session failed")))
-            closeAfterFailure()
-            throw error
-        }
+    }
+
+    override suspend fun beginInitialization() {
+        if (closed || lifecycle.value == DeviceLifecycleState.Ready || lifecycle.value is DeviceLifecycleState.Error) return
+        if (lifecycle.value == DeviceLifecycleState.Created) transition(DeviceLifecycleState.Connected)
+        transition(DeviceLifecycleState.Initializing)
+    }
+
+    override suspend fun markReady() {
+        if (closed || lifecycle.value is DeviceLifecycleState.Error) return
+        transition(DeviceLifecycleState.Ready)
+        eventBus.emit(DeviceEvent.DeviceReady(device.id, now()))
+    }
+
+    override suspend fun failInitialization(error: RuntimeError) {
+        if (closed) return
+        closed = true
+        transition(DeviceLifecycleState.Error(error))
+        connectionMonitor?.cancel()
+        runCatching { transport.close() }
+        scope.cancel()
+    }
+
+    override fun recordInitializationFailure(diagnostic: InitializationDiagnostic) {
+        diagnostics += diagnostic
+    }
+
+    override suspend fun reportError(error: RuntimeError) {
+        eventBus.emit(DeviceEvent.Error(device.id, now(), error))
     }
 
     override fun registerAction(id: String, handler: DeviceActionHandler) {
@@ -155,12 +184,17 @@ class StreamDeviceSession(
         }
     }
 
-    private suspend fun closeAfterFailure() {
+    override suspend fun emitScriptEvent(name: String, value: StateValue) {
+        require(name.isNotBlank())
+        eventBus.emit(DeviceEvent.ScriptEmitted(device.id, now(), name, value))
+    }
+
+    private suspend fun closeAfterFailure(preserveLifecycle: Boolean = false) {
         if (closed) return
         closed = true
         connectionMonitor?.cancel()
         runCatching { transport.close() }
-        transition(DeviceLifecycleState.Disconnected)
+        if (!preserveLifecycle) transition(DeviceLifecycleState.Disconnected)
         scope.cancel()
     }
 

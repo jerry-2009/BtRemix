@@ -11,6 +11,7 @@ import com.Fusion.Btremix.definition.api.ProtocolFieldType
 import com.Fusion.Btremix.definition.api.TransactionDefinition
 import com.Fusion.Btremix.definition.api.ActionDefinition
 import com.Fusion.Btremix.definition.api.ActionParameterDefinition
+import com.Fusion.Btremix.definition.api.InitializationStepDefinition
 import com.Fusion.Btremix.definition.api.DefinitionSchema
 import com.Fusion.Btremix.definition.api.MelodyPanelDefinition
 import com.Fusion.Btremix.definition.api.MelodyAncDefinition
@@ -24,6 +25,7 @@ import com.Fusion.Btremix.definition.api.NotifyDefinition
 import com.Fusion.Btremix.definition.api.StateDefinition
 import com.Fusion.Btremix.definition.api.StateDefinitionType
 import com.Fusion.Btremix.definition.api.TransportDefinition
+import com.Fusion.Btremix.definition.api.TriggerDefinition
 import com.Fusion.Btremix.definition.api.UiNode
 import com.Fusion.Btremix.definition.api.UiSchema
 import com.Fusion.Btremix.protocol.api.ChecksumCoverage
@@ -54,6 +56,7 @@ object DefinitionJsonCodec {
             protocol = protocolObject?.let(::parseProtocol) ?: ProtocolDefinition(),
             states = root.values["states"]?.let { parseStates(it) } ?: emptyMap(),
             actions = root.values["actions"]?.let { parseActions(it) } ?: emptyMap(),
+            triggers = root.values["triggers"]?.let { parseTriggers(it) } ?: emptyMap(),
             ui = root.optionalObj("ui")?.let(::parseUi) ?: UiSchema(),
             melody = root.optionalObj("melody")?.let(::parseMelody),
         )
@@ -113,6 +116,16 @@ object DefinitionJsonCodec {
         val messages = obj.optionalObj("messages")?.values?.mapValues { (name, value) -> parseMessage(name, value.obj("protocol.messages.$name")) } ?: emptyMap()
         val transactions = obj.optionalObj("transactions")?.values?.mapValues { (name, value) -> parseTransaction(name, value.obj("protocol.transactions.$name")) } ?: emptyMap()
         val packet = obj.optionalObj("packet")?.let { PacketDefinition(it.optionalBoolean("includesSequence") ?: true) } ?: PacketDefinition()
+        val legacyInitialize = mutableListOf<String>()
+        val initialization = mutableListOf<InitializationStepDefinition>()
+        obj.optionalArray("initialize")?.values?.forEachIndexed { index, value ->
+            val path = "protocol.initialize[$index]"
+            when (value) {
+                is JsonValue.StringValue -> legacyInitialize += value.string(path)
+                is JsonValue.Object -> initialization += parseInitializationStep(value, path)
+                else -> throw DefinitionJsonException(path, "must be a transaction name or an initialization object")
+            }
+        }
         return ProtocolDefinition(
             endianness = when ((obj.optionalString("endianness") ?: "little").lowercase()) {
                 "little", "little_endian", "le" -> com.Fusion.Btremix.protocol.api.Endianness.LITTLE
@@ -124,9 +137,34 @@ object DefinitionJsonCodec {
             framing = obj.optionalObj("framing")?.let(::parseFraming),
             messages = messages,
             transactions = transactions,
-            initialize = obj.optionalArray("initialize")?.values?.mapIndexed { index, value ->
-                value.string("protocol.initialize[$index]")
-            } ?: emptyList(),
+            initialize = legacyInitialize,
+            initialization = initialization,
+        )
+    }
+
+    private fun parseInitializationStep(obj: JsonValue.Object, path: String): InitializationStepDefinition {
+        val known = setOf("transaction", "action", "program", "script", "required")
+        obj.values.keys.firstOrNull { it !in known }?.let { unknown ->
+            throw DefinitionJsonException("$path.$unknown", "unknown initialization field")
+        }
+        val programValue = obj.values["program"] ?: obj.values["script"]
+        if (obj.values["program"] != null && obj.values["script"] != null) {
+            throw DefinitionJsonException("$path.script", "cannot be combined with 'program'")
+        }
+        val transaction = obj.optionalString("transaction")
+        val action = obj.optionalString("action")
+        val program = programValue?.let { ScriptCodec.parse(it, "$path.program") }
+        if (listOf(transaction != null, action != null, program != null).count { it } != 1) {
+            throw DefinitionJsonException(
+                path,
+                "requires exactly one of transaction, action or program",
+            )
+        }
+        return InitializationStepDefinition(
+            transaction = transaction,
+            action = action,
+            program = program,
+            required = obj.optionalBoolean("required") ?: true,
         )
     }
 
@@ -453,6 +491,52 @@ object DefinitionJsonCodec {
             id to parseAction(id, obj)
         }.toMap()
         else -> throw DefinitionJsonException("actions", "must be an object or array")
+    }
+
+    private fun parseTriggers(value: JsonValue): Map<String, TriggerDefinition> = when (value) {
+        is JsonValue.Object -> value.values.mapValues { (id, item) ->
+            parseTrigger(id, item.obj("triggers.$id"), "triggers.$id")
+        }
+        is JsonValue.Array -> buildMap {
+            value.values.forEachIndexed { index, item ->
+                val obj = item.obj("triggers[$index]")
+                val id = obj.optionalString("id")
+                    ?: throw DefinitionJsonException("triggers[$index]", "requires id")
+                if (id in this) {
+                    throw DefinitionJsonException("triggers[$index].id", "duplicate trigger '$id'")
+                }
+                put(id, parseTrigger(id, obj, "triggers[$index]"))
+            }
+        }
+        else -> throw DefinitionJsonException("triggers", "must be an object or array")
+    }
+
+    private fun parseTrigger(id: String, obj: JsonValue.Object, path: String): TriggerDefinition {
+        if (id.isBlank()) throw DefinitionJsonException("$path.id", "must not be blank")
+        val known = setOf("id", "matcher", "program", "script", "action")
+        obj.values.keys.firstOrNull { it !in known }?.let { unknown ->
+            throw DefinitionJsonException("$path.$unknown", "unknown trigger field")
+        }
+        if (obj.values["program"] != null && obj.values["script"] != null) {
+            throw DefinitionJsonException("$path.script", "cannot be combined with 'program'")
+        }
+        val matcherValue = obj.values["matcher"]
+            ?: throw DefinitionJsonException("$path.matcher", "is required")
+        val programValue = obj.values["program"] ?: obj.values["script"]
+        val program = programValue?.let { ScriptCodec.parse(it, "$path.program") }
+        val action = obj.optionalString("action")
+        if ((program == null) == (action == null)) {
+            throw DefinitionJsonException(
+                path,
+                "requires exactly one of program or action",
+            )
+        }
+        return TriggerDefinition(
+            id = id,
+            matcher = parsePacketMatcher(matcherValue.obj("$path.matcher"), "$path.matcher"),
+            program = program,
+            action = action,
+        )
     }
 
     private fun parseUi(obj: JsonValue.Object): UiSchema = UiSchema(

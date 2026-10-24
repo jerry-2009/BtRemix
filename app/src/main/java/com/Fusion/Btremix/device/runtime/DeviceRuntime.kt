@@ -8,6 +8,7 @@ import com.Fusion.Btremix.core.bluetooth.api.ConnectionState
 import java.time.Clock
 import java.time.Instant
 import java.util.concurrent.ConcurrentHashMap
+import java.util.concurrent.CopyOnWriteArrayList
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.CoroutineDispatcher
 import kotlinx.coroutines.CoroutineScope
@@ -31,7 +32,21 @@ import kotlinx.coroutines.sync.withLock
 /** Creates runtime sessions for already connected BLE devices. */
 interface DeviceRuntime {
     suspend fun open(device: BleDevice, connection: BleConnection): DeviceSession
+
+    /**
+     * Opens only through service discovery. Definition wiring completes initialization and calls
+     * [ProtocolSession.markReady], which keeps `Ready` from being observable before required steps.
+     */
+    suspend fun openForDefinitionBinding(device: BleDevice, connection: BleConnection): DeviceSession =
+        open(device, connection)
 }
+
+/** Non-fatal initialization diagnostic retained on the live session. */
+data class InitializationDiagnostic(
+    val step: String,
+    val required: Boolean,
+    val error: RuntimeError,
+)
 
 /**
  * Transport-neutral view of a live device session.
@@ -48,6 +63,8 @@ interface ProtocolSession {
     val state: StateStore
     val stateStore: StateStore
     val events: SharedFlow<DeviceEvent>
+    val initializationDiagnostics: List<InitializationDiagnostic>
+        get() = emptyList()
 
     suspend fun execute(action: DeviceAction): ActionResult
 
@@ -55,6 +72,21 @@ interface ProtocolSession {
 
     /** Registers the handler used when [DeviceAction.id] matches [id]. */
     fun registerAction(id: String, handler: DeviceActionHandler)
+
+    /** Starts the connected -> initializing transition for Definition-controlled startup. */
+    suspend fun beginInitialization() = Unit
+
+    /** Completes Definition startup; implementations ignore this while disconnected. */
+    suspend fun markReady() = Unit
+
+    /** Publishes a required initialization failure and tears down without overwriting `Error`. */
+    suspend fun failInitialization(error: RuntimeError) = Unit
+
+    fun recordInitializationFailure(diagnostic: InitializationDiagnostic) = Unit
+
+    suspend fun emitScriptEvent(name: String, value: StateValue) = Unit
+
+    suspend fun reportError(error: RuntimeError) = Unit
 
     suspend fun close()
 }
@@ -71,7 +103,7 @@ interface DeviceSession : ProtocolSession {
     /** Bridges BLE notifications into the session event bus. */
     fun notifications(characteristic: BleCharacteristic): Flow<ByteArray>
 
-    suspend fun emitScriptEvent(name: String, value: StateValue)
+    override suspend fun emitScriptEvent(name: String, value: StateValue)
 }
 
 /** Default Phase 2 runtime implementation. */
@@ -84,6 +116,13 @@ class DefaultDeviceRuntime(
         val session = DeviceSessionImpl(device, connection, clock, dispatcher)
         actionHandlers.forEach { (id, handler) -> session.registerAction(id, handler) }
         session.initialize()
+        return session
+    }
+
+    override suspend fun openForDefinitionBinding(device: BleDevice, connection: BleConnection): DeviceSession {
+        val session = DeviceSessionImpl(device, connection, clock, dispatcher)
+        actionHandlers.forEach { (id, handler) -> session.registerAction(id, handler) }
+        session.initializeForBinding()
         return session
     }
 }
@@ -104,6 +143,7 @@ private class DeviceSessionImpl(
     private val servicesImpl = MutableStateFlow<List<BleService>>(emptyList())
     private val handlers = ConcurrentHashMap<String, DeviceActionHandler>()
     private val actionMutex = Mutex()
+    private val diagnostics = CopyOnWriteArrayList<InitializationDiagnostic>()
     private var connectionMonitor: Job? = null
     @Volatile private var closed = false
 
@@ -112,6 +152,8 @@ private class DeviceSessionImpl(
     override val stateStore: StateStore = stateImpl
     override val services: StateFlow<List<BleService>> = servicesImpl.asStateFlow()
     override val events: SharedFlow<DeviceEvent> = eventBus.events
+    override val initializationDiagnostics: List<InitializationDiagnostic>
+        get() = diagnostics.toList()
 
     init {
         scope.launch {
@@ -131,6 +173,11 @@ private class DeviceSessionImpl(
     }
 
     suspend fun initialize() {
+        initializeForBinding()
+        markReady()
+    }
+
+    suspend fun initializeForBinding() {
         transition(DeviceLifecycleState.Connected)
         transition(DeviceLifecycleState.Initializing)
         connectionMonitor = scope.launch {
@@ -141,7 +188,7 @@ private class DeviceSessionImpl(
                         when (state) {
                             is ConnectionState.Error -> {
                                 transition(DeviceLifecycleState.Error(RuntimeError.ConnectionFailed(state.error.message)))
-                                closeAfterFailure()
+                                closeAfterFailure(preserveLifecycle = true)
                             }
                             else -> {
                                 transition(DeviceLifecycleState.Disconnected)
@@ -155,16 +202,45 @@ private class DeviceSessionImpl(
         try {
             servicesImpl.value = connection.discoverServices()
             if (closed) throw IllegalStateException("Device disconnected during initialization")
-            transition(DeviceLifecycleState.Ready)
-            eventBus.emit(DeviceEvent.DeviceReady(device.id, now()))
         } catch (cancelled: CancellationException) {
-            closeAfterFailure()
+            closeAfterFailure(preserveLifecycle = true)
             throw cancelled
         } catch (error: Throwable) {
             transition(DeviceLifecycleState.Error(RuntimeError.InitializationFailed(error.message ?: "Device initialization failed")))
-            closeAfterFailure()
+            closeAfterFailure(preserveLifecycle = true)
             throw error
         }
+    }
+
+    override suspend fun beginInitialization() {
+        if (closed || lifecycle.value == DeviceLifecycleState.Ready || lifecycle.value is DeviceLifecycleState.Error) return
+        if (lifecycle.value == DeviceLifecycleState.Created) {
+            transition(DeviceLifecycleState.Connected)
+        }
+        transition(DeviceLifecycleState.Initializing)
+    }
+
+    override suspend fun markReady() {
+        if (closed || lifecycle.value is DeviceLifecycleState.Error) return
+        transition(DeviceLifecycleState.Ready)
+        eventBus.emit(DeviceEvent.DeviceReady(device.id, now()))
+    }
+
+    override suspend fun failInitialization(error: RuntimeError) {
+        if (closed) return
+        closed = true
+        transition(DeviceLifecycleState.Error(error))
+        connectionMonitor?.cancel()
+        runCatching { connection.disconnect() }
+        scope.cancel()
+    }
+
+    override fun recordInitializationFailure(diagnostic: InitializationDiagnostic) {
+        diagnostics += diagnostic
+    }
+
+    override suspend fun reportError(error: RuntimeError) {
+        eventBus.emit(DeviceEvent.Error(device.id, now(), error))
     }
 
     override fun registerAction(id: String, handler: DeviceActionHandler) {
@@ -238,12 +314,12 @@ private class DeviceSessionImpl(
         }
     }
 
-    private suspend fun closeAfterFailure() {
+    private suspend fun closeAfterFailure(preserveLifecycle: Boolean = false) {
         if (closed) return
         closed = true
         connectionMonitor?.cancel()
         runCatching { connection.disconnect() }
-        transition(DeviceLifecycleState.Disconnected)
+        if (!preserveLifecycle) transition(DeviceLifecycleState.Disconnected)
         scope.cancel()
     }
 

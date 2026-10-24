@@ -17,6 +17,8 @@ import com.Fusion.Btremix.protocol.api.FrameLayoutSpec
 import com.Fusion.Btremix.protocol.api.FrameSegmentRole
 import com.Fusion.Btremix.protocol.api.MAX_COMMAND
 import com.Fusion.Btremix.protocol.api.PacketMatcherSpec
+import com.Fusion.Btremix.scripting.api.ScriptProgram
+import com.Fusion.Btremix.scripting.api.ScriptStep
 import java.util.UUID
 
 data class DefinitionValidationError(val path: String, val message: String)
@@ -119,6 +121,14 @@ object DefinitionValidator {
                     }
                 }
             }
+            action.script?.let { program ->
+                validateScriptProgram(
+                    program,
+                    "actions.$id.script",
+                    definition,
+                    errors,
+                )
+            }
         }
         validateUi(definition.ui.children, "ui.children", definition, errors)
 
@@ -177,14 +187,8 @@ object DefinitionValidator {
                 errors += DefinitionValidationError("protocol.initialize[$index]", "unknown transaction '$name'")
             }
         }
-        if (definition.protocol.transport?.type == TransportType.RFCOMM) {
-            definition.actions.values.filter { it.script != null }.forEach { action ->
-                errors += DefinitionValidationError(
-                    "actions.${action.id}.script",
-                    "is not supported over an rfcomm transport; use 'transaction'",
-                )
-            }
-        }
+        validateInitializationPolicy(definition, errors)
+        validateTriggers(definition, errors)
         definition.protocol.messages.forEach { (name, message) ->
             if (name.isBlank()) errors += DefinitionValidationError("protocol.messages", "message name must not be blank")
             val names = message.fields.map { it.name }
@@ -291,6 +295,231 @@ object DefinitionValidator {
             }
         }
         return errors
+    }
+
+    private fun validateInitializationPolicy(
+        definition: LoadedDeviceDefinition,
+        errors: MutableList<DefinitionValidationError>,
+    ) {
+        definition.protocol.initialization.forEachIndexed { index, step ->
+            val path = "protocol.initialization[$index]"
+            if (definition.manifest.schemaVersion < DefinitionSchema.VERSION_SEGMENTED) {
+                errors += DefinitionValidationError(
+                    path,
+                    "requires manifest.schemaVersion ${DefinitionSchema.VERSION_SEGMENTED}",
+                )
+            }
+            step.transaction?.let { name ->
+                if (name !in definition.protocol.transactions) {
+                    errors += DefinitionValidationError("$path.transaction", "unknown transaction '$name'")
+                }
+            }
+            step.action?.let { id ->
+                val action = definition.actions[id]
+                when {
+                    action == null ->
+                        errors += DefinitionValidationError("$path.action", "unknown action '$id'")
+                    action.script == null ->
+                        errors += DefinitionValidationError(
+                            "$path.action",
+                            "initialization action '$id' must use a JSON program",
+                        )
+                }
+            }
+            step.program?.let { program ->
+                validateScriptProgram(program, "$path.program", definition, errors)
+            }
+        }
+    }
+
+    private fun validateTriggers(
+        definition: LoadedDeviceDefinition,
+        errors: MutableList<DefinitionValidationError>,
+    ) {
+        val triggers = definition.triggers.values.toList()
+        triggers.forEachIndexed { index, trigger ->
+            val path = "triggers.${trigger.id}"
+            if (definition.manifest.schemaVersion < DefinitionSchema.VERSION_SEGMENTED) {
+                errors += DefinitionValidationError(
+                    path,
+                    "requires manifest.schemaVersion ${DefinitionSchema.VERSION_SEGMENTED}",
+                )
+            }
+            if (trigger.id != definition.triggers.keys.elementAtOrNull(index)) {
+                errors += DefinitionValidationError("$path.id", "must match the trigger map key")
+            }
+            validatePacketMatcherBasic(trigger.matcher, "$path.matcher", errors)
+            if (trigger.matcher.matchRequestSequence) {
+                errors += DefinitionValidationError(
+                    "$path.matcher.sequence",
+                    "an inbound trigger cannot reference a request sequence",
+                )
+            }
+            trigger.action?.let { action ->
+                if (action !in definition.actions) {
+                    errors += DefinitionValidationError("$path.action", "unknown action '$action'")
+                }
+            }
+            trigger.program?.let { program ->
+                validateScriptProgram(program, "$path.program", definition, errors)
+            }
+            triggers.take(index).forEach { previous ->
+                if (matchersPossiblyOverlap(previous.matcher, trigger.matcher)) {
+                    errors += DefinitionValidationError(
+                        "$path.matcher",
+                        "overlaps trigger '${previous.id}'; one inbound frame may match at most one trigger",
+                    )
+                }
+            }
+        }
+    }
+
+    private fun validateScriptProgram(
+        program: ScriptProgram,
+        path: String,
+        definition: LoadedDeviceDefinition,
+        errors: MutableList<DefinitionValidationError>,
+        depth: Int = 0,
+    ) {
+        if (depth > 8) {
+            errors += DefinitionValidationError(path, "program nesting exceeds 8")
+            return
+        }
+        fun checkSteps(steps: List<ScriptStep>, at: String) {
+            steps.forEachIndexed { index, step ->
+                val stepPath = "$at[$index]"
+                when (step) {
+                    is ScriptStep.GetState -> {
+                        if (step.key !in definition.states) {
+                            errors += DefinitionValidationError("$stepPath.key", "unknown state '${step.key}'")
+                        }
+                    }
+                    is ScriptStep.SetState -> {
+                        if (step.key !in definition.states) {
+                            errors += DefinitionValidationError("$stepPath.key", "unknown state '${step.key}'")
+                        }
+                    }
+                    is ScriptStep.If -> {
+                        checkSteps(step.thenSteps, "$stepPath.then")
+                        checkSteps(step.elseSteps, "$stepPath.else")
+                    }
+                    is ScriptStep.Repeat -> {
+                        if (step.count !in 0..32) {
+                            errors += DefinitionValidationError("$stepPath.count", "must be 0..32")
+                        }
+                        checkSteps(step.steps, "$stepPath.steps")
+                    }
+                    is ScriptStep.Read,
+                    is ScriptStep.Write,
+                    is ScriptStep.Subscribe,
+                    -> {
+                        if (definition.protocol.transport?.type == TransportType.RFCOMM) {
+                            errors += DefinitionValidationError(
+                                stepPath,
+                                "legacy GATT script operations are not available over an rfcomm transport",
+                            )
+                        }
+                    }
+                    is ScriptStep.SessionSend,
+                    is ScriptStep.SessionRequest,
+                    is ScriptStep.SessionWaitFor,
+                    is ScriptStep.SessionOnFrame,
+                    -> {
+                        if (definition.manifest.schemaVersion < DefinitionSchema.VERSION_SEGMENTED) {
+                            errors += DefinitionValidationError(
+                                stepPath,
+                                "requires manifest.schemaVersion ${DefinitionSchema.VERSION_SEGMENTED}",
+                            )
+                        }
+                        if (definition.protocol.transport == null) {
+                            errors += DefinitionValidationError(
+                                stepPath,
+                                "requires protocol.transport",
+                            )
+                        }
+                        when (step) {
+                            is ScriptStep.SessionRequest -> {
+                                if (step.endpoint !in definition.protocol.transactions) {
+                                    errors += DefinitionValidationError(
+                                        "$stepPath.request",
+                                        "unknown endpoint '${step.endpoint}'",
+                                    )
+                                }
+                                step.timeout?.let { timeout ->
+                                    if (!timeout.isPositive() || timeout.inWholeMilliseconds > 60_000) {
+                                        errors += DefinitionValidationError(
+                                            "$stepPath.timeoutMs",
+                                            "must be in 1..60000",
+                                        )
+                                    }
+                                }
+                                step.matcher?.let { matcher ->
+                                    validatePacketMatcherBasic(matcher, "$stepPath.matcher", errors)
+                                    if (matcher.matchRequestSequence) {
+                                        errors += DefinitionValidationError(
+                                            "$stepPath.matcher.sequence",
+                                            "cannot match a request sequence here",
+                                        )
+                                    }
+                                }
+                            }
+                            is ScriptStep.SessionWaitFor -> {
+                                if (!step.timeout.isPositive() || step.timeout.inWholeMilliseconds > 60_000) {
+                                    errors += DefinitionValidationError(
+                                        "$stepPath.timeoutMs",
+                                        "must be in 1..60000",
+                                    )
+                                }
+                                validatePacketMatcherBasic(step.matcher, "$stepPath.matcher", errors)
+                                if (step.matcher.matchRequestSequence) {
+                                    errors += DefinitionValidationError(
+                                        "$stepPath.matcher.sequence",
+                                        "waitFor cannot match a request sequence",
+                                    )
+                                }
+                            }
+                            is ScriptStep.SessionOnFrame -> {
+                                validatePacketMatcherBasic(step.matcher, "$stepPath.matcher", errors)
+                                if (step.matcher.matchRequestSequence) {
+                                    errors += DefinitionValidationError(
+                                        "$stepPath.matcher.sequence",
+                                        "onFrame cannot match a request sequence",
+                                    )
+                                }
+                                validateScriptProgram(step.program, "$stepPath.program", definition, errors, depth + 1)
+                            }
+                            else -> Unit
+                        }
+                    }
+                    is ScriptStep.Emit -> {
+                        if (step.name.isBlank()) {
+                            errors += DefinitionValidationError("$stepPath.name", "must not be blank")
+                        }
+                    }
+                    is ScriptStep.Assign -> {
+                        if (step.name.isBlank()) {
+                            errors += DefinitionValidationError("$stepPath.name", "must not be blank")
+                        }
+                    }
+                    is ScriptStep.Return -> Unit
+                }
+            }
+        }
+        checkSteps(program.steps, path)
+    }
+
+    private fun matchersPossiblyOverlap(left: PacketMatcherSpec, right: PacketMatcherSpec): Boolean {
+        if (left.command != null && right.command != null && left.command != right.command) return false
+        if (left.sequence != null && right.sequence != null && left.sequence != right.sequence) return false
+        if (left.payloadTypes.isNotEmpty() && right.payloadTypes.isNotEmpty() &&
+            left.payloadTypes.intersect(right.payloadTypes).isEmpty()
+        ) {
+            return false
+        }
+        val leftPrefix = left.payloadPrefix
+        val rightPrefix = right.payloadPrefix
+        val shared = minOf(leftPrefix.size, rightPrefix.size)
+        return leftPrefix.take(shared) == rightPrefix.take(shared)
     }
 
     private fun validateMelody(

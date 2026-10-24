@@ -366,6 +366,38 @@ data class TransactionDefinition(
     val matcher: PacketMatcherSpec? = null,
 )
 
+/**
+ * One P3 initialization step. Exactly one execution source is selected. A required failure closes
+ * the session before `Ready`; an optional failure is recorded and the next step still runs.
+ */
+data class InitializationStepDefinition(
+    val transaction: String? = null,
+    val action: String? = null,
+    val program: ScriptProgram? = null,
+    val required: Boolean = true,
+) {
+    init {
+        require(listOf(transaction != null, action != null, program != null).count { it } == 1) {
+            "Initialization step requires exactly one of transaction, action or program"
+        }
+    }
+}
+
+/** Data-only inbound-frame trigger; it cannot alter lifecycle or access the transport. */
+data class TriggerDefinition(
+    val id: String,
+    val matcher: PacketMatcherSpec,
+    val program: ScriptProgram? = null,
+    val action: String? = null,
+) {
+    init {
+        require(id.isNotBlank()) { "Trigger id must not be blank" }
+        require((program == null) != (action == null)) {
+            "Trigger requires exactly one of program or action"
+        }
+    }
+}
+
 data class ProtocolDefinition(
     val endianness: Endianness = Endianness.LITTLE,
     val packet: PacketDefinition = PacketDefinition(),
@@ -375,6 +407,8 @@ data class ProtocolDefinition(
     val transactions: Map<String, TransactionDefinition> = emptyMap(),
     /** Transaction names run, in order, after the session becomes ready. Failures are non-fatal. */
     val initialize: List<String> = emptyList(),
+    /** P3 ordered initialization policy executed before the session becomes ready. */
+    val initialization: List<InitializationStepDefinition> = emptyList(),
 )
 
 data class LoadedDeviceDefinition(
@@ -382,6 +416,8 @@ data class LoadedDeviceDefinition(
     val protocol: ProtocolDefinition = ProtocolDefinition(),
     val states: Map<String, StateDefinition> = emptyMap(),
     val actions: Map<String, ActionDefinition> = emptyMap(),
+    /** Explicit matcher-to-program/action bindings, independent of state notifications. */
+    val triggers: Map<String, TriggerDefinition> = emptyMap(),
     val ui: UiSchema = UiSchema(),
     /** Optional ColorOS Melody advertisement; `null` keeps the definition out of Melody entirely. */
     val melody: MelodySectionDefinition? = null,
@@ -435,6 +471,14 @@ class DefinitionProtocolFactory(private val definition: LoadedDeviceDefinition) 
     }
 
     fun transaction(transactionName: String, message: Message? = null): TransactionRequest {
+        return transactionForPacket(
+            transactionName,
+            encodePacket(transactionName, message),
+        )
+    }
+
+    /** Builds a transaction around a request packet already encoded by a Definition binding. */
+    fun transactionForPacket(transactionName: String, request: Packet): TransactionRequest {
         val transaction = definition.protocol.transactions[transactionName]
             ?: error("Unknown transaction '$transactionName'")
         val expectedPayloadTypes = transaction.expectedPayloadTypes
@@ -446,7 +490,7 @@ class DefinitionProtocolFactory(private val definition: LoadedDeviceDefinition) 
             }
         }
         return TransactionRequest(
-            request = encodePacket(transactionName, message),
+            request = request,
             expectedCommand = transaction.expectedCommand,
             timeout = transaction.timeout,
             retries = transaction.retries,

@@ -73,7 +73,7 @@ class DevicePackageBootstrapTest {
         val bootstrap = DevicePackageBootstrap(manager, StringSource(emptyMap()))
         val store = DevicePackageStore(directory)
         val unsupported = definitionJson(id = "vendor.unsupported")
-            .replace("\"capabilities\":", "\"requires\": [\"session.onFrame\"], \"capabilities\":")
+            .replace("\"capabilities\":", "\"requires\": [\"session.notImplemented\"], \"capabilities\":")
         store.write(
             "vendor.unsupported",
             validPackageBytes(id = "vendor.unsupported", definition = unsupported),

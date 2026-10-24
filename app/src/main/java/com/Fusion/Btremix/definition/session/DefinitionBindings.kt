@@ -11,9 +11,8 @@ import com.Fusion.Btremix.device.runtime.DeviceLifecycleState
 import com.Fusion.Btremix.device.runtime.DeviceSession
 import com.Fusion.Btremix.device.runtime.RuntimeError
 import com.Fusion.Btremix.device.runtime.StateSource
-import com.Fusion.Btremix.protocol.api.DefaultProtocolRuntime
-import com.Fusion.Btremix.protocol.api.ProtocolRuntime
-import com.Fusion.Btremix.protocol.api.ProtocolTransport
+import com.Fusion.Btremix.protocol.api.SessionIo
+import com.Fusion.Btremix.protocol.api.SessionRequest
 import com.Fusion.Btremix.protocol.api.TransactionResult
 import java.util.UUID
 import kotlinx.coroutines.CoroutineDispatcher
@@ -39,6 +38,7 @@ import kotlinx.coroutines.launch
 class DefinitionBindings(
     private val session: DeviceSession,
     private val definition: LoadedDeviceDefinition,
+    private val sessionIo: SessionIo?,
     dispatcher: CoroutineDispatcher,
 ) {
     private val scope = CoroutineScope(SupervisorJob() + dispatcher)
@@ -73,17 +73,11 @@ class DefinitionBindings(
     private fun bindActions() {
         val declarative = definition.actions.values.filter { it.transaction != null }
         if (declarative.isEmpty()) return
-        val transportDefinition = requireNotNull(definition.protocol.transport) {
+        requireNotNull(definition.protocol.transport) {
             "Definition '${definition.id}' declares declarative actions but no protocol.transport"
         }
-        val characteristic = characteristic(transportDefinition)
-        val runtime = DefaultProtocolRuntime(
-            transport = SessionProtocolTransport(session, characteristic, transportDefinition.withResponse),
-            packetEncoder = support.factory.packetCodec,
-            packetDecoder = support.factory.packetCodec,
-        )
         declarative.forEach { action ->
-            session.registerAction(action.id) { input -> executeTransaction(action, input, runtime) }
+            session.registerAction(action.id) { input -> executeTransaction(action, input) }
         }
     }
 
@@ -126,7 +120,6 @@ class DefinitionBindings(
     private suspend fun executeTransaction(
         action: ActionDefinition,
         input: DeviceAction,
-        runtime: ProtocolRuntime,
     ): ActionResult {
         val transactionName = requireNotNull(action.transaction)
         val transaction = definition.protocol.transactions[transactionName]
@@ -134,7 +127,15 @@ class DefinitionBindings(
         val message = transaction.requestMessage?.let { name ->
             support.buildMessage(action, name, input)
         }
-        val result = runtime.execute(support.factory.transaction(transactionName, message))
+        val result = requireNotNull(sessionIo) {
+            "Definition '${definition.id}' has no controlled protocol I/O"
+        }.request(
+            SessionRequest(
+                endpoint = transactionName,
+                packet = support.factory.encodePacket(transactionName, message),
+                timeout = transaction.timeout,
+            ),
+        )
         return when (result) {
             is TransactionResult.Success -> {
                 val value = support.resultValue(action, input)
@@ -151,15 +152,4 @@ class DefinitionBindings(
             )
         }
     }
-}
-
-/** Routes protocol writes and notification reads through the session and its event bus. */
-private class SessionProtocolTransport(
-    private val session: DeviceSession,
-    private val characteristic: BleCharacteristic,
-    private val withResponse: Boolean,
-) : ProtocolTransport {
-    override suspend fun write(data: ByteArray) = session.write(characteristic, data, withResponse)
-
-    override fun notifications(): Flow<ByteArray> = session.notifications(characteristic)
 }
