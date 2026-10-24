@@ -134,6 +134,33 @@ class DefinitionSchemaTest {
     }
 
     @Test
+    fun rfcommFallbackServices_areOrderedAndRejectDuplicates() {
+        val compatible = "00001101-0000-1000-8000-008584d01810"
+        val withFallback = streamDefinition.replace(
+            "\"type\": \"rfcomm\", \"service\": \"$SPP_SERVICE\", \"bonded\": true",
+            "\"type\": \"rfcomm\", \"service\": \"$SPP_SERVICE\", " +
+                "\"fallbackServices\": [\"$compatible\"], \"bonded\": true",
+        )
+        val definition = DefinitionJsonCodec.decode(withFallback)
+
+        assertEquals(
+            listOf(SPP_SERVICE, compatible),
+            definition.protocol.transport?.let { listOf(it.service) + it.fallbackServices },
+        )
+
+        val duplicate = streamDefinition.replace(
+            "\"type\": \"rfcomm\", \"service\": \"$SPP_SERVICE\", \"bonded\": true",
+            "\"type\": \"rfcomm\", \"service\": \"$SPP_SERVICE\", " +
+                "\"fallbackServices\": [\"${SPP_SERVICE.uppercase()}\"], \"bonded\": true",
+        )
+        assertTrue(
+            validationFailure(duplicate).errors.any {
+                it.path == "protocol.transport.fallbackServices" && it.message.contains("duplicate")
+            },
+        )
+    }
+
+    @Test
     fun rfcommDefinitionWithPureJsonScriptAction_isAccepted() {
         val definition = DefinitionJsonCodec.decode(
             streamDefinition.replace(

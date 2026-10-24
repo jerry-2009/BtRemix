@@ -16,6 +16,8 @@ sealed interface ScriptExpression {
     data class State(val key: String) : ScriptExpression
     data class ByteAt(val value: ScriptExpression, val index: Int) : ScriptExpression
     data class Equals(val left: ScriptExpression, val right: ScriptExpression) : ScriptExpression
+    /** Unsigned bitwise AND; primarily used to decode flag-plus-value bytes without arithmetic. */
+    data class BitAnd(val left: ScriptExpression, val right: ScriptExpression) : ScriptExpression
     data class Concat(val values: List<ScriptExpression>) : ScriptExpression
     /** Picks [whenTrue] or [whenFalse] from [condition]; used to derive protocol bytes from a mode. */
     data class Conditional(

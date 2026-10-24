@@ -99,6 +99,72 @@ class SegmentedFrameCodecTest {
         assertTrue(FrameSplitterRegistry.LENGTH_PREFIXED in FrameSplitterRegistry.names)
     }
 
+    @Test
+    fun multipleConstantSegmentsKeepTheirDeclaredOffsets() {
+        val request = FrameLayoutSpec(
+            listOf(
+                FrameSegmentSpec(
+                    role = FrameSegmentRole.MAGIC,
+                    width = 3,
+                    constant = hex("FE DC BA"),
+                ),
+                FrameSegmentSpec(
+                    role = FrameSegmentRole.CONSTANT,
+                    name = "type",
+                    width = 1,
+                    constant = hex("C4"),
+                ),
+                FrameSegmentSpec(role = FrameSegmentRole.COMMAND, width = 1),
+                FrameSegmentSpec(role = FrameSegmentRole.LENGTH, width = 2, order = Endianness.BIG),
+                FrameSegmentSpec(role = FrameSegmentRole.SEQUENCE, width = 1, includeInLength = true),
+                FrameSegmentSpec(role = FrameSegmentRole.PAYLOAD, includeInLength = true),
+                FrameSegmentSpec(
+                    role = FrameSegmentRole.CONSTANT,
+                    name = "trailer",
+                    width = 1,
+                    constant = hex("EF"),
+                ),
+            ),
+        )
+        val response = FrameLayoutSpec(
+            listOf(
+                FrameSegmentSpec(
+                    role = FrameSegmentRole.MAGIC,
+                    width = 3,
+                    constant = hex("FE DC BA"),
+                ),
+                FrameSegmentSpec(
+                    role = FrameSegmentRole.CONSTANT,
+                    name = "type",
+                    width = 1,
+                    constant = hex("00"),
+                ),
+                FrameSegmentSpec(role = FrameSegmentRole.COMMAND, width = 1),
+                FrameSegmentSpec(role = FrameSegmentRole.LENGTH, width = 2, order = Endianness.BIG),
+                FrameSegmentSpec(role = FrameSegmentRole.OPAQUE, name = "status", width = 1, includeInLength = true),
+                FrameSegmentSpec(role = FrameSegmentRole.SEQUENCE, width = 1, includeInLength = true),
+                FrameSegmentSpec(role = FrameSegmentRole.PAYLOAD, includeInLength = true),
+                FrameSegmentSpec(
+                    role = FrameSegmentRole.CONSTANT,
+                    name = "trailer",
+                    width = 1,
+                    constant = hex("EF"),
+                ),
+            ),
+        )
+        val spec = FramingSpec(
+            splitter = FrameSplitterSpec(FrameSplitterRegistry.LENGTH_PREFIXED),
+            segmented = SegmentedFramingSpec(request, response),
+        )
+        val segmented = SegmentedFrameCodec(spec)
+
+        assertTrue(FrameLayoutRules.validate(request, checksumWidth = 0).isEmpty())
+        assertArrayEquals(
+            hex("FE DC BA C4 02 00 05 90 00 00 00 80 EF"),
+            segmented.encodeRequest(Packet(0x02, 0x90, hex("00 00 00 80"))),
+        )
+    }
+
     companion object {
         fun framing(commandWidthBytes: Int = 2): FramingSpec {
             val request = FrameLayoutSpec(

@@ -32,6 +32,17 @@ interface RfcommManager {
 
     suspend fun connect(address: String, serviceUuid: UUID): RfcommConnection
 
+    /**
+     * Tries ordered service candidates and returns the first connection that succeeds.
+     *
+     * The default preserves simple backends and tests; the Android backend may try both secure and
+     * insecure sockets for every candidate, regardless of whether SDP currently lists it.
+     */
+    suspend fun connect(address: String, serviceUuids: List<UUID>): RfcommConnection {
+        require(serviceUuids.isNotEmpty()) { "At least one RFCOMM service UUID is required" }
+        return connect(address, serviceUuids.first())
+    }
+
     suspend fun close()
 }
 

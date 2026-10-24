@@ -55,6 +55,14 @@ object ScriptCodec {
                             if (parts.size != 2) throw ScriptFormatException(at, "eq requires two values")
                             ScriptExpression.Equals(expression(parts[0], "$at[0]", depth + 1), expression(parts[1], "$at[1]", depth + 1))
                         }
+                        "bitAnd" -> {
+                            val parts = argument.array(at)
+                            if (parts.size != 2) throw ScriptFormatException(at, "bitAnd requires two values")
+                            ScriptExpression.BitAnd(
+                                expression(parts[0], "$at[0]", depth + 1),
+                                expression(parts[1], "$at[1]", depth + 1),
+                            )
+                        }
                         "concat" -> ScriptExpression.Concat(argument.array(at).mapIndexed { index, part -> expression(part, "$at[$index]", depth + 1) })
                         "len" -> ScriptExpression.Length(expression(argument, at, depth + 1))
                         "if" -> {

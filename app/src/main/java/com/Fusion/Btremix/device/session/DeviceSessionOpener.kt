@@ -5,12 +5,12 @@ import com.Fusion.Btremix.core.bluetooth.api.BleDevice
 import com.Fusion.Btremix.core.classic.api.RfcommManager
 import com.Fusion.Btremix.definition.api.LoadedDeviceDefinition
 import com.Fusion.Btremix.definition.api.TransportType
+import com.Fusion.Btremix.definition.api.rfcommServiceCandidates
 import com.Fusion.Btremix.definition.packages.DevicePackageRegistry
 import com.Fusion.Btremix.definition.session.DefinitionSessionFactory
 import com.Fusion.Btremix.device.runtime.DeviceRuntime
 import com.Fusion.Btremix.device.runtime.DeviceSession
 import com.Fusion.Btremix.device.runtime.ProtocolSession
-import java.util.UUID
 
 /**
  * The single place that turns "a device the user tapped" into a live [ProtocolSession].
@@ -61,7 +61,7 @@ class DeviceSessionOpener(
     private suspend fun open(device: BleDevice, definition: LoadedDeviceDefinition?): ProtocolSession {
         val transport = definition?.protocol?.transport
         if (transport != null && transport.type == TransportType.RFCOMM) {
-            val connection = rfcomm.connect(device.address, UUID.fromString(transport.service))
+            val connection = rfcomm.connect(device.address, transport.rfcommServiceCandidates())
             return sessionFactory.openStream(device, connection, definition)
         }
         val connection = ble.connect(device)

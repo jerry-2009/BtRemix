@@ -36,6 +36,11 @@ suspend fun evaluateScriptExpression(
         evaluateScriptExpression(expression.left, args, variables, maxBytes, getState) ==
             evaluateScriptExpression(expression.right, args, variables, maxBytes, getState),
     )
+    is ScriptExpression.BitAnd -> {
+        val left = evaluateScriptExpression(expression.left, args, variables, maxBytes, getState).unsignedInt()
+        val right = evaluateScriptExpression(expression.right, args, variables, maxBytes, getState).unsignedInt()
+        StateValue.IntValue(left and right)
+    }
     is ScriptExpression.Concat -> {
         val parts = expression.values.map { part ->
             (evaluateScriptExpression(part, args, variables, maxBytes, getState) as? StateValue.BytesValue)?.value
@@ -69,4 +74,13 @@ suspend fun evaluateScriptExpression(
             ?: throw ScriptEvaluationException("len requires bytes")
         StateValue.IntValue(bytes.size)
     }
+}
+
+private fun StateValue.unsignedInt(): Int = when (this) {
+    is StateValue.IntValue -> value
+    is StateValue.LongValue -> value.takeIf { it <= Int.MAX_VALUE }?.toInt()
+        ?: throw ScriptEvaluationException("bitAnd integer is out of range")
+    else -> throw ScriptEvaluationException("bitAnd requires integers")
+}.also { value ->
+    if (value < 0) throw ScriptEvaluationException("bitAnd requires non-negative integers")
 }

@@ -53,6 +53,7 @@ class ProtocolExtensionBoundaryTest {
     private fun extensionMainFiles(): List<File> = listOf(
         repositoryFile("protocol-extension-api/src/main"),
         repositoryFile("vendor/testbed/src/main"),
+        repositoryFile("vendor/xiaomi/src/main"),
     ).flatMap(::kotlinFiles)
 
     private fun definitionMainFiles(): List<File> =

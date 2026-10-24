@@ -30,3 +30,4 @@ rootProject.name = "BtRemix"
 include(":app")
 include(":protocol-extension-api")
 include(":vendor:testbed")
+include(":vendor:xiaomi")

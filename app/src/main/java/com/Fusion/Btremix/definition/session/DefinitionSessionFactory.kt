@@ -174,7 +174,8 @@ class DefinitionSessionFactory(
                 transport = session.transport,
                 packetEncoder = definition.protocolFactory().packetCodec,
                 packetDecoder = definition.protocolFactory().packetCodec,
-                sequenceGenerator = TogglingSequenceGenerator(),
+                sequenceGenerator = definition.protocol.framing?.sequence?.createGenerator()
+                    ?: TogglingSequenceGenerator(),
             )
             val io = DefinitionSessionIo(
                 definition = definition,

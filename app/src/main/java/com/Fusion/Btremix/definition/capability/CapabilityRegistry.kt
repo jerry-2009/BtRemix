@@ -63,6 +63,16 @@ object CapabilityRegistry {
             minRuntimeApi = 1,
             parameterRule = "command segment width is 1..3 bytes",
         ),
+        "sequence.toggle" to CapabilityDescriptor(
+            id = "sequence.toggle",
+            minRuntimeApi = 1,
+            parameterRule = "request sequence toggles between 0 and 1",
+        ),
+        "sequence.increment" to CapabilityDescriptor(
+            id = "sequence.increment",
+            minRuntimeApi = 1,
+            parameterRule = "request sequence increments and wraps at UInt8",
+        ),
         "session.send" to CapabilityDescriptor(
             id = "session.send",
             minRuntimeApi = 1,

@@ -49,6 +49,7 @@ android {
 dependencies {
     implementation(project(":protocol-extension-api"))
     implementation(project(":vendor:testbed"))
+    implementation(project(":vendor:xiaomi"))
     implementation(platform(libs.androidx.compose.bom))
     implementation(libs.androidx.activity.compose)
     implementation(libs.androidx.compose.material3)

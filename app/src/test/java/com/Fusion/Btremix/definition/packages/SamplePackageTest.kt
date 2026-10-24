@@ -3,6 +3,9 @@ package com.Fusion.Btremix.definition.packages
 import com.Fusion.Btremix.definition.api.UiNode
 import com.Fusion.Btremix.definition.api.DefinitionSchema
 import com.Fusion.Btremix.definition.api.TransportType
+import com.Fusion.Btremix.definition.api.rfcommServiceCandidates
+import com.Fusion.Btremix.protocol.api.SequenceFunction
+import com.Fusion.Btremix.protocol.api.SequenceStart
 import com.Fusion.Btremix.protocol.vectors.VectorJson
 import com.Fusion.Btremix.protocol.vectors.requiredArray
 import com.Fusion.Btremix.protocol.vectors.requiredInt
@@ -10,6 +13,7 @@ import com.Fusion.Btremix.protocol.vectors.requiredObject
 import com.Fusion.Btremix.protocol.vectors.requiredString
 import com.Fusion.Btremix.protocol.extension.ProtocolExtensionRegistry
 import com.Fusion.Btremix.vendor.testbed.ReferenceChallengeExtension
+import com.Fusion.Btremix.vendor.xiaomi.XiaomiMmaAuthExtension
 import java.io.File
 import org.junit.Assert.assertArrayEquals
 import org.junit.Assert.assertEquals
@@ -85,8 +89,7 @@ class SamplePackageTest {
         assumeTrue("no Sony WF-1000XM3 sample device package found", file != null)
         val definition = DevicePackageValidator().validate(DevicePackageReader().read(requireNotNull(file))).definition
 
-        // M3.1: the sample now advertises itself to ColorOS Melody, which is schema version 4.
-        assertEquals(DefinitionSchema.VERSION_MELODY, definition.manifest.schemaVersion)
+        assertEquals(DefinitionSchema.VERSION_SEGMENTED, definition.manifest.schemaVersion)
         val melody = requireNotNull(definition.melody)
         assertEquals("Sony WF-1000XM3", melody.support.name)
         assertEquals("Sony", melody.support.brand)
@@ -108,19 +111,19 @@ class SamplePackageTest {
         assertEquals(listOf(0x0C, 0x0E), framing.acknowledgeMessageTypes)
         assertEquals(0x01, requireNotNull(framing.acknowledgeReplyMessageType))
 
-        assertEquals(setOf(0x11, 0x13), definition.states.getValue("battery.left").notify?.payloadTypes)
-        assertEquals(setOf(0x11, 0x13), definition.states.getValue("battery.case").notify?.payloadTypes)
+        assertEquals(setOf(0x11, 0x13), definition.states.getValue("battery.left").notify?.matcher?.payloadTypes)
+        assertEquals(setOf(0x11, 0x13), definition.states.getValue("battery.case").notify?.matcher?.payloadTypes)
         val dualBattery = definition.protocol.transactions.getValue("battery.dual.get")
-        assertEquals(setOf(0x11, 0x13), dualBattery.expectedPayloadTypes)
+        assertEquals(setOf(0x11, 0x13), dualBattery.matcher?.payloadTypes)
         // A V1 battery GET is [0x10, type]; a literal payload also lets `initialize` re-read it.
         assertArrayEquals(byteArrayOf(0x10, 0x01), dualBattery.requestPayload)
         assertArrayEquals(byteArrayOf(0x10, 0x02), definition.protocol.transactions.getValue("battery.case.get").requestPayload)
 
         // ANC is readable: the V1 GET uses asmType 0x02 and its reply feeds the state bindings.
         val ancGet = definition.protocol.transactions.getValue("anc.get")
-        assertEquals(setOf(0x67, 0x69), ancGet.expectedPayloadTypes)
+        assertEquals(setOf(0x67, 0x69), ancGet.matcher?.payloadTypes)
         assertArrayEquals(byteArrayOf(0x66, 0x02), ancGet.requestPayload)
-        assertEquals(setOf(0x67, 0x69), definition.states.getValue("ancMode").notify?.payloadTypes)
+        assertEquals(setOf(0x67, 0x69), definition.states.getValue("ancMode").notify?.matcher?.payloadTypes)
         assertNotNull(definition.states.getValue("ancLevel").notify?.decode)
         assertEquals(8, definition.protocol.messages.getValue("setAnc").fields.size)
         // The peer only acknowledges the SET, so every ANC write re-reads the state afterwards.
@@ -136,10 +139,12 @@ class SamplePackageTest {
         assertNotNull(definition.states.getValue("upscaling").notify?.condition)
         assertNotNull(definition.states.getValue("upscaling").notify?.decode)
 
-        // The state is populated as soon as the session is ready, not only after a manual refresh.
+        // The state is populated before Ready through the ordered v5 initialization policy.
+        val initializationTransactions = definition.protocol.initialization.mapNotNull { it.transaction }
         listOf("battery.dual.get", "battery.case.get", "anc.get").forEach { transaction ->
-            assertTrue("initialize should run $transaction", transaction in definition.protocol.initialize)
+            assertTrue("initialization should run $transaction", transaction in initializationTransactions)
         }
+        assertTrue("new package should not use the legacy initialize list", definition.protocol.initialize.isEmpty())
 
         assertTrue("SPP definitions cannot use scripts", definition.actions.values.all { it.script == null })
         listOf("battery.refresh", "battery.case.refresh", "anc.refresh", "anc.setMode", "anc.setLevel", "eq.set", "upscaling.set").forEach { action ->
@@ -165,6 +170,64 @@ class SamplePackageTest {
         assertEquals(listOf(3, 8, 4), strength.levels.map { it.modeType })
         assertEquals(listOf(10, 11, 12), strength.levels.map { it.protocolIndex })
         assertTrue("the native noise group must stay visible", "noise" !in melody.panel.hideSections)
+    }
+
+    @Test
+    fun redmiBuds6Sample_usesSegmentedRcspTargetInfoWithoutSppAuthentication() {
+        val file = samplePackageFiles()
+            .filter { it.name.startsWith("xiaomi.redmi_buds6-") }
+            .maxByOrNull { it.name }
+        assumeTrue("no Redmi Buds 6 sample device package found", file != null)
+        val definition = DevicePackageValidator(registry)
+            .validate(DevicePackageReader().read(requireNotNull(file)))
+            .definition
+
+        assertEquals(DefinitionSchema.VERSION_SEGMENTED, definition.manifest.schemaVersion)
+        val transport = requireNotNull(definition.protocol.transport)
+        assertEquals(TransportType.RFCOMM, transport.type)
+        assertEquals("0000FD2D-0000-1000-8000-00805F9B34FB", transport.service)
+        assertEquals(
+            listOf(
+                java.util.UUID.fromString("0000FD2D-0000-1000-8000-00805F9B34FB"),
+                java.util.UUID.fromString("00001101-0000-1000-8000-008584D01810"),
+            ),
+            transport.rfcommServiceCandidates(),
+        )
+        assertTrue(transport.bonded)
+
+        val framing = requireNotNull(definition.protocol.framing)
+        assertEquals("segmented", framing.codec)
+        assertEquals(SequenceFunction.INCREMENT, requireNotNull(framing.sequence).function)
+        assertEquals(SequenceStart.Fixed(0), requireNotNull(framing.sequence).start)
+        assertEquals(3, requireNotNull(framing.segmented).request.segments.first().width)
+        assertEquals(0xEF, framing.segmented.request.segments.last().constant?.single()?.toInt()?.and(0xff))
+        assertArrayEquals(
+            byteArrayOf(0x04),
+            framing.segmented.response.segments[1].constant,
+        )
+
+        assertTrue("RCSP over SPP does not inject AF00 authentication", definition.manifest.extensions.isEmpty())
+        assertTrue("TargetInfo is a probe and must not gate the connected session", definition.protocol.initialization.isEmpty())
+        assertEquals(listOf("targetInfo.get"), definition.protocol.initialize)
+        assertEquals(0x02, definition.protocol.transactions.getValue("targetInfo.get").requestCommand)
+        assertArrayEquals(
+            byteArrayOf(0x00, 0x00, 0x00, 0x80.toByte()),
+            definition.protocol.transactions.getValue("targetInfo.get").requestPayload,
+        )
+        assertEquals(0x08, definition.protocol.transactions.getValue("noise.set").requestCommand)
+        assertEquals("targetInfo.get", definition.actions.getValue("battery.refresh").transaction)
+        assertNotNull(definition.actions.getValue("noise.setMode").transaction)
+        assertEquals(null, definition.states.getValue("battery.left").notify?.matcher?.command)
+        assertArrayEquals(
+            byteArrayOf(0x04),
+            definition.states.getValue("battery.left").notify?.matcher?.payloadPrefix,
+        )
+        assertEquals(0x0E, definition.states.getValue("noiseMode").notify?.matcher?.command)
+        assertArrayEquals(
+            byteArrayOf(0x02, 0x04),
+            definition.states.getValue("noiseMode").notify?.matcher?.payloadPrefix,
+        )
+        assertNotNull(definition.melody)
     }
 
     @Test
@@ -231,7 +294,12 @@ class SamplePackageTest {
         .sortedBy { it.name }
         .toList()
 
-    private val registry = ProtocolExtensionRegistry(listOf(ReferenceChallengeExtension()))
+    private val registry = ProtocolExtensionRegistry(
+        listOf(
+            ReferenceChallengeExtension(),
+            XiaomiMmaAuthExtension(),
+        ),
+    )
 
     private companion object {
         private val CANDIDATES = listOf(

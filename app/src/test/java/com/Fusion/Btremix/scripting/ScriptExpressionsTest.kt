@@ -40,6 +40,21 @@ class ScriptExpressionsTest {
         assertEquals(StateValue.BooleanValue(true), evaluate(expression, byteArrayOf(0xE7.toByte(), 0x01, 0x01)))
     }
 
+    @Test
+    fun bitAnd_extractsUnsignedFlagAndValueBits() = runBlocking {
+        assertEquals(
+            StateValue.IntValue(85),
+            evaluate("""{"bitAnd":[{"at":[{"var":"raw"},0]},127]}""", byteArrayOf(0xD5.toByte())),
+        )
+        assertEquals(
+            StateValue.BooleanValue(true),
+            evaluate(
+                """{"eq":[{"bitAnd":[{"at":[{"var":"raw"},0]},128]},128]}""",
+                byteArrayOf(0xD5.toByte()),
+            ),
+        )
+    }
+
     private suspend fun evaluate(json: String, raw: ByteArray): StateValue = evaluateScriptExpression(
         expression = ScriptCodec.parseExpression(JsonParser.parse(json), "test"),
         args = emptyMap(),

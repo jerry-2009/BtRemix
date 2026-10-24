@@ -163,7 +163,31 @@ object DefinitionValidator {
                             "must be omitted for an rfcomm transport; 'service' is the SPP UUID",
                         )
                     }
+                    if (transport.fallbackServices.isNotEmpty()) {
+                        val candidates = buildList {
+                            add(transport.service)
+                            addAll(transport.fallbackServices)
+                        }
+                        transport.fallbackServices.forEachIndexed { index, service ->
+                            validateUuid(service, "protocol.transport.fallbackServices[$index]", errors)
+                        }
+                        candidates.groupingBy(String::lowercase).eachCount()
+                            .filterValues { it > 1 }
+                            .keys
+                            .forEach { duplicate ->
+                                errors += DefinitionValidationError(
+                                    "protocol.transport.fallbackServices",
+                                    "contains duplicate service UUID '$duplicate'",
+                                )
+                            }
+                    }
                 }
+            }
+            if (transport.type != TransportType.RFCOMM && transport.fallbackServices.isNotEmpty()) {
+                errors += DefinitionValidationError(
+                    "protocol.transport.fallbackServices",
+                    "is only valid for an rfcomm transport",
+                )
             }
         }
         if (definition.actions.values.any { it.transaction != null } && definition.protocol.transport == null) {

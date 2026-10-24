@@ -38,6 +38,9 @@ import com.Fusion.Btremix.protocol.api.FrameSegmentSpec
 import com.Fusion.Btremix.protocol.api.FrameSplitterSpec
 import com.Fusion.Btremix.protocol.api.PacketMatcherSpec
 import com.Fusion.Btremix.protocol.api.SegmentedFramingSpec
+import com.Fusion.Btremix.protocol.api.SequenceFunction
+import com.Fusion.Btremix.protocol.api.SequenceSpec
+import com.Fusion.Btremix.protocol.api.SequenceStart
 import com.Fusion.Btremix.scripting.api.ScriptCodec
 import com.Fusion.Btremix.scripting.api.ScriptExpression
 import com.Fusion.Btremix.device.runtime.StateValue
@@ -206,6 +209,9 @@ object DefinitionJsonCodec {
             else -> throw DefinitionJsonException("protocol.transport.type", "must be 'gatt' or 'rfcomm', not '$type'")
         },
         bonded = obj.optionalBoolean("bonded") ?: true,
+        fallbackServices = obj.optionalArray("fallbackServices")?.values?.mapIndexed { index, value ->
+            value.string("protocol.transport.fallbackServices[$index]")
+        } ?: emptyList(),
     )
 
     private fun parseFraming(obj: JsonValue.Object): com.Fusion.Btremix.definition.api.FramingDefinition {
@@ -222,6 +228,7 @@ object DefinitionJsonCodec {
             "splitter",
             "request",
             "response",
+            "sequence",
         )
         obj.values.keys.firstOrNull { it !in known }?.let { unknown ->
             throw DefinitionJsonException("protocol.framing.$unknown", "unknown framing field")
@@ -292,7 +299,53 @@ object DefinitionJsonCodec {
                     )
                 else -> null
             },
+            sequence = obj.values["sequence"]?.let { parseSequence(it, "protocol.framing.sequence") },
         )
+    }
+
+    private fun parseSequence(value: JsonValue, path: String): SequenceSpec {
+        if (value is JsonValue.StringValue) {
+            return sequenceSpec(value.value, SequenceStart.Fixed(0), path)
+        }
+        val obj = value as? JsonValue.Object
+            ?: throw DefinitionJsonException(path, "must be a string or object")
+        val known = setOf("function", "start")
+        obj.values.keys.firstOrNull { it !in known }?.let { unknown ->
+            throw DefinitionJsonException("$path.$unknown", "unknown sequence field")
+        }
+        val function = obj.optionalString("function") ?: "toggle"
+        val start = when (val raw = obj.values["start"]) {
+            null -> SequenceStart.Fixed(0)
+            is JsonValue.NumberValue -> SequenceStart.Fixed(
+                fixedSequenceStart(raw.raw, "$path.start"),
+            )
+            is JsonValue.StringValue -> when (raw.value.trim().lowercase()) {
+                "random" -> SequenceStart.Random
+                else -> SequenceStart.Fixed(fixedSequenceStart(raw.value, "$path.start"))
+            }
+            else -> throw DefinitionJsonException("$path.start", "must be an integer or 'random'")
+        }
+        return sequenceSpec(function, start, path)
+    }
+
+    private fun fixedSequenceStart(raw: String, path: String): Int =
+        raw.trim().toIntOrNull()?.takeIf { it in 0..0xff }
+            ?: throw DefinitionJsonException(path, "must be 0..255 or 'random'")
+
+    private fun sequenceSpec(rawFunction: String, start: SequenceStart, path: String): SequenceSpec {
+        val function = when (rawFunction.trim().lowercase()) {
+            "toggle", "toggling" -> SequenceFunction.TOGGLE
+            "increment", "incrementing" -> SequenceFunction.INCREMENT
+            else -> throw DefinitionJsonException(
+                "$path.function",
+                "must be 'toggle' or 'increment'",
+            )
+        }
+        return try {
+            SequenceSpec(function, start)
+        } catch (error: IllegalArgumentException) {
+            throw DefinitionJsonException("$path.start", error.message ?: "invalid sequence start")
+        }
     }
 
     private fun parseFrameLayout(value: JsonValue, path: String): FrameLayoutSpec {

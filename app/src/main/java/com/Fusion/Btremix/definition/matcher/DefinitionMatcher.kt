@@ -52,7 +52,11 @@ object DefinitionMatcher {
 
     /** Service UUIDs a definition needs at runtime, independent of its advertised matchers. */
     fun declaredServiceUuids(definition: LoadedDeviceDefinition): Set<UUID> = buildSet {
-        definition.protocol.transport?.service?.let { runCatching { UUID.fromString(it) }.getOrNull()?.let(::add) }
+        definition.protocol.transport?.let { transport ->
+            (listOf(transport.service) + transport.fallbackServices).forEach { service ->
+                runCatching { UUID.fromString(service) }.getOrNull()?.let(::add)
+            }
+        }
         definition.states.values.forEach { state ->
             state.notify?.service?.let { runCatching { UUID.fromString(it) }.getOrNull()?.let(::add) }
         }

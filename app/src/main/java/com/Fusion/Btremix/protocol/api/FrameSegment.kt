@@ -93,7 +93,9 @@ object FrameLayoutRules {
         }
 
         val roles = layout.segments.groupingBy { it.role }.eachCount()
-        roles.filterValues { it > 1 }.keys.forEach { role ->
+        roles.filter { (role, count) ->
+            count > 1 && role !in setOf(FrameSegmentRole.CONSTANT, FrameSegmentRole.OPAQUE)
+        }.keys.forEach { role ->
             add(FrameLayoutIssue(null, role.jsonName, "must appear at most once"))
         }
         if (layout.segments.first().role != FrameSegmentRole.MAGIC) {

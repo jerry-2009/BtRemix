@@ -59,7 +59,12 @@ class AndroidRfcommManager(context: Context) : RfcommManager {
         }
     }.getOrDefault(emptyList())
 
-    override suspend fun connect(address: String, serviceUuid: UUID): RfcommConnection = withContext(Dispatchers.IO) {
+    override suspend fun connect(address: String, serviceUuid: UUID): RfcommConnection =
+        connect(address, listOf(serviceUuid))
+
+    override suspend fun connect(address: String, serviceUuids: List<UUID>): RfcommConnection = withContext(Dispatchers.IO) {
+        require(serviceUuids.isNotEmpty()) { "At least one RFCOMM service UUID is required" }
+        val candidates = serviceUuids.distinct()
         val adapter = adapter ?: throw RfcommException("Bluetooth is not available on this device")
         if (!adapter.isEnabled) throw RfcommException("Bluetooth is turned off")
         val device = try {
@@ -72,45 +77,41 @@ class AndroidRfcommManager(context: Context) : RfcommManager {
         }
         val label = safeName(device) ?: address
 
-        // A missing SDP record makes the socket open fail with an opaque "socket failure occurred".
-        // Refresh the service list first so an unsupported UUID is reported with the device's real
-        // services instead of a raw stack error.
+        // Refresh SDP for diagnostics, but do not reject a UUID only because it is absent. Some
+        // devices expose a connectable compatibility channel without listing it in the UUID cache.
         val advertised = refreshServiceUuids(device)
-        if (advertised.isNotEmpty() && serviceUuid !in advertised) {
-            throw RfcommException(
-                "$label does not publish SPP service $serviceUuid. " +
-                    "It advertises: ${advertised.joinToString { it.toString() }}",
-            )
-        }
 
         // SPP channel setup is timing sensitive (the peer may still be releasing a previous channel),
-        // so try a few times — secure first, then the insecure channel as a fallback.
+        // so try every declared candidate a few times, secure first and then insecure.
         var lastError: Throwable? = null
-        repeat(CONNECT_ATTEMPTS) { attempt ->
-            if (attempt > 0) delay(CONNECT_RETRY_DELAY_MS)
-            runCatching { adapter.cancelDiscovery() }
-            listOf(false, true).forEach { insecure ->
-                val socket = try {
-                    if (insecure) device.createInsecureRfcommSocketToServiceRecord(serviceUuid)
-                    else device.createRfcommSocketToServiceRecord(serviceUuid)
-                } catch (error: SecurityException) {
-                    throw RfcommException("Bluetooth permission is required to open an SPP connection", error)
-                } catch (error: Exception) {
-                    lastError = error
-                    return@forEach
-                }
-                try {
-                    socket.connect()
-                    return@withContext AndroidRfcommConnection(device, socket)
-                } catch (error: Exception) {
-                    lastError = error
-                    runCatching { socket.close() }
+        candidates.forEach { serviceUuid ->
+            repeat(CONNECT_ATTEMPTS) { attempt ->
+                if (attempt > 0) delay(CONNECT_RETRY_DELAY_MS)
+                runCatching { adapter.cancelDiscovery() }
+                listOf(false, true).forEach { insecure ->
+                    val socket = try {
+                        if (insecure) device.createInsecureRfcommSocketToServiceRecord(serviceUuid)
+                        else device.createRfcommSocketToServiceRecord(serviceUuid)
+                    } catch (error: SecurityException) {
+                        throw RfcommException("Bluetooth permission is required to open an SPP connection", error)
+                    } catch (error: Exception) {
+                        lastError = error
+                        return@forEach
+                    }
+                    try {
+                        socket.connect()
+                        return@withContext AndroidRfcommConnection(device, socket)
+                    } catch (error: Exception) {
+                        lastError = error
+                        runCatching { socket.close() }
+                    }
                 }
             }
         }
         throw RfcommException(
-            "SPP connection to $label failed after $CONNECT_ATTEMPTS attempts: " +
-                "${lastError?.javaClass?.simpleName}: ${lastError?.message}",
+            "SPP connection to $label failed after all candidate attempts: " +
+                "${lastError?.javaClass?.simpleName}: ${lastError?.message}; " +
+                "tried ${candidates.joinToString()}; advertised ${advertised.joinToString()}",
             lastError,
         )
     }

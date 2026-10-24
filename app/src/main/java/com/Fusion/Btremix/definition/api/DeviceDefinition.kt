@@ -10,6 +10,7 @@ import com.Fusion.Btremix.protocol.api.MessageSchema
 import com.Fusion.Btremix.protocol.api.Packet
 import com.Fusion.Btremix.protocol.api.PacketMatcherSpec
 import com.Fusion.Btremix.protocol.api.SegmentedFramingSpec
+import com.Fusion.Btremix.protocol.api.SequenceSpec
 import com.Fusion.Btremix.protocol.api.SimplePacketCodec
 import com.Fusion.Btremix.protocol.api.TransactionRequest
 import com.Fusion.Btremix.protocol.api.ValueCodec
@@ -286,7 +287,13 @@ data class TransportDefinition(
     val type: TransportType = TransportType.GATT,
     /** RFCOMM only: refuse to connect when the device is not bonded. */
     val bonded: Boolean = true,
+    /** RFCOMM only: ordered alternative service UUIDs attempted after [service]. */
+    val fallbackServices: List<String> = emptyList(),
 )
+
+/** Ordered, de-duplicated RFCOMM service candidates declared by a Definition. */
+fun TransportDefinition.rfcommServiceCandidates(): List<UUID> =
+    (listOf(service) + fallbackServices).map(UUID::fromString).distinct()
 
 /**
  * Declares the framing of a byte-stream transport.
@@ -319,6 +326,8 @@ data class FramingDefinition(
     val splitter: FrameSplitterSpec = FrameSplitterSpec(),
     /** P2 direction-specific byte layouts used by the `segmented` codec. */
     val segmented: SegmentedFramingSpec? = null,
+    /** Optional request sequence policy; absent keeps the frozen toggling stream behavior. */
+    val sequence: SequenceSpec? = null,
 ) {
     /** Validated by the Definition validator; a malformed config fails here instead of on connect. */
     fun toSpec(): com.Fusion.Btremix.protocol.api.FramingSpec {

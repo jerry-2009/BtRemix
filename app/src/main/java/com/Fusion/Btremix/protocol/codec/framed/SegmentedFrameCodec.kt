@@ -97,7 +97,7 @@ class SegmentedFrameCodec(private val spec: FramingSpec) : StreamCodec {
         val frame = ByteArray(initial.totalBytes)
 
         layout.segments.forEachIndexed { index, segment ->
-            val offset = initial[segment.role] ?: offsetOf(initial, index)
+            val offset = offsetOf(initial, index)
             when (segment.role) {
                 FrameSegmentRole.MAGIC,
                 FrameSegmentRole.CONSTANT,
