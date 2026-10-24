@@ -164,12 +164,19 @@ internal class MelodyAliveProviderInjection(
         return when {
             target.path.isWholeList -> managed.mapNotNull { identityOf(client, it) }
             target.mac != null -> listOfNotNull(identityOf(client, target.mac))
-            target.productId != null -> managed
-                .mapNotNull { identityOf(client, it) }
-                .filter { identity ->
-                    target.matches(identity.mac, identity.name, identity.decimalId, identity.hexId)
-                }
-                .take(1)
+            target.productId != null -> {
+                val identities = managed.mapNotNull { identityOf(client, it) }
+                identities
+                    .filter { identity ->
+                        target.matches(identity.mac, identity.name, identity.decimalId, identity.hexId)
+                    }
+                    .take(1)
+                    .ifEmpty {
+                        MelodyProviderMerge.uniqueIdentityByName(identities, target.deviceName)
+                            ?.let(::listOf)
+                            .orEmpty()
+                    }
+            }
             else -> emptyList()
         }
     }

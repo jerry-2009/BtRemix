@@ -366,6 +366,7 @@ object DefinitionJsonCodec {
             "order",
             "name",
             "hex",
+            "hexAlternatives",
             "value",
             "includeInLength",
             "inLength",
@@ -404,6 +405,10 @@ object DefinitionJsonCodec {
                     (integer ushr shift).toByte()
                 }
             }
+        val constantAlternatives = obj.optionalArray("hexAlternatives")?.values?.mapIndexed { index, value ->
+            val alternativePath = "$path.hexAlternatives[$index]"
+            parseBytes(value.string(alternativePath), alternativePath)
+        } ?: emptyList()
         fun inclusion(longName: String, shortName: String): Boolean {
             val long = obj.optionalBoolean(longName)
             val short = obj.optionalBoolean(shortName)
@@ -418,6 +423,7 @@ object DefinitionJsonCodec {
             order = order,
             name = obj.optionalString("name"),
             constant = constant,
+            constantAlternatives = constantAlternatives,
             includeInLength = inclusion("includeInLength", "inLength"),
             includeInChecksum = inclusion("includeInChecksum", "inChecksum"),
         )
@@ -843,7 +849,7 @@ object DefinitionJsonCodec {
     )
 
     private fun parsePacketMatcher(obj: JsonValue.Object, path: String): PacketMatcherSpec {
-        val known = setOf("command", "sequence", "payloadPrefix", "payloadType", "payloadTypes")
+        val known = setOf("command", "commands", "sequence", "payloadPrefix", "payloadType", "payloadTypes")
         obj.values.keys.firstOrNull { it !in known }?.let { unknown ->
             throw DefinitionJsonException("$path.$unknown", "unknown matcher field")
         }
@@ -876,6 +882,13 @@ object DefinitionJsonCodec {
         if (command != null && command !in 0..com.Fusion.Btremix.protocol.api.MAX_COMMAND) {
             throw DefinitionJsonException("$path.command", "must fit UInt24")
         }
+        val commands = obj.optionalArray("commands")?.values?.mapIndexed { index, value ->
+            value.number("$path.commands[$index]").raw.toIntOrNull()
+                ?: throw DefinitionJsonException("$path.commands[$index]", "must be an integer")
+        }?.toSet() ?: emptySet()
+        if (commands.any { it !in 0..com.Fusion.Btremix.protocol.api.MAX_COMMAND }) {
+            throw DefinitionJsonException("$path.commands", "every command must fit UInt24")
+        }
         if (literalSequence != null && literalSequence !in 0..0xff) {
             throw DefinitionJsonException("$path.sequence", "must fit UInt8")
         }
@@ -884,6 +897,7 @@ object DefinitionJsonCodec {
         }
         return PacketMatcherSpec(
             command = command,
+            commands = commands,
             matchRequestSequence = matchRequestSequence,
             sequence = literalSequence,
             payloadPrefix = obj.optionalString("payloadPrefix")?.let { parseBytes(it, "$path.payloadPrefix") }

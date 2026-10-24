@@ -1,5 +1,7 @@
 package com.Fusion.Btremix.definition.api
 
+import java.security.MessageDigest
+
 /**
  * The `melody` section of a Definition (schema version [DefinitionSchema.VERSION_MELODY]).
  *
@@ -124,7 +126,10 @@ data class MelodySupportDefinition(
     /** Only [MODE_BRIDGE] is accepted; `mirror` / `virtual` are reserved for later milestones. */
     val mode: String = MODE_BRIDGE,
     val brand: String? = null,
-    /** Normalized decimal form. `null` means "take the value from the host instance, else the template". */
+    /**
+     * Normalized decimal form. `null` means "take the value from the host instance, else the template,
+     * else a stable MAC-derived id" (see [MelodyProductId.derivedDecimalForMac]).
+     */
     val productId: String? = null,
     val productType: Int = DEFAULT_PRODUCT_TYPE,
     val uuid: String? = null,
@@ -184,6 +189,7 @@ data class MelodyPanelDefinition(
 object MelodyProductId {
     const val HEX_WIDTH: Int = 6
     private const val MAX_VALUE: Long = 0xFFFF_FFFFL
+    private const val MAC_DERIVATION_DOMAIN: String = "btremix-melody-product-id-v1:"
 
     /** Returns the decimal form of [raw], or `null` when it is not a valid product id. */
     fun normalizeOrNull(raw: String): String? {
@@ -203,6 +209,31 @@ object MelodyProductId {
         require(value in 0..MAX_VALUE) { "product id $value does not fit UInt32" }
         return java.lang.Long.toHexString(value).uppercase().padStart(width, '0')
     }
+
+    /**
+     * Stable synthetic product id for Definitions that do not declare one.
+     *
+     * The host's whitelist identity and `DeviceInfo.mProductId` both require a non-zero integer. A
+     * Definition without a physical product id therefore cannot be projected at all. Hashing the
+     * canonical Bluetooth address into 24 bits keeps the fallback deterministic across process and app
+     * restarts while staying inside the six-hex-digit shape used by the host's whitelist.
+     *
+     * The versioned domain prefix separates this value from any future derivation algorithm. A zero
+     * digest is mapped to one because the host treats zero as "unknown".
+     */
+    fun derivedDecimalForMac(mac: String): String {
+        val canonical = mac.filter(Char::isLetterOrDigit).uppercase()
+        val digest = MessageDigest.getInstance("SHA-256")
+            .digest((MAC_DERIVATION_DOMAIN + canonical).toByteArray(Charsets.UTF_8))
+        val value = ((digest[0].toInt() and 0xFF) shl 16) or
+            ((digest[1].toInt() and 0xFF) shl 8) or
+            (digest[2].toInt() and 0xFF)
+        return value.coerceAtLeast(1).toString()
+    }
+
+    /** Six-digit uppercase form of [derivedDecimalForMac], ready for `WhitelistConfigDTO.id`. */
+    fun derivedHexForMac(mac: String): String =
+        toHexId(derivedDecimalForMac(mac).toLong())
 
     private fun parseHex(digits: String): Long? {
         if (digits.isEmpty() || digits.length > 8) return null

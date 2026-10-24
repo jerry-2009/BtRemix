@@ -241,7 +241,7 @@ object ScriptCodec {
         }
 
         private fun parseMatcher(obj: JsonValue.Object, path: String): PacketMatcherSpec {
-            val known = setOf("command", "sequence", "payloadPrefix", "payloadType", "payloadTypes")
+            val known = setOf("command", "commands", "sequence", "payloadPrefix", "payloadType", "payloadTypes")
             obj.values.keys.firstOrNull { it !in known }?.let { unknown ->
                 throw ScriptFormatException("$path.$unknown", "unknown matcher field")
             }
@@ -262,6 +262,12 @@ object ScriptCodec {
             if (command != null && command !in 0..MAX_COMMAND) {
                 throw ScriptFormatException("$path.command", "must fit UInt24")
             }
+            val commands = obj.values["commands"]?.array("$path.commands")?.mapIndexed { index, item ->
+                item.integer("$path.commands[$index]")
+            }?.toSet() ?: emptySet()
+            if (commands.any { it !in 0..MAX_COMMAND }) {
+                throw ScriptFormatException("$path.commands", "every command must fit UInt24")
+            }
             if (literalSequence != null && literalSequence !in 0..0xff) {
                 throw ScriptFormatException("$path.sequence", "must fit UInt8")
             }
@@ -276,6 +282,7 @@ object ScriptCodec {
             }
             return PacketMatcherSpec(
                 command = command,
+                commands = commands,
                 matchRequestSequence = matchRequestSequence,
                 sequence = literalSequence,
                 payloadPrefix = obj.values["payloadPrefix"]?.string("$path.payloadPrefix")

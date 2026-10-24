@@ -91,6 +91,7 @@ class MelodyAnchorCatalogTest {
             MelodyAnchorCatalog.ONESPACE_IMAGE_PLACEHOLDER,
             MelodyAnchorCatalog.DETAIL_HEADER_BIND,
             MelodyAnchorCatalog.SETTINGS_PODS_DATA_MANAGER,
+            MelodyAnchorCatalog.SETTINGS_DEVICE_DETAIL,
         )) {
             assertTrue("catalog is missing $id", ids.contains(id))
             assertNotNull(MelodyAnchorCatalog.spec(id))
@@ -124,5 +125,16 @@ class MelodyAnchorCatalogTest {
         assertEquals(listOf("O3.b"), spec.baselineClasses)
         assertEquals(listOf("O3"), spec.packages)
         assertEquals(MelodyAnchorQuery.MethodName("c", 1), spec.query)
+    }
+
+    @Test
+    fun settingsDeviceDetailAnchorUsesResumeLifecycle() {
+        val spec = requireNotNull(MelodyAnchorCatalog.spec(MelodyAnchorCatalog.SETTINGS_DEVICE_DETAIL))
+        val query = spec.query as MelodyAnchorQuery.MethodSignature
+
+        assertEquals(listOf("com.oplus.wirelesssettings.bluetooth.B"), spec.baselineClasses)
+        assertEquals("onResume", query.methodName)
+        assertTrue(query.params.isEmpty())
+        assertEquals(MelodyTypeRef.Of(Void.TYPE), query.returnType)
     }
 }

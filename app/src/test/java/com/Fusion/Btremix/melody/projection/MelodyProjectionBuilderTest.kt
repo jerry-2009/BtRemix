@@ -4,11 +4,13 @@ import com.Fusion.Btremix.definition.json.DefinitionJsonCodec
 import com.Fusion.Btremix.definition.json.JsonParser
 import com.Fusion.Btremix.definition.json.JsonValue
 import com.Fusion.Btremix.definition.json.JsonWriter
+import com.Fusion.Btremix.melody.api.MelodyProviderMerge
 import com.Fusion.Btremix.melody.config.MelodyManagedDevice
 import java.io.File
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
 import org.junit.Assert.assertNotNull
+import org.junit.Assert.assertNotEquals
 import org.junit.Assert.assertNull
 import org.junit.Assert.assertTrue
 import org.junit.Test
@@ -30,9 +32,9 @@ class MelodyProjectionBuilderTest {
         val envelope = parse(builder.build(device))
         val whitelist = envelope.getValue("whitelist").asObject()
 
-        // M4.4 bumped it to v2 (panel rows gained param/valueType + typed Button args); M5.1 bumped it
-        // to v3 (`melody.anc` gained modeAction/modeParam/strengthParam for the ANC redirect).
-        assertEquals(3.0, requireNotNull(envelope.getValue("version").asNumber()), 0.0)
+        // M4.4 -> v2 (panel row parameters), M5.1 -> v3 (ANC redirect mapping), and the
+        // MAC-derived product identity -> v4.
+        assertEquals(4.0, requireNotNull(envelope.getValue("version").asNumber()), 0.0)
         assertEquals("14:3F:A6:02:5F:B0", envelope.getValue("mac").asString())
         val definitionNode = envelope.getValue("definition").asObject()
         assertEquals("sony.wf1000xm3", definitionNode.getValue("id").asString())
@@ -160,6 +162,26 @@ class MelodyProjectionBuilderTest {
             .asObject()
 
         assertEquals("06F010", whitelist.getValue("id").asString())
+    }
+
+    @Test
+    fun projection_missingProductId_usesStableMacDerivedIdentity() {
+        val builder = MelodyProjectionBuilder(MelodyTemplateSource { templateFile().readText() })
+        val json = builder.build(managedDevice(productId = null))
+        val whitelist = parse(json).getValue("whitelist").asObject()
+        val id = requireNotNull(whitelist.getValue("id").asString())
+
+        assertEquals(6, id.length)
+        assertNotEquals("000000", id)
+        assertEquals(id, parse(builder.build(managedDevice(productId = null))).getValue("whitelist").asObject().getValue("id").asString())
+
+        val other = parse(builder.build(managedDevice(productId = null).copy(mac = "AA:BB:CC:DD:EE:FF")))
+            .getValue("whitelist").asObject().getValue("id").asString()
+        assertNotEquals(id, other)
+
+        val identity = MelodyProviderMerge.identityOf(json)
+        assertNotNull(identity)
+        assertTrue(requireNotNull(identity).decimalId.toInt() > 0)
     }
 
     @Test
@@ -324,11 +346,13 @@ class MelodyProjectionBuilderTest {
         productType: Int = 1,
         templateWhitelist: String? = null,
         capabilities: List<String> = listOf("battery", "anc", "equalizer", "upscaling"),
+        productId: String? = "0x0CE0",
     ): MelodyManagedDevice {
         val definition = definition(
             productType = productType,
             templateWhitelist = templateWhitelist,
             capabilities = capabilities,
+            productId = productId,
         )
         return MelodyManagedDevice(
             mac = "14:3F:A6:02:5F:B0",
@@ -404,7 +428,8 @@ class MelodyProjectionBuilderTest {
         productType: Int = 1,
         templateWhitelist: String? = null,
         capabilities: List<String> = listOf("battery", "anc", "equalizer", "upscaling"),
-    ) = DefinitionJsonCodec.decode(definitionJson(productType, templateWhitelist, capabilities))
+        productId: String? = "0x0CE0",
+    ) = DefinitionJsonCodec.decode(definitionJson(productType, templateWhitelist, capabilities, productId))
 
     private fun parse(text: String): Map<String, JsonValue> =
         JsonParser.parse(text).asObject()
@@ -444,11 +469,13 @@ class MelodyProjectionBuilderTest {
             productType: Int,
             templateWhitelist: String?,
             capabilities: List<String> = listOf("battery", "anc", "equalizer", "upscaling"),
+            productId: String? = "0x0CE0",
         ): String {
             val templateLine = templateWhitelist
                 ?.let { ",\n          \"templateWhitelist\": \"$it\"" }
                 .orEmpty()
             val capabilityLine = capabilities.joinToString(", ") { "\"$it\"" }
+            val productIdLine = productId?.let { "\"productId\": \"$it\"," }.orEmpty()
             return """
                 {
                   "manifest": {
@@ -463,7 +490,7 @@ class MelodyProjectionBuilderTest {
                     "support": {
                       "name": "Sony WF-1000XM3",
                       "brand": "Sony",
-                      "productId": "0x0CE0",
+                      $productIdLine
                       "productType": $productType,
                       "uuid": "96cc203e-5068-46ad-b32d-e316f5e069ba"$templateLine
                     },

@@ -2,6 +2,7 @@ package com.Fusion.Btremix.melody.hook.injection
 
 import android.os.SystemClock
 import com.Fusion.Btremix.melody.api.MelodyMac
+import com.Fusion.Btremix.melody.api.MelodyProviderMerge
 import com.Fusion.Btremix.melody.api.MelodyWhitelistIdentity
 import com.Fusion.Btremix.melody.hook.MelodyLog
 import com.Fusion.Btremix.melody.hook.MelodyAnchorSession
@@ -241,12 +242,15 @@ internal class MelodyWhitelistRepositoryInjection(
 
         val product = key?.trim().orEmpty()
         val wanted = name?.trim().orEmpty()
-        for (mac in macs) {
-            val identity = client.whitelistIdentityFast(mac) ?: continue
-            if (product.isNotEmpty() && matchesProduct(identity, product)) return mac
-            if (product.isEmpty() && wanted.isNotEmpty() && matchesName(identity, wanted)) return mac
+        val identities = macs.mapNotNull { mac -> client.whitelistIdentityFast(mac)?.let { mac to it } }
+        if (product.isNotEmpty()) {
+            identities.firstOrNull { (_, identity) -> matchesProduct(identity, product) }
+                ?.let { return it.first }
         }
-        return null
+        if (wanted.isEmpty()) return null
+        return MelodyProviderMerge.uniqueIdentityByName(identities.map { it.second }, wanted)
+            ?.mac
+            ?.let(MelodyMac::normalize)
     }
 
     private fun matchesProduct(identity: MelodyWhitelistIdentity, product: String): Boolean {
@@ -254,14 +258,6 @@ internal class MelodyWhitelistRepositoryInjection(
         return token == identity.hexId.uppercase() ||
             product == identity.decimalId ||
             token.toLongOrNull(16)?.toString() == identity.decimalId
-    }
-
-    /** The host's own lookup is a contains-match on the (possibly shortened) Bluetooth name. */
-    private fun matchesName(identity: MelodyWhitelistIdentity, name: String): Boolean = when {
-        name.equals(identity.name, ignoreCase = true) -> true
-        name.length < MIN_NAME_CHARS -> false
-        identity.name.contains(name, ignoreCase = true) -> true
-        else -> false
     }
 
     /** Rebuilds (once per device) the DTO the host would have loaded for itself. */
@@ -334,9 +330,6 @@ internal class MelodyWhitelistRepositoryInjection(
         )
 
         const val MANAGED_TTL_MS = 2_000L
-
-        /** Shorter names are too ambiguous for a contains-match. */
-        const val MIN_NAME_CHARS = 5
 
         /** `owner` used by [MelodyWhitelistLookupInjection]'s answers, so the log tells them apart. */
         const val LOOKUP_OWNER = "whitelist_lookup"

@@ -18,6 +18,20 @@ import org.junit.Test
  */
 class MelodyProviderMergeTest {
 
+    @Test
+    fun uniqueIdentityByNameOnlyAcceptsOneManagedMatch() {
+        val first = identity.copy(name = "Redmi Buds 6", mac = "AA:BB:CC:DD:EE:01")
+        val second = identity.copy(name = "Redmi Buds 6 Pro", mac = "AA:BB:CC:DD:EE:02")
+
+        assertEquals(first, MelodyProviderMerge.uniqueIdentityByName(listOf(first), "Redmi Buds 6"))
+        assertEquals(
+            first,
+            MelodyProviderMerge.uniqueIdentityByName(listOf(first, second), "Redmi Buds 6"),
+        )
+        assertNull(MelodyProviderMerge.uniqueIdentityByName(listOf(first, second), "Redmi Buds"))
+        assertNull(MelodyProviderMerge.uniqueIdentityByName(listOf(first), "Sony WF-1000XM3"))
+    }
+
     private val envelope = envelopeJson(hexId = "000CE0")
     private val identity = requireNotNull(MelodyProviderMerge.identityOf(envelope))
 

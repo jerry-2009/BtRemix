@@ -61,7 +61,8 @@ data class MelodyProjection(
  * reports [MelodyTemplateUse.MINIMAL]. Neither case is silent and neither throws.
  *
  * Resolution order for the product id follows M3-D2: caller-provided instance value, then the
- * Definition's `support.productId`, then the template's neutral `null`.
+ * Definition's `support.productId`, then the template id, and finally a stable MAC-derived id so a
+ * Definition can omit a physical product id without losing the host's required identity.
  */
 class MelodyProjectionBuilder(
     private val templates: MelodyTemplateSource,
@@ -234,11 +235,18 @@ class MelodyProjectionBuilder(
         support.uuid?.let { fields["uuid"] = JsonValue.StringValue(it) }
         MelodyProductType.officialType(support.productType)
             ?.let { fields["type"] = JsonValue.StringValue(it) }
-        resolveHexId(instanceProductId, support.productId, templateId)
-            ?.let { fields["id"] = JsonValue.StringValue(it) }
+        val productId = resolveHexId(instanceProductId, support.productId, templateId)
+            ?: MelodyProductId.derivedHexForMac(device.mac)
+        fields["id"] = JsonValue.StringValue(productId)
     }
 
-    /** M3-D2 order: instance value -> Definition `support.productId` -> template's neutral value. */
+    /**
+     * M3-D2 order: instance value -> Definition `support.productId` -> template id -> MAC-derived id.
+     *
+     * The final fallback exists because the host cannot represent an absent product id: both its
+     * whitelist identity and `DeviceInfo.mProductId` require one. Definitions may omit the field and
+     * still receive a stable identity scoped to the paired MAC.
+     */
     private fun resolveHexId(instanceProductId: String?, definitionProductId: String?, templateId: String?): String? {
         val candidate = instanceProductId ?: definitionProductId ?: return templateId
         val normalized = MelodyProductId.normalizeOrNull(candidate) ?: return templateId
@@ -377,6 +385,8 @@ class MelodyProjectionBuilder(
          * which the M5 redirect needs. A persisted v2 envelope would silently fail the redirect
          * (`unmapped`) until a re-pull, so the version gate is what makes the new fields land.
          */
-        const val ENVELOPE_VERSION: Int = 3
+        // v4 adds the MAC-derived whitelist/product identity fallback. Bump this whenever an old
+        // persisted envelope could remain structurally valid but semantically unusable.
+        const val ENVELOPE_VERSION: Int = 4
     }
 }

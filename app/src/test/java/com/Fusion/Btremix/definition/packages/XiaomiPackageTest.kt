@@ -193,12 +193,12 @@ class XiaomiPackageTest {
         assertEquals(StateValue.IntValue(69), session.state.value("battery.case"))
 
         val result = session.execute(
-            DeviceAction("noise.setMode", mapOf("value" to StateValue.StringValue("anc"))),
+            DeviceAction("anc.setMode", mapOf("value" to StateValue.StringValue("anc"))),
         )
 
         assertEquals(ActionResult.Success(StateValue.StringValue("anc")), result)
         assertArrayEquals(hex("02 04 01"), peer.lastSetPayload)
-        assertEquals(StateValue.StringValue("anc"), session.state.value("noiseMode"))
+        assertEquals(StateValue.StringValue("anc"), session.state.value("ancMode"))
         session.close()
     }
 
@@ -285,14 +285,83 @@ class XiaomiPackageTest {
         connection.emit(codec.encodeRequest(Packet(0x0E, 0x31, hex("02 04 02"))))
         withTimeout(1_000) {
             session.state.entries.first { entries ->
-                entries["noiseMode"]?.value == StateValue.StringValue("transparency") &&
+                entries["ancMode"]?.value == StateValue.StringValue("transparency") &&
                     entries["battery.left"]?.value == StateValue.IntValue(97)
             }
         }
 
-        assertEquals(StateValue.StringValue("transparency"), session.state.value("noiseMode"))
+        assertEquals(StateValue.StringValue("transparency"), session.state.value("ancMode"))
         assertEquals(StateValue.IntValue(97), session.state.value("battery.left"))
         assertEquals(StateValue.IntValue(50), session.state.value("battery.right"))
+        session.close()
+    }
+
+    @Test
+    fun redmiBuds6_deviceInitiatedC7NotificationUpdatesAncState() = runBlocking {
+        val definition = redmiBuds6Definition()
+        val connection = FakeRfcommConnection(name = "Redmi Buds 6")
+        connection.onWrite = { }
+        val session = DefinitionSessionFactory(
+            DefaultDeviceRuntime(Clock.systemUTC()),
+            Dispatchers.Unconfined,
+            extensionRegistry = extensionRegistry,
+        ).openStream(
+            BleDevice("AA:BB:CC:DD:EE:FF", "Redmi Buds 6"),
+            connection,
+            definition,
+        )
+
+        connection.emit(hex("FE DC BA C7 0E 00 04 31 02 04 01 EF"))
+        withTimeout(1_000) {
+            session.state.entries.first { entries ->
+                entries["ancMode"]?.value == StateValue.StringValue("anc")
+            }
+        }
+
+        assertEquals(StateValue.StringValue("anc"), session.state.value("ancMode"))
+        session.close()
+    }
+
+    @Test
+    fun redmiBuds6_ancSetResponseIsNotDecodedAsBattery() = runBlocking {
+        val definition = redmiBuds6Definition()
+        val codec = definition.protocolFactory().packetCodec as SegmentedFrameCodec
+        val connection = FakeRfcommConnection(name = "Redmi Buds 6")
+        connection.onWrite = { bytes ->
+            val request = codec.decodeRequest(bytes)
+            val response = when (request.command) {
+                0x02 -> hex("04 07 55 53 45")
+                0x08 -> hex("04 02 04 01 00")
+                else -> error("Unexpected RCSP command 0x${request.command.toString(16)}")
+            }
+            connection.emit(
+                XiaomiRcsp.response(
+                    control = XiaomiRcsp.SPP_TARGET_APP,
+                    opcode = request.command,
+                    status = 0,
+                    sequence = requireNotNull(request.sequence),
+                    payload = response,
+                ),
+            )
+        }
+        val session = DefinitionSessionFactory(
+            DefaultDeviceRuntime(Clock.systemUTC()),
+            Dispatchers.Unconfined,
+            extensionRegistry = extensionRegistry,
+        ).openStream(
+            BleDevice("AA:BB:CC:DD:EE:FF", "Redmi Buds 6"),
+            connection,
+            definition,
+        )
+
+        val result = session.execute(
+            DeviceAction("anc.setMode", mapOf("value" to StateValue.StringValue("anc"))),
+        )
+
+        assertEquals(ActionResult.Success(StateValue.StringValue("anc")), result)
+        assertEquals(StateValue.IntValue(85), session.state.value("battery.left"))
+        assertEquals(StateValue.IntValue(83), session.state.value("battery.right"))
+        assertEquals(StateValue.IntValue(69), session.state.value("battery.case"))
         session.close()
     }
 

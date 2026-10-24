@@ -113,6 +113,7 @@ class SegmentedFrameCodecTest {
                     name = "type",
                     width = 1,
                     constant = hex("C4"),
+                    constantAlternatives = listOf(hex("C7")),
                 ),
                 FrameSegmentSpec(role = FrameSegmentRole.COMMAND, width = 1),
                 FrameSegmentSpec(role = FrameSegmentRole.LENGTH, width = 2, order = Endianness.BIG),
@@ -162,6 +163,18 @@ class SegmentedFrameCodecTest {
         assertArrayEquals(
             hex("FE DC BA C4 02 00 05 90 00 00 00 80 EF"),
             segmented.encodeRequest(Packet(0x02, 0x90, hex("00 00 00 80"))),
+        )
+        assertArrayEquals(
+            hex("FE DC BA 00 02 00 03 00 90 01 EF"),
+            segmented.encodeResponse(Packet(0x02, 0x90, hex("01"))),
+        )
+
+        val notification = hex("FE DC BA C7 0E 00 04 31 02 04 01 EF")
+        val split = segmented.accumulator().feed(notification)
+        assertEquals(1, split.size)
+        assertEquals(
+            Packet(0x0E, 0x31, hex("02 04 01")),
+            segmented.decode(split.single()),
         )
     }
 

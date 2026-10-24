@@ -194,6 +194,18 @@ class MelodySectionSchemaTest {
     }
 
     @Test
+    fun productIdHelper_derivesStableNonZeroIdFromMac() {
+        val first = MelodyProductId.derivedDecimalForMac("14:3F:A6:02:5F:B0")
+        val normalizedCaseAndSeparator = MelodyProductId.derivedDecimalForMac("14-3fa6-025fb0")
+        val other = MelodyProductId.derivedDecimalForMac("AA:BB:CC:DD:EE:FF")
+
+        assertEquals(first, normalizedCaseAndSeparator)
+        assertTrue(first.toLong() in 1..0xFFFFFF)
+        assertTrue(first != other)
+        assertEquals(6, MelodyProductId.derivedHexForMac("14:3F:A6:02:5F:B0").length)
+    }
+
+    @Test
     fun customKeyPrefix_isTheBridgeNamespace() {
         assertEquals("melody_bridge_", MelodyPanelDefinition.CUSTOM_KEY_PREFIX)
     }

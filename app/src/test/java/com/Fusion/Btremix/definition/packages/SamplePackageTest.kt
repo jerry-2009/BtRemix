@@ -4,6 +4,7 @@ import com.Fusion.Btremix.definition.api.UiNode
 import com.Fusion.Btremix.definition.api.DefinitionSchema
 import com.Fusion.Btremix.definition.api.TransportType
 import com.Fusion.Btremix.definition.api.rfcommServiceCandidates
+import com.Fusion.Btremix.melody.projection.MelodyCapabilityMap
 import com.Fusion.Btremix.protocol.api.SequenceFunction
 import com.Fusion.Btremix.protocol.api.SequenceStart
 import com.Fusion.Btremix.protocol.vectors.VectorJson
@@ -202,6 +203,10 @@ class SamplePackageTest {
         assertEquals(3, requireNotNull(framing.segmented).request.segments.first().width)
         assertEquals(0xEF, framing.segmented.request.segments.last().constant?.single()?.toInt()?.and(0xff))
         assertArrayEquals(
+            byteArrayOf(0xC7.toByte()),
+            framing.segmented.request.segments[1].constantAlternatives.single(),
+        )
+        assertArrayEquals(
             byteArrayOf(0x04),
             framing.segmented.response.segments[1].constant,
         )
@@ -216,17 +221,22 @@ class SamplePackageTest {
         )
         assertEquals(0x08, definition.protocol.transactions.getValue("noise.set").requestCommand)
         assertEquals("targetInfo.get", definition.actions.getValue("battery.refresh").transaction)
-        assertNotNull(definition.actions.getValue("noise.setMode").transaction)
-        assertEquals(null, definition.states.getValue("battery.left").notify?.matcher?.command)
+        assertNotNull(definition.actions.getValue("anc.setMode").transaction)
+        val batteryMatcher = requireNotNull(definition.states.getValue("battery.left").notify?.matcher)
+        assertEquals(setOf(0x02, 0x0E), batteryMatcher.commands)
         assertArrayEquals(
             byteArrayOf(0x04),
-            definition.states.getValue("battery.left").notify?.matcher?.payloadPrefix,
+            batteryMatcher.payloadPrefix,
         )
-        assertEquals(0x0E, definition.states.getValue("noiseMode").notify?.matcher?.command)
+        assertEquals(0x0E, definition.states.getValue("ancMode").notify?.matcher?.command)
         assertArrayEquals(
             byteArrayOf(0x02, 0x04),
-            definition.states.getValue("noiseMode").notify?.matcher?.payloadPrefix,
+            definition.states.getValue("ancMode").notify?.matcher?.payloadPrefix,
         )
+        val anc = MelodyCapabilityMap.ancPlan(definition)
+        assertEquals("anc.setMode", anc.modeAction)
+        assertEquals("value", anc.modeParam)
+        assertEquals(listOf(0, 1, 2), anc.modes.map { it.protocolIndex })
         assertNotNull(definition.melody)
     }
 

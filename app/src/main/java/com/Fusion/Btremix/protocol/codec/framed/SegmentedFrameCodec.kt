@@ -197,12 +197,15 @@ class SegmentedFrameCodec(private val spec: FramingSpec) : StreamCodec {
 
         layout.segments.forEachIndexed { index, segment ->
             if (segment.role == FrameSegmentRole.MAGIC || segment.role == FrameSegmentRole.CONSTANT) {
-                val expected = requireNotNull(segment.constant)
-                val actual = bytes.copyOfRange(offsetOf(resolved, index), offsetOf(resolved, index) + expected.size)
-                if (!actual.contentEquals(expected)) {
+                val accepted = segment.acceptedConstants()
+                val actual = bytes.copyOfRange(
+                    offsetOf(resolved, index),
+                    offsetOf(resolved, index) + (segment.width ?: 0),
+                )
+                if (accepted.none { actual.contentEquals(it) }) {
                     throw SegmentedCodecException(
                         "${segment.role.jsonName} mismatch at bytes ${offsetOf(resolved, index)}.." +
-                            "${offsetOf(resolved, index) + expected.size - 1}",
+                            "${offsetOf(resolved, index) + actual.size - 1}",
                     )
                 }
             }

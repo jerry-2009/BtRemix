@@ -9,6 +9,7 @@ import android.os.SystemClock
 import com.Fusion.Btremix.device.runtime.ActionResult
 import com.Fusion.Btremix.device.runtime.DeviceAction
 import com.Fusion.Btremix.device.runtime.ProtocolSession
+import com.Fusion.Btremix.definition.api.MelodyProductId
 import com.Fusion.Btremix.device.session.SessionRegistry
 import com.Fusion.Btremix.melody.api.MelodyBridgeResult
 import com.Fusion.Btremix.melody.api.MelodyBundleCodec
@@ -136,7 +137,7 @@ internal class MelodyBridgeBinder(
             managed = true,
             name = support.name,
             brand = support.brand ?: support.name,
-            productId = support.productId,
+            productId = support.productId ?: MelodyProductId.derivedDecimalForMac(key),
             productType = support.productType,
             uuid = support.uuid,
             supportSpp = support.supportSpp,

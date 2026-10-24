@@ -68,11 +68,14 @@ data class TransactionRequest(
 /**
  * Data-only response matcher shared by transactions and notifications.
  *
+ * [command] requires one exact command while [commands] accepts any member of a set; when both are
+ * declared, both predicates apply.
  * [matchRequestSequence] compares the response sequence with the sequence assigned to the current
  * request. [sequence] instead requires one literal value. All declared predicates are ANDed.
  */
 data class PacketMatcherSpec(
     val command: Int? = null,
+    val commands: Set<Int> = emptySet(),
     val matchRequestSequence: Boolean = false,
     val sequence: Int? = null,
     val payloadPrefix: ByteArray = ByteArray(0),
@@ -80,6 +83,7 @@ data class PacketMatcherSpec(
 ) {
     init {
         require(command == null || command in 0..MAX_COMMAND) { "Matcher command must fit in 24 bits" }
+        require(commands.all { it in 0..MAX_COMMAND }) { "Matcher commands must fit in 24 bits" }
         require(sequence == null || sequence in 0..0xff) { "Matcher sequence must fit in UInt8" }
         require(!(matchRequestSequence && sequence != null)) {
             "Matcher cannot require both the request sequence and a literal sequence"
@@ -89,6 +93,7 @@ data class PacketMatcherSpec(
 
     fun matches(packet: Packet, requestSequence: Int?): Boolean =
         (command == null || packet.command == command) &&
+            (commands.isEmpty() || packet.command in commands) &&
             (!matchRequestSequence || packet.sequence == requestSequence) &&
             (sequence == null || packet.sequence == sequence) &&
             (payloadPrefix.isEmpty() || packet.payload.startsWith(payloadPrefix)) &&

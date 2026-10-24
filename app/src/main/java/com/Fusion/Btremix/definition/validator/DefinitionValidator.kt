@@ -321,6 +321,15 @@ object DefinitionValidator {
                         "conflicts with expectedCommand ${transaction.expectedCommand}",
                     )
                 }
+                if (transaction.expectedCommand != null &&
+                    transaction.matcher.commands.isNotEmpty() &&
+                    transaction.expectedCommand !in transaction.matcher.commands
+                ) {
+                    errors += DefinitionValidationError(
+                        "protocol.transactions.$name.matcher.commands",
+                        "does not contain expectedCommand ${transaction.expectedCommand}",
+                    )
+                }
             }
         }
         return errors
@@ -571,7 +580,13 @@ object DefinitionValidator {
     }
 
     private fun matchersPossiblyOverlap(left: PacketMatcherSpec, right: PacketMatcherSpec): Boolean {
-        if (left.command != null && right.command != null && left.command != right.command) return false
+        val leftCommands = left.commands + listOfNotNull(left.command)
+        val rightCommands = right.commands + listOfNotNull(right.command)
+        if (leftCommands.isNotEmpty() && rightCommands.isNotEmpty() &&
+            leftCommands.intersect(rightCommands).isEmpty()
+        ) {
+            return false
+        }
         if (left.sequence != null && right.sequence != null && left.sequence != right.sequence) return false
         if (left.payloadTypes.isNotEmpty() && right.payloadTypes.isNotEmpty() &&
             left.payloadTypes.intersect(right.payloadTypes).isEmpty()
@@ -1044,8 +1059,9 @@ object DefinitionValidator {
         ) {
             errors += DefinitionValidationError("$path.sequence", "response layout has no sequence segment")
         }
-        if (matcher.command != null) {
-            validateCommandWidth(matcher.command, responseLayout, "$path.command", errors)
+        matcher.command?.let { validateCommandWidth(it, responseLayout, "$path.command", errors) }
+        matcher.commands.forEachIndexed { index, command ->
+            validateCommandWidth(command, responseLayout, "$path.commands[$index]", errors)
         }
         if ((matcher.payloadPrefix.isNotEmpty() || matcher.payloadTypes.isNotEmpty()) &&
             responseLayout.segment(FrameSegmentRole.PAYLOAD) == null
@@ -1061,6 +1077,9 @@ object DefinitionValidator {
     ) {
         if (matcher.command != null && matcher.command !in 0..MAX_COMMAND) {
             errors += DefinitionValidationError("$path.command", "must fit UInt24")
+        }
+        if (matcher.commands.any { it !in 0..MAX_COMMAND }) {
+            errors += DefinitionValidationError("$path.commands", "every command must fit UInt24")
         }
         if (matcher.sequence != null && matcher.sequence !in 0..0xff) {
             errors += DefinitionValidationError("$path.sequence", "must fit UInt8")

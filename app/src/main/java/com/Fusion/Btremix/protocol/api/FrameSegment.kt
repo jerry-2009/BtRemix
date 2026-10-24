@@ -21,6 +21,8 @@ enum class FrameSegmentRole {
  *
  * [width] is mandatory for every fixed-width role. The payload is the only variable-width segment
  * and therefore has no width. [constant] holds the exact bytes for magic/constant segments.
+ * [constantAlternatives] optionally lists additional wire values accepted for a constant segment;
+ * encoding always uses [constant] so the primary value remains deterministic.
  * [includeInLength] and [includeInChecksum] opt this segment into the two aggregate spans.
  */
 data class FrameSegmentSpec(
@@ -29,10 +31,13 @@ data class FrameSegmentSpec(
     val order: Endianness = Endianness.BIG,
     val name: String? = null,
     val constant: ByteArray? = null,
+    val constantAlternatives: List<ByteArray> = emptyList(),
     val includeInLength: Boolean = false,
     val includeInChecksum: Boolean = false,
 ) {
     fun copyConstant(): ByteArray? = constant?.clone()
+
+    fun acceptedConstants(): List<ByteArray> = listOfNotNull(constant) + constantAlternatives
 
     override fun equals(other: Any?): Boolean = other is FrameSegmentSpec &&
         role == other.role &&
@@ -40,6 +45,10 @@ data class FrameSegmentSpec(
         order == other.order &&
         name == other.name &&
         constant.contentEquals(other.constant) &&
+        constantAlternatives.size == other.constantAlternatives.size &&
+        constantAlternatives.indices.all {
+            constantAlternatives[it].contentEquals(other.constantAlternatives[it])
+        } &&
         includeInLength == other.includeInLength &&
         includeInChecksum == other.includeInChecksum
 
@@ -49,6 +58,9 @@ data class FrameSegmentSpec(
         result = 31 * result + order.hashCode()
         result = 31 * result + (name?.hashCode() ?: 0)
         result = 31 * result + (constant?.contentHashCode() ?: 0)
+        constantAlternatives.forEach { alternative ->
+            result = 31 * result + alternative.contentHashCode()
+        }
         result = 31 * result + includeInLength.hashCode()
         result = 31 * result + includeInChecksum.hashCode()
         return result
@@ -119,6 +131,17 @@ object FrameLayoutRules {
 
         layout.segments.forEachIndexed { index, segment ->
             val path = "segments[$index]"
+            if (segment.role !in setOf(FrameSegmentRole.MAGIC, FrameSegmentRole.CONSTANT) &&
+                segment.constantAlternatives.isNotEmpty()
+            ) {
+                add(
+                    FrameLayoutIssue(
+                        index,
+                        "$path.constantAlternatives",
+                        "are only valid for constant segments",
+                    ),
+                )
+            }
             when (segment.role) {
                 FrameSegmentRole.PAYLOAD -> {
                     if (segment.width != null) add(FrameLayoutIssue(index, "$path.width", "must be omitted for payload"))
@@ -178,6 +201,33 @@ object FrameLayoutRules {
                         add(FrameLayoutIssue(index, "$path.constant", "is required for ${segment.role.jsonName}"))
                     } else if (segment.width != segment.constant.size) {
                         add(FrameLayoutIssue(index, "$path.constant", "length must equal segment width ${segment.width}"))
+                    }
+                    if (segment.role == FrameSegmentRole.MAGIC && segment.constantAlternatives.isNotEmpty()) {
+                        add(
+                            FrameLayoutIssue(
+                                index,
+                                "$path.constantAlternatives",
+                                "are not valid for magic",
+                            ),
+                        )
+                    }
+                    segment.constantAlternatives.forEachIndexed { alternativeIndex, alternative ->
+                        val alternativePath = "$path.constantAlternatives[$alternativeIndex]"
+                        if (segment.width != alternative.size) {
+                            add(
+                                FrameLayoutIssue(
+                                    index,
+                                    alternativePath,
+                                    "length must equal segment width ${segment.width}",
+                                ),
+                            )
+                        }
+                        if (segment.acceptedConstants().take(alternativeIndex + 1).any {
+                                it !== alternative && it.contentEquals(alternative)
+                            }
+                        ) {
+                            add(FrameLayoutIssue(index, alternativePath, "must be unique"))
+                        }
                     }
                 }
 

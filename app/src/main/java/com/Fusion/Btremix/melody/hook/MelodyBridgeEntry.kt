@@ -167,7 +167,7 @@ class MelodyBridgeEntry : XposedModule() {
 
     /**
      * `com.oplus.wirelesssettings` branch (M3.4c): the Bluetooth device detail page is rendered by the
-     * settings app, not by Melody, so its "耳机功能" row can only be kept alive from inside that process
+     * settings app, not by Melody, so its dynamic "耳机功能" row is inserted from inside that process
      * (see [MelodyWirelessSettingsInjection]).
      *
      * Only this one hook is installed here - no observation, no doorbell, no provider injection: the

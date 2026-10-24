@@ -169,6 +169,33 @@ object MelodyProviderMerge {
     }
 
     /**
+     * Resolves a host query that carries a product id we cannot reproduce (for example a MAC-derived
+     * id versus an OEM callback id) by its device name instead. Containment is accepted in both
+     * directions to mirror the host's short-name lookup, but only a unique managed match is returned:
+     * two same-named models must never make one of them answer for the other.
+     */
+    fun uniqueIdentityByName(
+        identities: Collection<MelodyWhitelistIdentity>,
+        query: String?,
+    ): MelodyWhitelistIdentity? {
+        val wanted = normalizeName(query) ?: return null
+        val normalized = identities.mapNotNull { identity ->
+            val candidate = normalizeName(identity.name) ?: return@mapNotNull null
+            identity to candidate
+        }
+        normalized.filter { (_, candidate) -> candidate == wanted }
+            .takeIf { it.size == 1 }
+            ?.single()
+            ?.let { return it.first }
+        return normalized.filter { (_, candidate) ->
+            candidate.contains(wanted) || wanted.contains(candidate)
+        }.singleOrNull()?.first
+    }
+
+    private fun normalizeName(value: String?): String? =
+        value?.trim()?.lowercase()?.replace(Regex("\\s+"), " ")?.takeIf(String::isNotEmpty)
+
+    /**
      * Reads the per-device policy M3.4 needs: the integer `DeviceInfo.mProductType` and the
      * `melody.support.suppressMelodyTransport` switch (`MelodyDevicePolicy`).
      *

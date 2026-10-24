@@ -508,7 +508,7 @@ class DefinitionProtocolFactory(private val definition: LoadedDeviceDefinition) 
             ?: error("Unknown transaction '$transactionName'")
         val expectedPayloadTypes = transaction.expectedPayloadTypes
         val matcher = transaction.matcher?.let { declared ->
-            if (declared.command == null && transaction.expectedCommand != null) {
+            if (declared.command == null && declared.commands.isEmpty() && transaction.expectedCommand != null) {
                 declared.copy(command = transaction.expectedCommand)
             } else {
                 declared

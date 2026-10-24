@@ -80,6 +80,7 @@ internal object MelodyAnchorCatalog {
     // --- wirelesssettings branch (M3.4c) -----------------------------------------------------------
 
     const val SETTINGS_PODS_DATA_MANAGER = "settings.pods_data_manager"
+    const val SETTINGS_DEVICE_DETAIL = "settings.device_detail"
 
     private const val EARPHONE_PKG = "com.oplus.melody.model.repository.earphone"
     private const val BTSDK_MANAGER_PKG = "com.oplus.melody.btsdk.api.manager"
@@ -483,6 +484,17 @@ internal object MelodyAnchorCatalog {
             packages = listOf("O3"),
             query = MelodyAnchorQuery.MethodName("c", 1),
         ),
+        MelodyAnchorSpec(
+            id = SETTINGS_DEVICE_DETAIL,
+            host = MelodyAnchorHost.Settings,
+            feature = "settings.device_detail",
+            // `DeviceProfilesSettings.onResume()` owns the ready PreferenceScreen. Hooking the
+            // lifecycle rather than the whitelist predicate lets the entry be built dynamically.
+            baselineClasses = listOf("com.oplus.wirelesssettings.bluetooth.B"),
+            packages = listOf("com.oplus.wirelesssettings.bluetooth"),
+            query = MelodyAnchorQuery.MethodSignature("onResume", emptyList(), of(Void.TYPE)),
+            methodAnchor = true,
+        ),
     )
 
     private val byId: Map<String, MelodyAnchorSpec> = all.associateBy { it.id }
@@ -533,6 +545,7 @@ internal object MelodyAnchorCatalog {
         ONESPACE_IMAGE_PLACEHOLDER to "OneSpace 占位图",
         DETAIL_HEADER_BIND to "详情页头图绑定",
         SETTINGS_PODS_DATA_MANAGER to "蓝牙设置页“耳机功能”入口",
+        SETTINGS_DEVICE_DETAIL to "蓝牙设备详情页动态入口",
     )
 
     /** The nearest host frame helper used by the redirect logs; kept here so ids and prefixes stay together. */
