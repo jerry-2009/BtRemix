@@ -7,6 +7,7 @@ import com.Fusion.Btremix.definition.json.JsonParseException
 import com.Fusion.Btremix.definition.json.JsonParser
 import com.Fusion.Btremix.definition.json.JsonValue
 import com.Fusion.Btremix.definition.validator.DefinitionValidationException
+import com.Fusion.Btremix.protocol.extension.ProtocolExtensionRegistry
 
 /**
  * Validates a [RawDevicePackage]: package structure and metadata first, then the embedded
@@ -14,7 +15,9 @@ import com.Fusion.Btremix.definition.validator.DefinitionValidationException
  *
  * Definition rules are never re-implemented here.
  */
-class DevicePackageValidator {
+class DevicePackageValidator(
+    private val extensionRegistry: ProtocolExtensionRegistry = ProtocolExtensionRegistry(),
+) {
 
     fun validate(
         raw: RawDevicePackage,
@@ -82,7 +85,11 @@ class DevicePackageValidator {
     }
 
     private fun decodeDefinition(raw: RawDevicePackage): LoadedDeviceDefinition = try {
-        DefinitionJsonCodec.decode(raw.definitionJson, validate = true)
+        DefinitionJsonCodec.decode(
+            raw.definitionJson,
+            validate = true,
+            extensionRegistry = extensionRegistry,
+        )
     } catch (error: DefinitionValidationException) {
         val first = error.errors.firstOrNull()
         throw PackageException(

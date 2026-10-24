@@ -42,6 +42,7 @@ object MelodyBridgeResult {
         is RuntimeError.ActionNotFound -> ERROR_ACTION_NOT_FOUND
         is RuntimeError.ActionFailed -> ERROR_ACTION_FAILED
         is RuntimeError.ScriptFailed -> ERROR_ACTION_FAILED
+        is RuntimeError.ExtensionFailed -> ERROR_ACTION_FAILED
         is RuntimeError.DefinitionBindingFailed -> ERROR_INTERNAL
     }
 

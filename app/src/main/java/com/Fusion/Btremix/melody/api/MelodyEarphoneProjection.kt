@@ -23,7 +23,7 @@ data class MelodyEarphoneBattery(
     companion object {
         val EMPTY: MelodyEarphoneBattery = MelodyEarphoneBattery()
 
-        /** State key the Sony/Cleer dcpkgs use for the two buds. */
+        /** Conventional state key for the left and right batteries. */
         const val STATE_LEFT: String = "battery.left"
         const val STATE_RIGHT: String = "battery.right"
 
@@ -204,7 +204,7 @@ object MelodyAncStates {
         }
     }
 
-    /** The live ANC strength state (`ancLevel` for Sony), or `null` when absent (M4.3b D-14). */
+    /** The live ANC strength state (`ancLevel` by convention), or `null` when absent (M4.3b D-14). */
     fun levelOfSnapshot(snapshot: MelodySnapshot): Int? {
         if (snapshot.state.isEmpty) return null
         val entry = snapshot.state.getBundle(LEVEL_STATE_KEY) ?: return null

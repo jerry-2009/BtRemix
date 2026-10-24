@@ -2,6 +2,7 @@ package com.Fusion.Btremix.definition.loader
 
 import com.Fusion.Btremix.definition.api.LoadedDeviceDefinition
 import com.Fusion.Btremix.definition.json.DefinitionJsonCodec
+import com.Fusion.Btremix.protocol.extension.ProtocolExtensionRegistry
 import java.io.File
 
 interface DefinitionSource {
@@ -22,8 +23,11 @@ class DirectoryDefinitionSource(private val directory: File) : DefinitionSource 
         ?: emptyList()
 }
 
-class DefinitionLoader {
-    fun load(json: String): LoadedDeviceDefinition = DefinitionJsonCodec.decode(json)
+class DefinitionLoader(
+    private val extensionRegistry: ProtocolExtensionRegistry = ProtocolExtensionRegistry(),
+) {
+    fun load(json: String): LoadedDeviceDefinition =
+        DefinitionJsonCodec.decode(json, extensionRegistry = extensionRegistry)
 
     fun load(source: DefinitionSource, path: String): LoadedDeviceDefinition = load(source.read(path))
 

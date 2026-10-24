@@ -21,7 +21,7 @@ import io.github.libxposed.api.XposedInterface
  *   `query.equals(row.name)` - an **exact** match.
  *
  * That exact-match is why an injected device never shows up: the whitelist row carries the Definition
- * name ("Sony WF-1000XM3") while the paired device asks with its Bluetooth name ("WF-1000XM3").
+ * name while the paired device asks with its shorter Bluetooth name.
  *
  * The hook only widens that comparison for rows that are *already in the fetched whitelist*: the
  * official answer wins, and a row is accepted when one name contains the other. A device whose model is
@@ -96,7 +96,7 @@ internal class MelodyWirelessSettingsInjection(
         const val ROWS_FIELD = "a"
         const val NAME_FIELD = "a"
 
-        /** `Buds`, `XM3`, ... are too ambiguous to match loosely. */
+        /** Short generic suffixes are too ambiguous to match loosely. */
         const val MIN_NAME_CHARS = 5
     }
 }

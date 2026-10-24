@@ -211,6 +211,18 @@ object ScriptCodec {
                                 ),
                             )
                         }
+                        "extension.execute" -> {
+                            rejectUnknown("op", "extension", "entry", "input", "timeoutMs", "into")
+                            ScriptStep.ExtensionExecute(
+                                extensionId = required("extension"),
+                                entry = required("entry"),
+                                input = expression(fields.required("input", stepPath), "$stepPath.input", 0),
+                                timeout = requireNotNull(timeout()) {
+                                    "extension.execute requires timeoutMs"
+                                },
+                                into = into(),
+                            )
+                        }
                         else -> throw ScriptFormatException("$stepPath.op", "unsupported operation '$op'")
                     }
                 } catch (error: IllegalArgumentException) {

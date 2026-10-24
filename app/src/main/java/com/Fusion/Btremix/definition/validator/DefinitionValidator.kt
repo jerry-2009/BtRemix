@@ -17,6 +17,7 @@ import com.Fusion.Btremix.protocol.api.FrameLayoutSpec
 import com.Fusion.Btremix.protocol.api.FrameSegmentRole
 import com.Fusion.Btremix.protocol.api.MAX_COMMAND
 import com.Fusion.Btremix.protocol.api.PacketMatcherSpec
+import com.Fusion.Btremix.protocol.extension.ProtocolExtensionRegistry
 import com.Fusion.Btremix.scripting.api.ScriptProgram
 import com.Fusion.Btremix.scripting.api.ScriptStep
 import java.util.UUID
@@ -28,7 +29,10 @@ class DefinitionValidationException(
 ) : IllegalArgumentException(errors.joinToString("; ") { "${it.path}: ${it.message}" })
 
 object DefinitionValidator {
-    fun validate(definition: LoadedDeviceDefinition): List<DefinitionValidationError> {
+    fun validate(
+        definition: LoadedDeviceDefinition,
+        extensionRegistry: ProtocolExtensionRegistry = ProtocolExtensionRegistry(),
+    ): List<DefinitionValidationError> {
         val errors = mutableListOf<DefinitionValidationError>()
         val manifest = definition.manifest
         if (!Regex("[A-Za-z0-9][A-Za-z0-9._-]*").matches(manifest.id)) {
@@ -48,6 +52,7 @@ object DefinitionValidator {
         CapabilityRegistry.validateRequires(manifest.requires, manifest.runtimeApi).forEach { error ->
             errors += DefinitionValidationError("manifest.requires[${error.index}]", error.message)
         }
+        validateProtocolExtensions(manifest, extensionRegistry, errors)
         if (manifest.matchers.isEmpty()) errors += DefinitionValidationError("manifest.matchers", "must contain at least one rule")
         manifest.matchers.forEachIndexed { index, matcher -> validateMatcher(matcher, "manifest.matchers[$index]", errors) }
         definition.melody?.let { melody -> validateMelody(melody, manifest, definition.states, errors) }
@@ -489,6 +494,39 @@ object DefinitionValidator {
                                 validateScriptProgram(step.program, "$stepPath.program", definition, errors, depth + 1)
                             }
                             else -> Unit
+                        }
+                    }
+                    is ScriptStep.ExtensionExecute -> {
+                        if (definition.manifest.schemaVersion < DefinitionSchema.VERSION_SEGMENTED) {
+                            errors += DefinitionValidationError(
+                                stepPath,
+                                "requires manifest.schemaVersion ${DefinitionSchema.VERSION_SEGMENTED}",
+                            )
+                        }
+                        if (definition.protocol.transport == null) {
+                            errors += DefinitionValidationError(
+                                stepPath,
+                                "requires protocol.transport",
+                            )
+                        }
+                        val declaration = definition.manifest.extensions.firstOrNull { it.id == step.extensionId }
+                        when {
+                            declaration == null ->
+                                errors += DefinitionValidationError(
+                                    "$stepPath.extension",
+                                    "unknown declared extension '${step.extensionId}'",
+                                )
+                            declaration.entry != step.entry ->
+                                errors += DefinitionValidationError(
+                                    "$stepPath.entry",
+                                    "does not match manifest extension entry '${declaration.entry}'",
+                                )
+                        }
+                        if (!step.timeout.isPositive() || step.timeout.inWholeMilliseconds > 60_000) {
+                            errors += DefinitionValidationError(
+                                "$stepPath.timeoutMs",
+                                "must be in 1..60000",
+                            )
                         }
                     }
                     is ScriptStep.Emit -> {
@@ -1008,10 +1046,70 @@ object DefinitionValidator {
         }
     }
 
-    fun requireValid(definition: LoadedDeviceDefinition): LoadedDeviceDefinition {
-        val errors = validate(definition)
+    fun requireValid(
+        definition: LoadedDeviceDefinition,
+        extensionRegistry: ProtocolExtensionRegistry = ProtocolExtensionRegistry(),
+    ): LoadedDeviceDefinition {
+        val errors = validate(definition, extensionRegistry)
         if (errors.isNotEmpty()) throw DefinitionValidationException(errors)
         return definition
+    }
+
+    private fun validateProtocolExtensions(
+        manifest: DefinitionManifest,
+        registry: ProtocolExtensionRegistry,
+        errors: MutableList<DefinitionValidationError>,
+    ) {
+        if (manifest.extensions.isNotEmpty() && manifest.schemaVersion < DefinitionSchema.VERSION_SEGMENTED) {
+            errors += DefinitionValidationError(
+                "manifest.extensions",
+                "requires manifest.schemaVersion ${DefinitionSchema.VERSION_SEGMENTED}",
+            )
+        }
+        val seen = mutableSetOf<String>()
+        manifest.extensions.forEachIndexed { index, declaration ->
+            val path = "manifest.extensions[$index]"
+            if (!Regex("[A-Za-z0-9][A-Za-z0-9._-]*").matches(declaration.id)) {
+                errors += DefinitionValidationError(
+                    "$path.id",
+                    "must contain only letters, digits, '.', '_' or '-'",
+                )
+            }
+            if (!seen.add(declaration.id)) {
+                errors += DefinitionValidationError("$path.id", "duplicate extension '${declaration.id}'")
+            }
+            if (declaration.apiVersion <= 0) {
+                errors += DefinitionValidationError("$path.apiVersion", "must be positive")
+            }
+            if (declaration.entry.isBlank()) {
+                errors += DefinitionValidationError("$path.entry", "must not be blank")
+            }
+            val extension = registry.find(declaration.id)
+            when {
+                extension == null -> {
+                    errors += DefinitionValidationError(
+                        "$path.id",
+                        "unsupported extension '${declaration.id}'; registered: " +
+                            registry.all().map { it.id }.sorted(),
+                    )
+                    return@forEachIndexed
+                }
+                declaration.apiVersion != extension.apiVersion -> {
+                    errors += DefinitionValidationError(
+                        "$path.apiVersion",
+                        "extension '${declaration.id}' requires declared API ${extension.apiVersion}, " +
+                            "package declares ${declaration.apiVersion}",
+                    )
+                }
+                declaration.entry !in extension.entries -> {
+                    errors += DefinitionValidationError(
+                        "$path.entry",
+                        "extension '${declaration.id}' does not provide entry '${declaration.entry}'; " +
+                            "available: ${extension.entries.sorted()}",
+                    )
+                }
+            }
+        }
     }
 
     private fun validateMatcher(matcher: DeviceMatchRule, path: String, errors: MutableList<DefinitionValidationError>) {

@@ -64,14 +64,14 @@ data class MelodyAncPolicy(
      */
     val strength: MelodyAncStrengthDefinition? = null,
     /**
-     * M5.1 (D-18): the action that selects a parent mode (Sony = `anc.setMode`). Derived by the
+     * M5.1 (D-18): the action that selects a parent mode for this Definition. Derived by the
      * projection from the Definition's `ui` row whose `state` is the ANC mode state; `null` when the
      * Definition has no such row, which leaves the parent half of the redirect mapping fail-open.
      */
     val modeAction: String? = null,
-    /** Argument name of [modeAction] (Sony = `mode`), or `null` when it could not be derived. */
+    /** Argument name of [modeAction] as declared by the Definition, or `null` when not derived. */
     val modeParam: String? = null,
-    /** Argument name of [strength]'s action (Sony = `value`), or `null`. */
+    /** Argument name of [strength]'s action as declared by the Definition, or `null`. */
     val strengthParam: String? = null,
 ) {
     val isEmpty: Boolean get() = modes.isEmpty()

@@ -184,7 +184,7 @@ object MelodyCapabilityMap {
 
     /**
      * The interactive `ui` node backing [state] (M5.1): the segmented row is the mode selector on both
-     * the Sony and Cleer packages; the slider/switch fallbacks only exist so a differently-shaped
+     * representative device packages; the slider/switch fallbacks only exist so a differently-shaped
      * package does not silently lose its parent mapping. `null` when no interactive row reads [state].
      */
     private fun uiNodeForState(schema: UiSchema, state: String): UiNode? {
@@ -292,7 +292,7 @@ object MelodyCapabilityMap {
      * package did not declare `melody.anc.strength` explicitly. Conventional key `ancLevel` first,
      * then any bounded integer state in the ANC domain whose name is not the mode state; the action is
      * the one whose `resultState` is that state. The three derived positions are the host's
-     * Low / Moderate / High, standing for `[min, midpoint, max]` - for Sony's 1..20 that is
+     * Low / Moderate / High, standing for `[min, midpoint, max]` - for a 1..20 range that is
      * `[1, 10, 20]`. A package that wants other anchors declares them in the Definition.
      */
     private fun deriveAncStrength(definition: LoadedDeviceDefinition): MelodyAncStrengthDefinition? {
@@ -373,7 +373,7 @@ object MelodyCapabilityMap {
 
     /**
      * True when the Definition declares a battery state, either through `manifest.capabilities`
-     * (`"battery"`) or through a `battery*` state key such as the Sony package's `battery.left` /
+     * (`"battery"`) or through a `battery*` state key such as a package's `battery.left` /
      * `battery.case`. The state-key fallback keeps hand-written packages honest even when they forget
      * the capability list.
      */
@@ -404,9 +404,9 @@ data class MelodyAncPlan(
     val strength: MelodyAncStrengthDefinition? = null,
     /** The action that selects a parent mode (M5.1 D-18), or `null` when it cannot be derived. */
     val modeAction: String? = null,
-    /** Argument name of [modeAction] (Sony = `mode`), or `null`. */
+    /** Argument name of [modeAction] as declared by the Definition, or `null`. */
     val modeParam: String? = null,
-    /** Argument name of [strength]'s action (Sony = `value`), or `null`. */
+    /** Argument name of [strength]'s action as declared by the Definition, or `null`. */
     val strengthParam: String? = null,
 ) {
     val isEmpty: Boolean get() = modes.isEmpty()

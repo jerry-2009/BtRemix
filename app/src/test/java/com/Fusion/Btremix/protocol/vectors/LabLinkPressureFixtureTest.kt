@@ -138,7 +138,7 @@ class LabLinkPressureFixtureTest {
     }
 
     @Test
-    fun labAuthenticated_extensionDeclarationIsCurrentlyUnrepresented() {
+    fun labAuthenticated_extensionDeclarationIsModelledAndMissingRegistrationIsExplicit() {
         val layer = layers.requiredObject("l3")
         val probeJson = layer.requiredObject("currentProbeDefinition")
         val manifestJson = probeJson.requiredObject("manifest")
@@ -153,11 +153,9 @@ class LabLinkPressureFixtureTest {
             errors.none { it.path == "manifest.requires[0]" },
         )
         val manifestFields = DefinitionManifest::class.java.declaredFields.map { it.name }
-        assertFalse("P4 would become stale once manifest.extensions is modelled", manifestFields.any { it == "extensions" })
-        assertEquals(
-            "manifest.extensions[0]",
-            layer.requiredObject("expectedCurrentGap").requiredString("path"),
-        )
+        assertTrue("P4 models manifest.extensions", manifestFields.any { it == "extensions" })
+        assertTrue(errors.any { it.path == "manifest.extensions[0].id" })
+        assertFalse(errors.any { it.path == "manifest.requires[0]" })
     }
 
     private fun decodeProbe(layer: JsonValue.Object) = DefinitionJsonCodec.decode(

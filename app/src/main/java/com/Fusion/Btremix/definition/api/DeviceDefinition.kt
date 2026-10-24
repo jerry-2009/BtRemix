@@ -13,6 +13,7 @@ import com.Fusion.Btremix.protocol.api.SegmentedFramingSpec
 import com.Fusion.Btremix.protocol.api.SimplePacketCodec
 import com.Fusion.Btremix.protocol.api.TransactionRequest
 import com.Fusion.Btremix.protocol.api.ValueCodec
+import com.Fusion.Btremix.protocol.extension.ProtocolExtension
 import com.Fusion.Btremix.device.runtime.StateEntry
 import com.Fusion.Btremix.device.runtime.StateSource
 import com.Fusion.Btremix.scripting.api.ScriptExpression
@@ -173,7 +174,22 @@ data class DefinitionManifest(
     val runtimeApi: Int = DefinitionRuntimeApi.CURRENT,
     /** Stable capability names such as `checksum.crc` or `splitter.delimited`. */
     val requires: List<String> = emptyList(),
+    /**
+     * First-party executable extensions required by this definition.
+     *
+     * Packages carry declarations only. Implementations are compiled into the app, registered
+     * explicitly by the composition root and matched against [ProtocolExtension.CURRENT_API_VERSION]
+     * before the definition is accepted.
+     */
+    val extensions: List<ProtocolExtensionDeclaration> = emptyList(),
 ) : DeviceDefinition
+
+/** One non-executable reference from a device package to a compiled first-party extension. */
+data class ProtocolExtensionDeclaration(
+    val id: String,
+    val apiVersion: Int,
+    val entry: String,
+)
 
 sealed interface DeviceMatchRule {
     val priority: Int

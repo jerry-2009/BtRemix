@@ -25,6 +25,7 @@ import com.Fusion.Btremix.protocol.api.SessionRequest
 import com.Fusion.Btremix.protocol.api.StreamCodecRegistry
 import com.Fusion.Btremix.protocol.api.TogglingSequenceGenerator
 import com.Fusion.Btremix.protocol.api.TransactionResult
+import com.Fusion.Btremix.protocol.extension.ProtocolExtensionRegistry
 import com.Fusion.Btremix.scripting.api.DefaultScriptDriver
 import com.Fusion.Btremix.scripting.runtime.bindScripts
 import com.Fusion.Btremix.scripting.runtime.bindStreamScripts
@@ -50,6 +51,7 @@ class DefinitionSessionFactory(
     private val runtime: DeviceRuntime = DefaultDeviceRuntime(),
     private val dispatcher: CoroutineDispatcher = Dispatchers.Default,
     private val clock: Clock = Clock.systemUTC(),
+    private val extensionRegistry: ProtocolExtensionRegistry = ProtocolExtensionRegistry(),
 ) {
     suspend fun open(
         device: BleDevice,
@@ -68,6 +70,7 @@ class DefinitionSessionFactory(
         var bindings: DefinitionBindings? = null
         var triggers: TriggerRuntime? = null
         var sessionIo: DefinitionSessionIo? = null
+        var protocolExtensions: ProtocolExtensionSession? = null
         try {
             seedStates(session, definition)
             session.beginInitialization()
@@ -94,7 +97,10 @@ class DefinitionSessionFactory(
                     dispatcher = dispatcher,
                 )
             }
-            val driver = session.bindScripts(definition, sessionIo)
+            protocolExtensions = sessionIo?.let { io ->
+                ProtocolExtensionSession(definition, extensionRegistry, io)
+            }
+            val driver = session.bindScripts(definition, sessionIo, protocolExtensions)
             val gattBindings = DefinitionBindings(
                 session = session,
                 definition = definition,
@@ -108,16 +114,24 @@ class DefinitionSessionFactory(
             }
             runInitialization(session, definition, sessionIo, driver)
             session.markReady()
-            return BoundDefinitionSession(session, gattBindings, triggers, sessionIo)
+            return BoundDefinitionSession(
+                session,
+                gattBindings,
+                triggers,
+                protocolExtensions,
+                sessionIo,
+            )
         } catch (cancelled: CancellationException) {
             triggers?.close()
             bindings?.close()
+            protocolExtensions?.close()
             sessionIo?.close()
             closeQuietly(session)
             throw cancelled
         } catch (error: Throwable) {
             triggers?.close()
             bindings?.close()
+            protocolExtensions?.close()
             sessionIo?.close()
             closeQuietly(session)
             val runtimeError = (error as? RequiredInitializationException)?.error
@@ -151,6 +165,7 @@ class DefinitionSessionFactory(
         var bindings: StreamDefinitionBindings? = null
         var triggers: TriggerRuntime? = null
         var sessionIo: DefinitionSessionIo? = null
+        var protocolExtensions: ProtocolExtensionSession? = null
         try {
             seedStates(session, definition)
             session.initializeForBinding()
@@ -171,7 +186,8 @@ class DefinitionSessionFactory(
                 dispatcher = dispatcher,
             )
             sessionIo = io
-            val driver = session.bindStreamScripts(definition, io)
+            protocolExtensions = ProtocolExtensionSession(definition, extensionRegistry, io)
+            val driver = session.bindStreamScripts(definition, io, protocolExtensions)
             val streamBindings = StreamDefinitionBindings(session, definition, io, dispatcher)
             streamBindings.start()
             bindings = streamBindings
@@ -179,16 +195,24 @@ class DefinitionSessionFactory(
             runInitialization(session, definition, io, driver)
             session.markReady()
             streamBindings.startLegacyInitialization()
-            return BoundStreamSession(session, streamBindings, triggers, io)
+            return BoundStreamSession(
+                session,
+                streamBindings,
+                triggers,
+                protocolExtensions,
+                io,
+            )
         } catch (cancelled: CancellationException) {
             triggers?.close()
             bindings?.close()
+            protocolExtensions?.close()
             sessionIo?.close()
             closeQuietly(session)
             throw cancelled
         } catch (error: Throwable) {
             triggers?.close()
             bindings?.close()
+            protocolExtensions?.close()
             sessionIo?.close()
             closeQuietly(session)
             val runtimeError = (error as? RequiredInitializationException)?.error
@@ -318,11 +342,13 @@ private class BoundDefinitionSession(
     private val delegate: DeviceSession,
     private val bindings: DefinitionBindings,
     private val triggers: TriggerRuntime?,
+    private val protocolExtensions: ProtocolExtensionSession?,
     private val sessionIo: DefinitionSessionIo?,
 ) : DeviceSession by delegate {
     override suspend fun close() {
         triggers?.close()
         bindings.close()
+        protocolExtensions?.close()
         sessionIo?.close()
         delegate.close()
     }
@@ -332,11 +358,13 @@ private class BoundStreamSession(
     private val delegate: StreamDeviceSession,
     private val bindings: StreamDefinitionBindings,
     private val triggers: TriggerRuntime?,
+    private val protocolExtensions: ProtocolExtensionSession?,
     private val sessionIo: DefinitionSessionIo?,
 ) : ProtocolSession by delegate {
     override suspend fun close() {
         triggers?.close()
         bindings.close()
+        protocolExtensions?.close()
         sessionIo?.close()
         delegate.close()
     }

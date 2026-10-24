@@ -2,6 +2,7 @@ package com.Fusion.Btremix.scripting.runtime
 
 import com.Fusion.Btremix.core.bluetooth.api.BleCharacteristic
 import com.Fusion.Btremix.definition.api.LoadedDeviceDefinition
+import com.Fusion.Btremix.definition.session.ProtocolExtensionSession
 import com.Fusion.Btremix.device.runtime.DeviceSession
 import com.Fusion.Btremix.device.runtime.ProtocolSession
 import com.Fusion.Btremix.device.runtime.RuntimeError
@@ -18,8 +19,9 @@ import kotlinx.coroutines.flow.Flow
 fun DeviceSession.bindScripts(
     definition: LoadedDeviceDefinition,
     sessionIo: SessionIo? = null,
+    protocolExtensions: ProtocolExtensionSession? = null,
 ): DefaultScriptDriver {
-    val host = SessionScriptHost(this, definition, sessionIo)
+    val host = SessionScriptHost(this, definition, sessionIo, protocolExtensions)
     val driver = DefaultScriptDriver(host)
     registerScriptActions(definition, driver)
     return driver
@@ -29,8 +31,9 @@ fun DeviceSession.bindScripts(
 fun StreamDeviceSession.bindStreamScripts(
     definition: LoadedDeviceDefinition,
     sessionIo: SessionIo,
+    protocolExtensions: ProtocolExtensionSession? = null,
 ): DefaultScriptDriver {
-    val driver = DefaultScriptDriver(StreamScriptHost(this, definition, sessionIo))
+    val driver = DefaultScriptDriver(StreamScriptHost(this, definition, sessionIo, protocolExtensions))
     registerScriptActions(definition, driver)
     return driver
 }
@@ -48,6 +51,7 @@ class SessionScriptHost(
     private val session: DeviceSession,
     private val definition: LoadedDeviceDefinition,
     override val sessionIo: SessionIo? = null,
+    private val protocolExtensions: ProtocolExtensionSession? = null,
 ) : ScriptHost {
     private fun characteristic(service: String, characteristic: String): BleCharacteristic {
         val serviceId = UUID.fromString(service)
@@ -79,6 +83,14 @@ class SessionScriptHost(
     override suspend fun emit(name: String, value: StateValue) = session.emitScriptEvent(name, value)
 
     override suspend fun reportError(error: RuntimeError) = session.reportError(error)
+
+    override suspend fun executeExtension(
+        extensionId: String,
+        entry: String,
+        input: ByteArray,
+        timeout: kotlin.time.Duration,
+    ): ByteArray = protocolExtensions?.execute(extensionId, entry, input, timeout)
+        ?: throw IllegalArgumentException("Protocol extensions are not available")
 }
 
 /**
@@ -89,6 +101,7 @@ private class StreamScriptHost(
     private val session: StreamDeviceSession,
     private val definition: LoadedDeviceDefinition,
     override val sessionIo: SessionIo,
+    private val protocolExtensions: ProtocolExtensionSession? = null,
 ) : ScriptHost {
     override suspend fun read(service: String, characteristic: String): ByteArray =
         throw IllegalArgumentException("ble.read is not available on a byte-stream session")
@@ -118,4 +131,12 @@ private class StreamScriptHost(
     override suspend fun emit(name: String, value: StateValue) = session.emitScriptEvent(name, value)
 
     override suspend fun reportError(error: RuntimeError) = session.reportError(error)
+
+    override suspend fun executeExtension(
+        extensionId: String,
+        entry: String,
+        input: ByteArray,
+        timeout: kotlin.time.Duration,
+    ): ByteArray = protocolExtensions?.execute(extensionId, entry, input, timeout)
+        ?: throw IllegalArgumentException("Protocol extensions are not available")
 }

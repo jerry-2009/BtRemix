@@ -15,10 +15,12 @@ import com.Fusion.Btremix.core.logging.InMemoryLogger
 import com.Fusion.Btremix.core.settings.SettingsRepository
 import com.Fusion.Btremix.core.settings.settingsDataStore
 import com.Fusion.Btremix.definition.loader.AndroidAssetBuiltInDefinitionSource
+import com.Fusion.Btremix.definition.loader.DefinitionLoader
 import com.Fusion.Btremix.definition.packages.DevicePackageBootstrap
 import com.Fusion.Btremix.definition.packages.DevicePackageManager
 import com.Fusion.Btremix.definition.packages.DevicePackageRepository
 import com.Fusion.Btremix.definition.packages.DevicePackageStore
+import com.Fusion.Btremix.definition.packages.DevicePackageValidator
 import com.Fusion.Btremix.definition.packages.InstalledMetadataStore
 import com.Fusion.Btremix.definition.session.DefinitionSessionFactory
 import com.Fusion.Btremix.device.registry.AndroidDeviceArtworkProvider
@@ -71,12 +73,21 @@ import kotlinx.coroutines.launch
 class BtRemixApplication : Application() {
     private val scope = CoroutineScope(SupervisorJob() + Dispatchers.IO)
 
+    /**
+     * Explicit composition root for compiled first-party protocol extensions.
+     *
+     * Packages can reference these IDs but cannot discover, download or load implementations.
+     */
+    val protocolExtensions = firstPartyProtocolExtensions()
+
     val packageBootstrap: DevicePackageBootstrap by lazy {
         DevicePackageBootstrap(
             manager = DevicePackageManager(
                 DevicePackageStore(File(filesDir, DevicePackageStore.DIRECTORY_NAME)),
+                validator = DevicePackageValidator(protocolExtensions),
             ),
             builtIns = AndroidAssetBuiltInDefinitionSource(assets),
+            loader = DefinitionLoader(protocolExtensions),
         )
     }
 
@@ -121,7 +132,12 @@ class BtRemixApplication : Application() {
 
     /** Device runtime and the Definition->session wiring layer, reused for every session. */
     val deviceRuntime: DeviceRuntime by lazy { DefaultDeviceRuntime() }
-    val sessionFactory: DefinitionSessionFactory by lazy { DefinitionSessionFactory(deviceRuntime) }
+    val sessionFactory: DefinitionSessionFactory by lazy {
+        DefinitionSessionFactory(
+            runtime = deviceRuntime,
+            extensionRegistry = protocolExtensions,
+        )
+    }
 
     /**
      * Process-scoped session ownership (MELODY_BRIDGE_SPEC §3.3/§11.2).

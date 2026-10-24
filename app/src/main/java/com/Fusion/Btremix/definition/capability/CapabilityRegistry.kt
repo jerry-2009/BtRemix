@@ -93,6 +93,11 @@ object CapabilityRegistry {
             minRuntimeApi = 1,
             parameterRule = "ordered required/optional steps finish before Ready",
         ),
+        "session.extension" to CapabilityDescriptor(
+            id = "session.extension",
+            minRuntimeApi = 1,
+            parameterRule = "extension.execute references a registered manifest extension and declared entry",
+        ),
     )
 
     val names: Set<String> get() = capabilities.keys.toSet()

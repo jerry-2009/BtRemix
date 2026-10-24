@@ -70,6 +70,15 @@ sealed interface ScriptStep {
         val matcher: PacketMatcherSpec,
         val program: ScriptProgram,
     ) : ScriptStep
+
+    /** Calls one explicitly declared first-party extension with bounded input bytes. */
+    data class ExtensionExecute(
+        val extensionId: String,
+        val entry: String,
+        val input: ScriptExpression,
+        val timeout: Duration,
+        val into: String? = null,
+    ) : ScriptStep
 }
 
 interface ScriptDriver {

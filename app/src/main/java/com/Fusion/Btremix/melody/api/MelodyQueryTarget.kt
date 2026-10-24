@@ -72,8 +72,8 @@ data class MelodyQueryTarget(
             wantedHex == candidateHexId?.uppercase()
         if (!idMatches) return false
         val wantedName = deviceName ?: return true
-        // The host asks with the Bluetooth device name ("WF-1000XM3"), which is usually shorter than the
-        // whitelist display name ("Sony WF-1000XM3"), so containment is the useful test here - matching
+        // The host asks with the Bluetooth device name, which is usually shorter than the
+        // whitelist display name, so containment is the useful test here - matching
         // the host's own fuzzy lookup. The product id above is still the primary key.
         val query = normalizeName(wantedName)
         val candidate = normalizeName(candidateName)

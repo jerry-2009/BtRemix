@@ -34,7 +34,7 @@ data class ActivityEntry(
  *  - explicit `record(...)` calls for events the transport does not log (package installs,
  *    hook/anchor changes) and `recordEvent(...)` for live session events.
  *
- * A device-id to display-name map lets rows show "WF-1000XM3" instead of a MAC. Kept small and
+ * A device-id to display-name map lets rows show the advertised name instead of a MAC. Kept small and
  * in-memory; the plan's disk-backed ring arrives with the logging milestone.
  */
 class ActivityRepository(

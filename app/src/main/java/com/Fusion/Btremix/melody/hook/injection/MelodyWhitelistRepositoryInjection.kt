@@ -335,7 +335,7 @@ internal class MelodyWhitelistRepositoryInjection(
 
         const val MANAGED_TTL_MS = 2_000L
 
-        /** Shorter names are too ambiguous for a contains-match (`Buds`, `XM3`, ...). */
+        /** Shorter names are too ambiguous for a contains-match. */
         const val MIN_NAME_CHARS = 5
 
         /** `owner` used by [MelodyWhitelistLookupInjection]'s answers, so the log tells them apart. */

@@ -8,6 +8,8 @@ import com.Fusion.Btremix.protocol.vectors.requiredArray
 import com.Fusion.Btremix.protocol.vectors.requiredInt
 import com.Fusion.Btremix.protocol.vectors.requiredObject
 import com.Fusion.Btremix.protocol.vectors.requiredString
+import com.Fusion.Btremix.protocol.extension.ProtocolExtensionRegistry
+import com.Fusion.Btremix.vendor.testbed.ReferenceChallengeExtension
 import java.io.File
 import org.junit.Assert.assertArrayEquals
 import org.junit.Assert.assertEquals
@@ -29,7 +31,7 @@ class SamplePackageTest {
         assumeTrue("no sample device package found next to the checkout", files.isNotEmpty())
 
         val packages = files.associate { file ->
-            val devicePackage = DevicePackageValidator().validate(DevicePackageReader().read(file))
+            val devicePackage = DevicePackageValidator(registry).validate(DevicePackageReader().read(file))
             assertEquals("package.json id must match definition.json id", devicePackage.packageId, devicePackage.definition.id)
             assertTrue("${devicePackage.packageId} has an empty ui schema", devicePackage.definition.ui.children.isNotEmpty())
             devicePackage.packageId to devicePackage
@@ -228,6 +230,8 @@ class SamplePackageTest {
         .filter { it.isFile && it.name.endsWith(".dcpkg", ignoreCase = true) }
         .sortedBy { it.name }
         .toList()
+
+    private val registry = ProtocolExtensionRegistry(listOf(ReferenceChallengeExtension()))
 
     private companion object {
         private val CANDIDATES = listOf(

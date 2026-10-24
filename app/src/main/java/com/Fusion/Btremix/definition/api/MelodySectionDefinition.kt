@@ -99,7 +99,7 @@ data class MelodyAncStrengthDefinition(
  * renders no label for anything else, so such an entry would be invisible. [protocolIndex] is the value
  * the host writes when the user picks the position (`earphone/b;->v0`) and the value the module projects
  * for the current state, so it must be unique across the whole mode table (parents + children).
- * [level] is the Definition's own strength value the position stands for (Sony's `ancLevel`).
+ * [level] is the Definition's own strength value the position stands for.
  */
 data class MelodyAncStrengthLevel(
     val modeType: Int,

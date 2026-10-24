@@ -8,6 +8,7 @@ import com.Fusion.Btremix.definition.api.PacketDefinition
 import com.Fusion.Btremix.definition.api.ProtocolDefinition
 import com.Fusion.Btremix.definition.api.ProtocolFieldDefinition
 import com.Fusion.Btremix.definition.api.ProtocolFieldType
+import com.Fusion.Btremix.definition.api.ProtocolExtensionDeclaration
 import com.Fusion.Btremix.definition.api.TransactionDefinition
 import com.Fusion.Btremix.definition.api.ActionDefinition
 import com.Fusion.Btremix.definition.api.ActionParameterDefinition
@@ -41,13 +42,18 @@ import com.Fusion.Btremix.scripting.api.ScriptCodec
 import com.Fusion.Btremix.scripting.api.ScriptExpression
 import com.Fusion.Btremix.device.runtime.StateValue
 import com.Fusion.Btremix.definition.validator.DefinitionValidator
+import com.Fusion.Btremix.protocol.extension.ProtocolExtensionRegistry
 import java.util.UUID
 import kotlin.time.Duration.Companion.milliseconds
 
 class DefinitionJsonException(val path: String, message: String) : IllegalArgumentException("$path: $message")
 
 object DefinitionJsonCodec {
-    fun decode(text: String, validate: Boolean = true): LoadedDeviceDefinition {
+    fun decode(
+        text: String,
+        validate: Boolean = true,
+        extensionRegistry: ProtocolExtensionRegistry = ProtocolExtensionRegistry(),
+    ): LoadedDeviceDefinition {
         val root = JsonParser.parse(text).obj("$")
         val manifestObject = root.optionalObj("manifest") ?: root
         val protocolObject = root.optionalObj("protocol")
@@ -60,7 +66,7 @@ object DefinitionJsonCodec {
             ui = root.optionalObj("ui")?.let(::parseUi) ?: UiSchema(),
             melody = root.optionalObj("melody")?.let(::parseMelody),
         )
-        return if (validate) DefinitionValidator.requireValid(definition) else definition
+        return if (validate) DefinitionValidator.requireValid(definition, extensionRegistry) else definition
     }
 
     private fun parseManifest(obj: JsonValue.Object): DefinitionManifest = DefinitionManifest(
@@ -72,6 +78,12 @@ object DefinitionJsonCodec {
         requires = obj.optionalArray("requires")?.values?.mapIndexed { index, value ->
             value.string("manifest.requires[$index]")
         } ?: emptyList(),
+        extensions = obj.optionalArray("extensions")?.values?.mapIndexed { index, value ->
+            parseProtocolExtensionDeclaration(
+                value.obj("manifest.extensions[$index]"),
+                "manifest.extensions[$index]",
+            )
+        } ?: emptyList(),
         runtime = obj.optionalString("runtime"),
         // Optional product metadata (§3.5A); absent keys fall back to null and never fail a load.
         author = obj.optionalString("author"),
@@ -82,6 +94,22 @@ object DefinitionJsonCodec {
         capabilities = obj.optionalArray("capabilities")?.values?.mapIndexed { index, value -> value.string("manifest.capabilities[$index]") }?.toSet() ?: emptySet(),
         matchers = obj.optionalArray("matchers")?.values?.mapIndexed { index, value -> parseMatcher(value.obj("manifest.matchers[$index]"), index) } ?: emptyList(),
     )
+
+    private fun parseProtocolExtensionDeclaration(
+        obj: JsonValue.Object,
+        path: String,
+    ): ProtocolExtensionDeclaration {
+        val known = setOf("id", "apiVersion", "entry")
+        obj.values.keys.firstOrNull { it !in known }?.let { unknown ->
+            throw DefinitionJsonException("$path.$unknown", "unknown extension declaration field")
+        }
+        return ProtocolExtensionDeclaration(
+            id = obj.requiredString("id"),
+            apiVersion = obj.optionalInt("apiVersion")
+                ?: throw DefinitionJsonException("$path.apiVersion", "is required"),
+            entry = obj.requiredString("entry"),
+        )
+    }
 
     private fun parseMatcher(obj: JsonValue.Object, index: Int): DeviceMatchRule {
         val path = "manifest.matchers[$index]"

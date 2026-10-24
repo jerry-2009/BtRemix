@@ -334,6 +334,8 @@
     "l3": {
       "id": "lab.authenticated",
       "source": "derived",
+      "status": "P4 accepted",
+      "packageFixture": "lab.authenticated-1.0.0.dcpkg",
       "coverage": [
         "challenge-response",
         "explicit first-party extension registration",
@@ -351,6 +353,8 @@
         "id": "lab.authenticated.xor-index",
         "apiVersion": 1,
         "entry": "default",
+        "requestEndpoint": "auth.challenge",
+        "responseEndpoint": "auth.response",
         "operations": ["challengeResponse"]
       },
       "cases": [
@@ -402,9 +406,9 @@
           "matchers": [{"type": "namePrefix", "value": "LabLink authenticated"}]
         }
       },
-      "expectedCurrentGap": {
+      "p0HistoricalGap": {
         "path": "manifest.extensions[0]",
-        "reason": "DefinitionManifest has no extensions field or ProtocolExtension registry"
+        "reason": "At P0 the model, registry and controlled extension I/O did not exist; P4 closes this gap"
       }
     }
   },
@@ -448,7 +452,7 @@
       "id": "L3-EXTENSION-SPI",
       "fixture": "lab.authenticated",
       "classification": "extension",
-      "reason": "No ProtocolExtension API, registration table, manifest extensions field, or controlled I/O contract exists",
+      "reason": "Closed by the pure Kotlin extension API, explicit registry, manifest declarations and controlled I/O",
       "proposedIn": "P4"
     }
   ]

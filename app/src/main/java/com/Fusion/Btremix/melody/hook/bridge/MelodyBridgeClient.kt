@@ -937,7 +937,7 @@ internal class MelodyBridgeClient(
          */
         const val ICON_CALL_TIMEOUT_MS = 400L
 
-        /** Session state keys a Definition may use for "both earbuds are in"; none exist for XM3 (M3). */
+        /** Session state keys a Definition may use for "both earbuds are in". */
         val WEAR_KEYS = listOf("bothInEar", "inEar")
 
         /** Only reachable when a (malformed) envelope omitted `sectionTitle`; M4.3 uses it as the group title. */
